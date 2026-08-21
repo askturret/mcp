@@ -33,6 +33,9 @@ jobs:
               - 'packages/core/**'
             adapters-express:
               - 'packages/adapters-express/**'
+              # adapters-express serves the Explorer, so an explorer-only
+              # change must re-run these tests too.
+              - 'packages/explorer/**'
             sources-openapi:
               - 'packages/sources-openapi/**'
             transports:
@@ -73,7 +76,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/adapters-express
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-express
       - run: npm test --workspace=packages/adapters-express
 
   # Test sources-openapi package

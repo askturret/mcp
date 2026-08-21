@@ -62,7 +62,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspace=packages/core
+      - run: npm run build --workspaces
       - run: npm test --workspace=packages/core
 
   # Test adapters-express package

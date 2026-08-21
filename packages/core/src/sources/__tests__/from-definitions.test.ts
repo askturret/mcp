@@ -3,7 +3,7 @@
  */
 
 import { fromDefinitions } from '../from-definitions.js';
-import type { DiscoveryContext, DiscoveredOperation } from '../types.js';
+import type { DiscoveryContext } from '../types.js';
 import type { DefinitionInput } from '../from-definitions.js';
 
 /**
@@ -25,7 +25,7 @@ function createTestContext(signal?: AbortSignal): DiscoveryContext {
  * Create a minimal test definition
  */
 function createTestDefinition(id: string, location?: string): DefinitionInput {
-  return {
+  const base = {
     id,
     name: `op-${id}`,
     description: `Operation ${id}`,
@@ -39,8 +39,8 @@ function createTestDefinition(id: string, location?: string): DefinitionInput {
       classifications: [],
     },
     executor: { type: 'handler' },
-    location,
   };
+  return location !== undefined ? { ...base, location } : base;
 }
 
 /**
@@ -143,15 +143,16 @@ export async function testFromDefinitionsPreservesFields(): Promise<void> {
   }
 
   const op = discovered[0];
+  if (!op) throw new Error('No operation discovered');
 
   // Verify all fields preserved
   if (op.candidateId !== 'test-op') throw new Error('ID not preserved');
   if (op.name !== 'testOp') throw new Error('Name not preserved');
-  if (!op.rawInput || !op.rawInput.properties) throw new Error('Input not preserved');
-  if (!op.rawOutput || !op.rawOutput.properties) throw new Error('Output not preserved');
+  if (!op.rawInput || !op.rawInput['properties']) throw new Error('Input not preserved');
+  if (!op.rawOutput || !op.rawOutput['properties']) throw new Error('Output not preserved');
   if (!op.effects || !op.effects.idempotent) throw new Error('Effects not preserved');
   if (!op.executor || op.executor.type !== 'http') throw new Error('Executor not preserved');
-  if (!op.annotations || op.annotations.custom !== 'metadata') {
+  if (!op.annotations || op.annotations['custom'] !== 'metadata') {
     throw new Error('Annotations not preserved');
   }
   if (!op.provenance || op.provenance.length !== 1) {

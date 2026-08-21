@@ -297,8 +297,10 @@ export async function testSequentialAbortMidFlight(): Promise<void> {
     throw new Error(`Expected 1 operation (fast only), got ${discovered.length}`);
   }
 
-  if (discovered[0].candidateId !== 'fast-op') {
-    throw new Error(`Expected fast-op, got ${discovered[0].candidateId}`);
+  const op = discovered[0];
+  if (!op) throw new Error('No operation discovered');
+  if (op.candidateId !== 'fast-op') {
+    throw new Error(`Expected fast-op, got ${op.candidateId}`);
   }
 
   console.log(`✓ Sequential mode aborts mid-flight (${elapsed}ms, expected < 150ms)`);

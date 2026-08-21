@@ -6,6 +6,7 @@ import SwaggerParser from '@apidevtools/swagger-parser';
 import type { OpenAPI, OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
 import { readFile } from 'fs/promises';
 import { resolve } from 'path';
+import { omitUndefined } from '@askturret/mcp-core';
 import type {
   Finding,
   FindingSeverity,
@@ -181,22 +182,23 @@ function analyzeOperation(
   operation: OpenAPIOperation,
   path: string,
   method: string,
-  spec: OpenAPIDocument,
+  _spec: OpenAPIDocument,
 ): OperationAnalysis {
   const findings: Finding[] = [];
   const operationId = operation.operationId;
 
   // Check 3: Naming - operationId present and agent-friendly
   if (!operationId) {
-    findings.push({
+    findings.push(omitUndefined({
       severity: 'error',
       code: 'MISSING_OPERATION_ID',
       message: 'Operation must have an operationId',
       path,
       method,
-    });
+      operationId: undefined,
+    }));
   } else if (!isAgentFriendlyName(operationId)) {
-    findings.push({
+    findings.push(omitUndefined({
       severity: 'warning',
       code: 'UNFRIENDLY_OPERATION_ID',
       message: `Operation ID "${operationId}" is not agent-friendly. Consider using camelCase or snake_case descriptive names.`,
@@ -204,29 +206,29 @@ function analyzeOperation(
       path,
       method,
       context: { suggestion: generateFriendlyName(path, method) },
-    });
+    }));
   }
 
   // Check 4: Descriptions - non-empty, longer than N chars
   const MIN_DESCRIPTION_LENGTH = 20;
   if (!operation.description || operation.description.trim().length === 0) {
-    findings.push({
+    findings.push(omitUndefined({
       severity: 'warning',
       code: 'MISSING_DESCRIPTION',
       message: 'Operation should have a description',
       operationId,
       path,
       method,
-    });
+    }));
   } else if (operation.description.trim().length < MIN_DESCRIPTION_LENGTH) {
-    findings.push({
+    findings.push(omitUndefined({
       severity: 'info',
       code: 'SHORT_DESCRIPTION',
       message: `Description is very short (${operation.description.length} chars). Consider adding more detail for better agent understanding.`,
       operationId,
       path,
       method,
-    });
+    }));
   }
 
   // Check 2: Schema quality
@@ -234,25 +236,25 @@ function analyzeOperation(
   const hasOutputSchema = hasValidOutputSchema(operation, method);
 
   if (!hasInputSchema && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
-    findings.push({
+    findings.push(omitUndefined({
       severity: 'warning',
       code: 'MISSING_INPUT_SCHEMA',
       message: 'Mutating operation should define request body schema',
       operationId,
       path,
       method,
-    });
+    }));
   }
 
   if (!hasOutputSchema && method === 'GET') {
-    findings.push({
+    findings.push(omitUndefined({
       severity: 'error',
       code: 'MISSING_OUTPUT_SCHEMA',
       message: 'GET operation must have a non-empty output schema',
       operationId,
       path,
       method,
-    });
+    }));
   }
 
   // Check 6: Missing effects for mutating operations
@@ -260,7 +262,7 @@ function analyzeOperation(
   const hasEffects = hasEffectClassification(operation);
 
   if (isMutating && !hasEffects) {
-    findings.push({
+    findings.push(omitUndefined({
       severity: 'warning',
       code: 'MISSING_EFFECTS',
       message: 'Mutating operation should have x-mcp-effects classification',
@@ -270,13 +272,13 @@ function analyzeOperation(
       context: {
         suggestion: 'Add x-mcp-effects to operation object with appropriate effect types',
       },
-    });
+    }));
   }
 
   // Check 7: Unsafe fields in request body
   const unsafeFields = findUnsafeFields(operation);
   if (unsafeFields.length > 0) {
-    findings.push({
+    findings.push(omitUndefined({
       severity: 'warning',
       code: 'UNSAFE_FIELDS_DETECTED',
       message: `Request body contains potentially sensitive fields: ${unsafeFields.join(', ')}. Consider adding redaction hints.`,
@@ -284,7 +286,7 @@ function analyzeOperation(
       path,
       method,
       context: { unsafeFields },
-    });
+    }));
   }
 
   // Check 8: Light preset exposure policy
@@ -378,8 +380,13 @@ function hasValidOutputSchema(operation: OpenAPIOperation, method: string): bool
   if (!jsonContent?.schema) return false;
 
   // Check that schema is not empty
-  const schema = jsonContent.schema as OpenAPISchema;
-  return schema.type != null || schema.properties != null || schema.$ref != null;
+  const schema = jsonContent.schema;
+  // Schema can be either a SchemaObject or a ReferenceObject
+  return (
+    (schema as OpenAPISchema).type != null ||
+    (schema as OpenAPISchema).properties != null ||
+    (schema as OpenAPIV3.ReferenceObject).$ref != null
+  );
 }
 
 /**
@@ -477,7 +484,7 @@ function findOverlappingTools(operations: OperationAnalysis[]): Finding[] {
     // Check for exact duplicates
     if (seen.has(op.operationId)) {
       const duplicate = seen.get(op.operationId)!;
-      findings.push({
+      findings.push(omitUndefined({
         severity: 'error',
         code: 'DUPLICATE_OPERATION_ID',
         message: `Duplicate operationId "${op.operationId}" found`,
@@ -488,21 +495,21 @@ function findOverlappingTools(operations: OperationAnalysis[]): Finding[] {
             `${op.method} ${op.path}`,
           ],
         },
-      });
+      }));
       continue;
     }
 
     // Check for similar names (potential confusion)
-    for (const [existingId, existingOp] of seen.entries()) {
+    for (const [existingId] of seen.entries()) {
       if (areNamesSimilar(op.operationId, existingId)) {
-        findings.push({
+        findings.push(omitUndefined({
           severity: 'warning',
           code: 'SIMILAR_OPERATION_NAMES',
           message: `Operation names "${op.operationId}" and "${existingId}" are very similar and may cause confusion`,
           context: {
             operations: [op.operationId, existingId],
           },
-        });
+        }));
       }
     }
 
@@ -545,18 +552,18 @@ function levenshteinDistance(str1: string, str2: string): number {
   for (let i = 1; i <= str2.length; i++) {
     for (let j = 1; j <= str1.length; j++) {
       if (str2.charAt(i - 1) === str1.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
+        matrix[i]![j] = matrix[i - 1]![j - 1]!;
       } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1,
-          matrix[i][j - 1] + 1,
-          matrix[i - 1][j] + 1,
+        matrix[i]![j] = Math.min(
+          matrix[i - 1]![j - 1]! + 1,
+          matrix[i]![j - 1]! + 1,
+          matrix[i - 1]![j]! + 1,
         );
       }
     }
   }
 
-  return matrix[str2.length][str1.length];
+  return matrix[str2.length]![str1.length]!;
 }
 
 /**

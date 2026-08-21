@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Inspect command - Live server introspection
  */
@@ -12,6 +13,51 @@ import type {
   DiffResult,
 } from './inspect-types.js';
 import { formatHumanReadable, formatJson } from './inspect-output.js';
+
+/**
+ * JSON-RPC response types
+ */
+interface JsonRpcError {
+  code: number;
+  message: string;
+  data?: unknown;
+}
+
+interface JsonRpcResponse<T = unknown> {
+  jsonrpc: '2.0';
+  id: number | string;
+  result?: T;
+  error?: JsonRpcError;
+}
+
+interface InitializeResult {
+  protocolVersion: string;
+  serverInfo?: {
+    name?: string;
+    version?: string;
+    registryHash?: string;
+  };
+  capabilities?: Record<string, unknown>;
+}
+
+interface ToolsListResult {
+  tools?: Array<{
+    name: string;
+    description?: string;
+    inputSchema?: Record<string, unknown>;
+    outputSchema?: Record<string, unknown>;
+    'x-mcp-effects'?: {
+      readOnly?: boolean;
+      idempotent?: boolean;
+      [key: string]: unknown;
+    };
+    'x-mcp-auth'?: {
+      required?: boolean;
+      schemes?: string[];
+    };
+    annotations?: Record<string, unknown>;
+  }>;
+}
 
 /**
  * Inspect command entry point
@@ -95,8 +141,6 @@ async function inspectServer(flags: {
   dryRun: boolean;
   diffAgainst?: string;
 }): Promise<InspectResult> {
-  const startTime = Date.now();
-
   try {
     // Perform MCP handshake
     const handshakeStart = Date.now();
@@ -194,17 +238,21 @@ async function performHandshake(url: string): Promise<ServerInfo> {
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as JsonRpcResponse<InitializeResult>;
 
   if (data.error) {
-    throw new Error(`MCP error: ${data.error.message || JSON.stringify(data.error)}`);
+    throw new Error(`MCP error: ${data.error.message ?? JSON.stringify(data.error)}`);
   }
 
   const result = data.result;
+  if (!result) {
+    throw new Error('Missing result in initialize response');
+  }
+
   return {
-    name: result.serverInfo?.name || 'unknown',
-    version: result.serverInfo?.version || 'unknown',
-    protocolVersion: result.protocolVersion || 'unknown',
+    name: result.serverInfo?.name ?? 'unknown',
+    version: result.serverInfo?.version ?? 'unknown',
+    protocolVersion: result.protocolVersion ?? 'unknown',
     registryHash: result.serverInfo?.registryHash,
   };
 }
@@ -238,14 +286,14 @@ async function getToolsList(url: string): Promise<ToolInfo[]> {
     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as JsonRpcResponse<ToolsListResult>;
 
   if (data.error) {
-    throw new Error(`MCP error: ${data.error.message || JSON.stringify(data.error)}`);
+    throw new Error(`MCP error: ${data.error.message ?? JSON.stringify(data.error)}`);
   }
 
-  const tools = data.result?.tools || [];
-  return tools.map((t: any) => ({
+  const tools = data.result?.tools ?? [];
+  return tools.map((t) => ({
     name: t.name,
     description: t.description,
     inputSchema: t.inputSchema,
@@ -312,13 +360,13 @@ async function executeDryRun(url: string, toolName: string): Promise<DryRunResul
       };
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as JsonRpcResponse;
 
     if (data.error) {
       return {
         tool: toolName,
         success: false,
-        error: data.error.message || JSON.stringify(data.error),
+        error: data.error.message ?? JSON.stringify(data.error),
         executionMs,
       };
     }
@@ -354,8 +402,8 @@ function computeDiff(
   snapshot: Partial<InspectResult>,
   current: Partial<InspectResult>,
 ): DiffResult {
-  const snapshotTools = new Set(snapshot.tools?.map((t) => t.name) || []);
-  const currentTools = new Set(current.tools?.map((t) => t.name) || []);
+  const snapshotTools = new Set(snapshot.tools?.map((t) => t.name) ?? []);
+  const currentTools = new Set(current.tools?.map((t) => t.name) ?? []);
 
   const added: string[] = [];
   const removed: string[] = [];
@@ -374,8 +422,8 @@ function computeDiff(
 
   // Check for modified schemas (simplified)
   const modified: Array<{ tool: string; changes: string[] }> = [];
-  const snapshotToolMap = new Map(snapshot.tools?.map((t) => [t.name, t]));
-  const currentToolMap = new Map(current.tools?.map((t) => [t.name, t]));
+  const snapshotToolMap = new Map(snapshot.tools?.map((t) => [t.name, t]) ?? []);
+  const currentToolMap = new Map(current.tools?.map((t) => [t.name, t]) ?? []);
 
   for (const toolName of currentTools) {
     if (snapshotTools.has(toolName)) {

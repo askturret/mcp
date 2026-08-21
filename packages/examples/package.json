@@ -1,0 +1,19 @@
+{
+  "name": "@askturret/mcp-examples",
+  "version": "0.1.0",
+  "description": "Example applications - Petstore, order-management",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "echo \"No build needed for examples\"",
+    "test": "echo \"Tests not yet implemented\""
+  },
+  "dependencies": {
+    "@askturret/mcp-core": "*",
+    "@askturret/mcp-sources-openapi": "*",
+    "@askturret/mcp-adapters-express": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

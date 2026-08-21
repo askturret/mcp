@@ -1,0 +1,70 @@
+{
+  "name": "@askturret/mcp",
+  "version": "0.1.0",
+  "description": "Agent-facing API layer - discover, shape, govern, and serve operations through Model Context Protocol",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./packages/core/dist/index.d.ts",
+      "import": "./packages/core/dist/index.js"
+    },
+    "./openapi": {
+      "types": "./packages/sources-openapi/dist/index.d.ts",
+      "import": "./packages/sources-openapi/dist/index.js"
+    },
+    "./express": {
+      "types": "./packages/adapters-express/dist/index.d.ts",
+      "import": "./packages/adapters-express/dist/index.js"
+    },
+    "./otel": {
+      "types": "./packages/observability/dist/index.d.ts",
+      "import": "./packages/observability/dist/index.js"
+    }
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ai",
+    "agents",
+    "openapi",
+    "api-gateway"
+  ],
+  "author": "AskTurret",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/askturret/mcp.git"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "typescript": "^5.5.0"
+  },
+  "peerDependencies": {
+    "express": "^4.18.0 || ^5.0.0",
+    "fastify": "^4.0.0 || ^5.0.0",
+    "@modelcontextprotocol/sdk": "^0.5.0"
+  },
+  "peerDependenciesMeta": {
+    "express": {
+      "optional": true
+    },
+    "fastify": {
+      "optional": true
+    },
+    "@modelcontextprotocol/sdk": {
+      "optional": false
+    }
+  }
+}

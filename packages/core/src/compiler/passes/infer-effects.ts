@@ -37,7 +37,7 @@ export const inferEffects: CompilerPass = {
       // Merge source-provided partial effects with safe defaults
       const effects: EffectMetadata = {
         ...DEFAULT_EFFECTS,
-        ...op.effects,
+        ...(op.effects ?? {}),
       };
 
       return {

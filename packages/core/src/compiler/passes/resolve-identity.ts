@@ -6,6 +6,7 @@
  */
 
 import type { CompilerPass, CompiledOperation, CompilerContext } from '../types.js';
+import { omitUndefined } from '../../utils.js';
 
 /**
  * Source precedence order (highest to lowest)
@@ -48,10 +49,10 @@ export const resolveIdentity: CompilerPass = {
     for (const [id, ops] of byId) {
       if (ops.length === 1) {
         // No conflict
+        const { candidateId: _, ...rest } = ops[0];
         resolved.push({
-          ...ops[0],
+          ...rest,
           id,
-          candidateId: undefined, // Clear candidate ID now that we have canonical ID
         });
       } else {
         // Conflict - pick winner by source precedence (deterministic)
@@ -62,11 +63,16 @@ export const resolveIdentity: CompilerPass = {
         });
 
         const winner = sorted[0];
+        if (!winner) {
+          // Should never happen since ops.length > 1, but satisfy TypeScript
+          continue;
+        }
+
         const losers = sorted.slice(1);
 
         // Warn about duplicates
         for (const loser of losers) {
-          context.warnings.warn({
+          context.warnings.warn(omitUndefined({
             code: 'DUPLICATE_OPERATION_ID',
             message: `Operation ID '${id}' defined by multiple sources`,
             location: loser.source?.location,
@@ -75,13 +81,13 @@ export const resolveIdentity: CompilerPass = {
               winnerSource: winner.source?.kind,
               loserSource: loser.source?.kind,
             },
-          });
+          }));
         }
 
+        const { candidateId: _, ...rest } = winner;
         resolved.push({
-          ...winner,
+          ...rest,
           id,
-          candidateId: undefined,
         });
       }
     }

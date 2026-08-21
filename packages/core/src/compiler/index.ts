@@ -121,11 +121,11 @@ export function createCompiler(version: number = 1): Compiler {
         rawInput: op.rawInput,
         rawOutput: op.rawOutput,
         source: op.source,
-        hints: op.hints,
-        effects: op.effects,
-        executor: op.executor,
-        annotations: op.annotations,
-        provenance: op.provenance,
+        ...(op.hints && { hints: op.hints }),
+        ...(op.effects && { effects: op.effects }),
+        ...(op.executor && { executor: op.executor }),
+        ...(op.annotations && { annotations: op.annotations }),
+        ...(op.provenance && { provenance: op.provenance }),
       }));
 
       // Run all passes in order

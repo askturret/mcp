@@ -6,6 +6,7 @@
  */
 
 import type { CompilerPass, CompiledOperation, CompilerContext } from '../types.js';
+import { omitUndefined } from '../../utils.js';
 
 export const validateInvariants: CompilerPass = {
   name: 'validate-invariants',
@@ -21,75 +22,75 @@ export const validateInvariants: CompilerPass = {
     for (const op of operations) {
       // Required fields check
       if (!op.id) {
-        context.warnings.warn({
+        context.warnings.warn(omitUndefined({
           code: 'MISSING_OPERATION_ID',
           message: `Operation missing required 'id' field`,
           location: op.source?.location,
-        });
+        }));
         continue; // Skip invalid operation
       }
 
       if (!op.name) {
-        context.warnings.warn({
+        context.warnings.warn(omitUndefined({
           code: 'MISSING_OPERATION_NAME',
           message: `Operation '${op.id}' missing required 'name' field`,
           location: op.source?.location,
-        });
+        }));
         continue;
       }
 
       if (!op.description) {
-        context.warnings.warn({
+        context.warnings.warn(omitUndefined({
           code: 'MISSING_OPERATION_DESCRIPTION',
           message: `Operation '${op.id}' missing required 'description' field`,
           location: op.source?.location,
-        });
+        }));
         continue;
       }
 
       if (!op.input) {
-        context.warnings.warn({
+        context.warnings.warn(omitUndefined({
           code: 'MISSING_INPUT_SCHEMA',
           message: `Operation '${op.id}' missing required 'input' schema`,
           location: op.source?.location,
-        });
+        }));
         continue;
       }
 
       if (!op.output) {
-        context.warnings.warn({
+        context.warnings.warn(omitUndefined({
           code: 'MISSING_OUTPUT_SCHEMA',
           message: `Operation '${op.id}' missing required 'output' schema`,
           location: op.source?.location,
-        });
+        }));
         continue;
       }
 
       if (!op.effects) {
-        context.warnings.warn({
+        context.warnings.warn(omitUndefined({
           code: 'MISSING_EFFECTS',
           message: `Operation '${op.id}' missing required 'effects' metadata`,
           location: op.source?.location,
-        });
+        }));
         continue;
       }
 
       if (!op.executor) {
-        context.warnings.warn({
+        context.warnings.warn(omitUndefined({
           code: 'MISSING_EXECUTOR',
           message: `Operation '${op.id}' missing required 'executor' binding`,
           location: op.source?.location,
-        });
+        }));
         continue;
       }
 
       // Effect coherence check
       if (op.effects.readOnly && op.effects.idempotencyKeyRequired) {
-        context.warnings.warn({
+        context.warnings.warn(omitUndefined({
           code: 'INCOHERENT_EFFECTS',
           message: `Operation '${op.id}' is readOnly but requires idempotency key`,
           location: op.source?.location,
-        });
+        }));
       }
 
       validated.push(op);

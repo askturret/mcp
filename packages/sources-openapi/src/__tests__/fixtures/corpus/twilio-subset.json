@@ -1,0 +1,118 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Twilio API Subset",
+    "version": "2010-04-01",
+    "description": "Simplified Twilio messaging operations"
+  },
+  "servers": [
+    {
+      "url": "https://api.twilio.com/2010-04-01"
+    }
+  ],
+  "paths": {
+    "/Accounts/{AccountSid}/Messages.json": {
+      "post": {
+        "operationId": "createMessage",
+        "summary": "Send a new message",
+        "x-mcp": {
+          "effects": {
+            "classifications": ["notification"]
+          }
+        },
+        "parameters": [
+          {
+            "name": "AccountSid",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "To": {
+                    "type": "string",
+                    "description": "Destination phone number"
+                  },
+                  "From": {
+                    "type": "string",
+                    "description": "Twilio phone number"
+                  },
+                  "Body": {
+                    "type": "string",
+                    "description": "Message text"
+                  }
+                },
+                "required": ["To", "From", "Body"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Message created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sid": { "type": "string" },
+                    "status": { "type": "string" },
+                    "to": { "type": "string" },
+                    "from": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listMessages",
+        "summary": "List messages",
+        "parameters": [
+          {
+            "name": "AccountSid",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "PageSize",
+            "in": "query",
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "sid": { "type": "string" },
+                          "status": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

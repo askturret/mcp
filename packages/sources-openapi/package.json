@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "@askturret/mcp-core": "*",
-    "@apidevtools/swagger-parser": "^10.1.0"
+    "@apidevtools/swagger-parser": "^10.1.0",
+    "openapi-types": "^12.1.3"
   },
   "devDependencies": {
     "typescript": "*",

@@ -10,7 +10,7 @@
  */
 
 import SwaggerParser from '@apidevtools/swagger-parser';
-import type { OpenAPI, OpenAPIV3, OpenAPIV3_1 } from '@apidevtools/swagger-parser';
+import type { OpenAPI, OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
 import type {
   OperationSource,
   DiscoveredOperation,
@@ -261,7 +261,7 @@ function discoverOperation(
     rawOutput,
     source: {
       kind: 'openapi',
-      location: location ? `${location}#/paths/${pathPattern}/${method}` : undefined,
+      ...(location && { location: `${location}#/paths/${pathPattern}/${method}` }),
     },
     effects,
     annotations: xMcp.annotations,
@@ -463,7 +463,7 @@ function inferEffects(
     return {
       ...baseEffects,
       ...xMcpEffects,
-      classifications: mergedClassifications.length > 0 ? mergedClassifications : undefined,
+      ...(mergedClassifications.length > 0 && { classifications: mergedClassifications }),
     };
   }
 
@@ -486,14 +486,14 @@ function buildProvenance(
   provenance.push({
     field: 'name',
     kind: 'openapi',
-    location: pointer,
+    ...(pointer && { location: pointer }),
   });
 
   // Description provenance
   provenance.push({
     field: 'description',
     kind: 'openapi',
-    location: pointer,
+    ...(pointer && { location: pointer }),
   });
 
   // Effects provenance
@@ -502,14 +502,14 @@ function buildProvenance(
     provenance.push({
       field: 'effects',
       kind: 'overlay', // x-mcp is treated as source-native metadata (§5.3)
-      location: pointer,
+      ...(pointer && { location: pointer }),
     });
   } else {
     // Effects came from HTTP method inference
     provenance.push({
       field: 'effects',
       kind: 'inference',
-      location: pointer,
+      ...(pointer && { location: pointer }),
     });
   }
 

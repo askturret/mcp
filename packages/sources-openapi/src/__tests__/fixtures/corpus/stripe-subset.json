@@ -1,0 +1,134 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Stripe API Subset",
+    "version": "2023-10-16",
+    "description": "Simplified Stripe PaymentIntent operations"
+  },
+  "servers": [
+    {
+      "url": "https://api.stripe.com/v1"
+    }
+  ],
+  "paths": {
+    "/payment_intents": {
+      "post": {
+        "operationId": "createPaymentIntent",
+        "summary": "Create a PaymentIntent",
+        "x-mcp": {
+          "effects": {
+            "classifications": ["financial"]
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/x-www-form-urlencoded": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "amount": {
+                    "type": "integer",
+                    "description": "Amount in cents"
+                  },
+                  "currency": {
+                    "type": "string",
+                    "description": "Three-letter ISO currency code"
+                  },
+                  "payment_method": {
+                    "type": "string"
+                  }
+                },
+                "required": ["amount", "currency"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "PaymentIntent created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "amount": { "type": "integer" },
+                    "currency": { "type": "string" },
+                    "status": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listPaymentIntents",
+        "summary": "List PaymentIntents",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": { "type": "integer" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of PaymentIntents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "amount": { "type": "integer" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payment_intents/{id}": {
+      "get": {
+        "operationId": "retrievePaymentIntent",
+        "summary": "Retrieve a PaymentIntent",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "PaymentIntent details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "amount": { "type": "integer" },
+                    "status": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

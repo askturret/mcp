@@ -33,3 +33,4 @@ export * from './compiler/index.js';
 export type { CompilerContext, CompilerPass, CompilerWarning } from './compiler/types.js';
 export { omitUndefined } from './utils.js';
 export { AtomicRegistryReference, type RegistryReference } from './registry-reference.js';
+export { createDispatcher, type CommandDispatcher, type DispatcherHooks, type DispatchContext, type MCPResult } from './dispatcher/index.js';

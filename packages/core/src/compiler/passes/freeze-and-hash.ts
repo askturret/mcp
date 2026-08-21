@@ -6,7 +6,7 @@
  */
 
 import type { CompilerPass, CompiledOperation, CompilerContext } from '../types.js';
-import type { OperationDefinition, RegistrySnapshot } from '../../types.js';
+import type { OperationDefinition, RegistrySnapshot, EffectMetadata } from '../../types.js';
 import { createHash } from 'crypto';
 
 /**
@@ -71,13 +71,14 @@ export const freezeAndHash: CompilerPass = {
     context.logger.debug('Running freeze-and-hash pass', { count: operations.length });
 
     // Convert to OperationDefinition (drop transient fields)
+    // Pass 8 (validate-invariants) guarantees effects is complete by this point
     const definitions: OperationDefinition[] = operations.map(op => ({
       id: op.id!,
       name: op.name,
       description: op.description,
       input: op.input!,
       output: op.output!,
-      effects: op.effects!,
+      effects: op.effects! as EffectMetadata, // Safe: validate-invariants ensures completeness
       executor: op.executor!,
       ...(op.annotations && { annotations: op.annotations }),
       ...(op.provenance && { provenance: op.provenance }),

@@ -85,8 +85,9 @@ export type PresetName = 'light' | 'production' | 'regulated';
  * eventually becomes OperationDefinition.
  *
  * This is a superset type carrying both pre-compilation and post-compilation fields.
+ * Uses Omit to exclude 'effects' from the base, then adds a compatible mid-pipeline type.
  */
-export interface CompiledOperation extends Partial<OperationDefinition> {
+export interface CompiledOperation extends Omit<Partial<OperationDefinition>, 'effects'> {
   /**
    * Candidate ID (may not be final)
    */
@@ -128,6 +129,7 @@ export interface CompiledOperation extends Partial<OperationDefinition> {
   /**
    * Effect metadata - may be partial until infer-effects pass (step 6) completes.
    * Sources may only specify some effect fields; compiler fills in the rest.
+   * Pass 8 (validate-invariants) ensures completeness before freezing.
    */
   effects?: Partial<EffectMetadata>;
 }

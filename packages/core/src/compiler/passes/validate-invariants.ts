@@ -6,7 +6,35 @@
  */
 
 import type { CompilerPass, CompiledOperation, CompilerContext, CompilerWarning } from '../types.js';
+import type { EffectMetadata } from '../../types.js';
 import { omitUndefined } from '../../utils.js';
+
+/**
+ * Default safe effects (conservative: assume non-idempotent mutation)
+ * Belt-and-suspenders: infer-effects (pass 6) should have completed these,
+ * but pass 8 validates and completes any gaps before freezing.
+ */
+const DEFAULT_EFFECTS: EffectMetadata = {
+  readOnly: false,
+  idempotent: false,
+  retryable: false,
+  idempotencyKeyRequired: true,
+  classifications: [],
+};
+
+/**
+ * Runtime check: is effects object complete?
+ * Type guard narrows Partial<EffectMetadata> to full EffectMetadata.
+ */
+function isCompleteEffects(effects: Partial<EffectMetadata>): effects is EffectMetadata {
+  return (
+    typeof effects.readOnly === 'boolean' &&
+    typeof effects.idempotent === 'boolean' &&
+    typeof effects.retryable === 'boolean' &&
+    typeof effects.idempotencyKeyRequired === 'boolean' &&
+    Array.isArray(effects.classifications)
+  );
+}
 
 export const validateInvariants: CompilerPass = {
   name: 'validate-invariants',
@@ -75,6 +103,23 @@ export const validateInvariants: CompilerPass = {
         continue;
       }
 
+      // Belt-and-suspenders: ensure effects is complete before freezing
+      // infer-effects (pass 6) should have completed this, but validate defensively
+      let completeEffects: EffectMetadata;
+      if (isCompleteEffects(op.effects)) {
+        completeEffects = op.effects;
+      } else {
+        // Fill missing fields with safe defaults
+        completeEffects = {
+          ...DEFAULT_EFFECTS,
+          ...op.effects,
+        };
+        context.logger.debug(`Completed partial effects for operation '${op.id}'`, {
+          provided: Object.keys(op.effects),
+          completed: Object.keys(completeEffects),
+        });
+      }
+
       if (!op.executor) {
         context.warnings.warn(omitUndefined<CompilerWarning>({
           code: 'MISSING_EXECUTOR',
@@ -84,8 +129,8 @@ export const validateInvariants: CompilerPass = {
         continue;
       }
 
-      // Effect coherence check
-      if (op.effects.readOnly && op.effects.idempotencyKeyRequired) {
+      // Effect coherence check (use completed effects)
+      if (completeEffects.readOnly && completeEffects.idempotencyKeyRequired) {
         context.warnings.warn(omitUndefined<CompilerWarning>({
           code: 'INCOHERENT_EFFECTS',
           message: `Operation '${op.id}' is readOnly but requires idempotency key`,
@@ -93,7 +138,11 @@ export const validateInvariants: CompilerPass = {
         }));
       }
 
-      validated.push(op);
+      // Push operation with completed effects
+      validated.push({
+        ...op,
+        effects: completeEffects,
+      });
     }
 
     context.logger.debug('Validation complete', {

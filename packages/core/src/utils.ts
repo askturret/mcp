@@ -24,7 +24,7 @@
  * const obj = omitUndefined({ a: 1, b: undefined });  // { a: 1 }
  * ```
  */
-export function omitUndefined<T extends Record<string, unknown>>(
+export function omitUndefined<T extends object>(
   obj: T,
 ): T {
   const result: Partial<T> = {};

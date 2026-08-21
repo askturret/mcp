@@ -40,9 +40,12 @@ import type { ExpressMcpOptions, McpFromOpenApiOptions, RequestContext } from '.
  */
 export function mcpFromOpenApi(
   specOrOptions: string | McpFromOpenApiOptions,
+  extraOptions?: Omit<McpFromOpenApiOptions, 'spec'>,
 ): Router {
   const options: McpFromOpenApiOptions =
-    typeof specOrOptions === 'string' ? { spec: specOrOptions } : specOrOptions;
+    typeof specOrOptions === 'string'
+      ? { spec: specOrOptions, ...extraOptions }
+      : specOrOptions;
 
   // Create OpenAPI source
   const source = fromOpenApi(options.spec);
@@ -199,7 +202,7 @@ export function expressMcp(options: ExpressMcpOptions): Router {
 
   // Mount HTTP transport handler
   // Check path match before delegating to transport to avoid swallowing sibling routes
-  router.use(createTransportMiddleware(transport, basePath, deadlineMs));
+  router.use(createTransportMiddleware(transport, basePath, deadlineMs, initPromise));
 
   // Catch-all 404 handler for unknown paths
   router.use((_req: Request, res: Response) => {
@@ -216,6 +219,7 @@ function createTransportMiddleware(
   transport: ReturnType<typeof createHttpTransport>,
   basePath: string,
   deadlineMs: number,
+  ready: Promise<void>,
 ) {
   const handler = transport.handler();
 
@@ -230,6 +234,14 @@ function createTransportMiddleware(
     }
 
     try {
+      // Wait for the registry to finish its async discover/compile before
+      // handling the first request — otherwise an early caller can race
+      // ahead of initialization and see an empty tools list.
+      // Wait for the registry to finish its async discover/compile before
+      // handling the first request — otherwise an early caller can race
+      // ahead of initialization and see an empty tools list.
+      await ready;
+
       // Extract request context from Express req
       const user = extractUserContext(req);
       const context: RequestContext = {

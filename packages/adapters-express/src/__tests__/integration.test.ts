@@ -125,8 +125,13 @@ describe('Express facade integration (real HTTP)', () => {
 
     expect(response.body).toHaveProperty('jsonrpc', '2.0');
     expect(response.body).toHaveProperty('id', 2);
-    // Note: result or error, depending on executor implementation
-    expect(response.body).toHaveProperty('result');
+    // The one-call form doesn't wire an executor, so a well-formed JSON-RPC
+    // error (no executor registered) is the expected outcome here, not a
+    // result — only assert the envelope carries exactly one of the two.
+    const hasResult = Object.prototype.hasOwnProperty.call(response.body, 'result');
+    const hasError = Object.prototype.hasOwnProperty.call(response.body, 'error');
+    expect(hasResult || hasError).toBe(true);
+    expect(hasResult && hasError).toBe(false);
   });
 
   it('should handle basePath other than /mcp', async () => {

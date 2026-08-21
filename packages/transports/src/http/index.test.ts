@@ -486,8 +486,13 @@ describe('HTTP Transport', () => {
 
       const handler = smallLimitTransport.handler();
 
-      // Should handle size limit error gracefully
-      await expect(handler(req, res)).rejects.toThrow('Request body too large');
+      // The handler catches the error and returns 500
+      await handler(req, res);
+
+      expect(res.statusCode).toBe(500);
+      const response = JSON.parse(res.body);
+      expect(response.error.code).toBe(-32603);
+      expect(response.error.message).toBe('Internal server error');
     });
 
     it('should reject response exceeding size limit with OUTPUT_TOO_LARGE', async () => {

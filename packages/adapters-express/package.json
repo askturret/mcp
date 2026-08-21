@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@askturret/mcp-core": "*",
+    "@askturret/mcp-explorer": "*",
     "@askturret/mcp-sources-openapi": "*",
     "@askturret/mcp-transports": "*"
   },

@@ -8,7 +8,8 @@
   "include": ["src/**/*"],
   "references": [
     { "path": "../core" },
-    { "path": "../transports" }
+    { "path": "../transports" },
+    { "path": "../explorer" }
   ],
   "exclude": ["dist", "node_modules", "**/*.test.ts", "**/*.spec.ts"]
 }

@@ -29,6 +29,7 @@ import {
 } from '@askturret/mcp-core';
 import { fromOpenApi } from '@askturret/mcp-sources-openapi';
 import { createHttpTransport } from '@askturret/mcp-transports';
+import { buildExplorerViewModel, renderExplorerHtml } from '@askturret/mcp-explorer';
 import type { ExpressMcpOptions, McpFromOpenApiOptions, RequestContext } from './types.js';
 
 /**
@@ -190,9 +191,30 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   // Mount Explorer UI BEFORE transport so it gets priority
   // Routes are relative to router mount point (user mounts at basePath)
   if (enableExplorer) {
-    router.get('/explorer', (_req: Request, res: Response) => {
-      res.setHeader('Content-Type', 'text/html');
-      res.send(createExplorerHtml(basePath));
+    // §10.1 invariant 9: Explorer is off by default in production. Reaching
+    // here with NODE_ENV=production means the operator opted in explicitly, so
+    // name the setting that did it — the risk is not blocked, but it is loud.
+    if (process.env['NODE_ENV'] === 'production' && options.enableExplorer === true) {
+      logger.warn(
+        'Explorer is ENABLED in production by an explicit enableExplorer: true setting. ' +
+          'It publishes the full tool surface and can invoke tools. Explorer has no ' +
+          'authentication of its own — it inherits only whatever protects ' +
+          `${basePath}/explorer in the host app.`,
+        { setting: 'enableExplorer: true', nodeEnv: 'production', path: `${basePath}/explorer` },
+      );
+    }
+
+    router.get('/explorer', async (_req: Request, res: Response) => {
+      // Await discovery/compile so a fast first request doesn't render an
+      // empty registry. Errors surface through the transport, not here.
+      await initPromise.catch(() => undefined);
+
+      const model = buildExplorerViewModel(registry.current(), basePath);
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      // Dev tool: never cache, never index.
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+      res.send(renderExplorerHtml(model));
     });
   } else {
     // Return 404 in production
@@ -284,53 +306,6 @@ function extractUserContext(req: Request): RequestContext['user'] | undefined {
   if (typeof user.name === 'string') result.name = user.name;
   if (Array.isArray(user.roles)) result.roles = user.roles;
   return result;
-}
-
-/**
- * Create minimal Explorer HTML
- * (Full implementation deferred to #19 - Explorer UI epic)
- */
-function createExplorerHtml(basePath: string): string {
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>MCP Explorer (Dev)</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; }
-    h1 { color: #333; }
-    .endpoint { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 4px; }
-    code { background: #e0e0e0; padding: 2px 6px; border-radius: 3px; }
-  </style>
-</head>
-<body>
-  <h1>AskTurret MCP Explorer</h1>
-  <p>This is a minimal development explorer. Full Explorer UI ships in Epic #1.3 (issue #19).</p>
-
-  <div class="endpoint">
-    <h3>POST ${basePath}</h3>
-    <p>JSON-RPC endpoint for MCP operations:</p>
-    <ul>
-      <li><code>initialize</code> - Protocol negotiation</li>
-      <li><code>tools/list</code> - List available operations</li>
-      <li><code>tools/call</code> - Execute an operation</li>
-      <li><code>ping</code> - Health check</li>
-    </ul>
-  </div>
-
-  <div class="endpoint">
-    <h3>GET ${basePath}</h3>
-    <p>SSE stream for server-initiated notifications (heartbeat only in v0.1)</p>
-  </div>
-
-  <div class="endpoint">
-    <h3>DELETE ${basePath}</h3>
-    <p>Session termination (if sessions enabled)</p>
-  </div>
-
-  <p><em>Note: This explorer is only available when NODE_ENV !== 'production'</em></p>
-</body>
-</html>`;
 }
 
 /**

@@ -18,14 +18,15 @@ import type { Request, Response, NextFunction, Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   createCompiler,
+  createDispatcher,
   AtomicRegistryReference,
   type RegistrySnapshot,
   type OperationDefinition,
   type Logger,
   type DiscoveredOperation,
+  type DiscoveryContext,
+  type CompilerContext,
 } from '@askturret/mcp-core';
-import type { DiscoveryContext, CompilerContext } from '@askturret/mcp-core';
-import type { PresetName } from '@askturret/mcp-core/compiler/types.js';
 import { fromOpenApi } from '@askturret/mcp-sources-openapi';
 import { createHttpTransport } from '@askturret/mcp-transports';
 import type { ExpressMcpOptions, McpFromOpenApiOptions, RequestContext } from './types.js';
@@ -104,6 +105,7 @@ export function expressMcp(options: ExpressMcpOptions): Router {
       const discoveryContext: DiscoveryContext = {
         logger,
         abortSignal: abortController.signal,
+        overlays: [],
       };
 
       const discovered: DiscoveredOperation[] = [];
@@ -118,6 +120,7 @@ export function expressMcp(options: ExpressMcpOptions): Router {
         logger,
         preset: 'light' as const,
         overlays: [],
+        abortSignal: abortController.signal,
       };
       const fullSnapshot = await compiler.compile(discovered, compilerContext);
 

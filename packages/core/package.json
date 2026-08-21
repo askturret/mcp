@@ -4,6 +4,7 @@
   "description": "Core runtime - canonical model, compiler, registry, policies, execution",
   "type": "module",
   "private": true,
+  "license": "Apache-2.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

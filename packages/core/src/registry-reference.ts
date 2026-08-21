@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Atomic registry reference - single source of truth for current snapshot.
  *

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * fromDefinitions() - zero-cost explicit definition source
  *

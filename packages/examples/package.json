@@ -4,6 +4,7 @@
   "description": "Example applications - Petstore, order-management",
   "type": "module",
   "private": true,
+  "license": "Apache-2.0",
   "scripts": {
     "build": "echo \"No build needed for examples\"",
     "test": "exit 0"

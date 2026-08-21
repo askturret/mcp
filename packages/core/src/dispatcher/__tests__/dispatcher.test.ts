@@ -10,6 +10,24 @@ import type { DispatcherHooks } from '../types.js';
 import { freezeMap } from '../../compiler/passes/freeze-and-hash.js';
 
 /**
+ * Create a stub executor that echoes input (for testing envelope stages)
+ */
+function createStubExecutor() {
+  return {
+    execute: async (
+      _operation: OperationDefinition,
+      input: unknown,
+      _context: any,
+    ) => {
+      return {
+        ok: true as const,
+        value: input,
+      };
+    },
+  };
+}
+
+/**
  * Create a minimal test snapshot
  */
 function createTestSnapshot(version: number, hash: string) {
@@ -95,7 +113,11 @@ describe('CommandDispatcher', () => {
 
       const snapshot = createTestSnapshot(1, 'hash1');
       const registry = new AtomicRegistryReference(snapshot);
-      const dispatcher = createDispatcher(registry, hooks);
+
+      // Register stub executor
+      const executors = new Map();
+      executors.set('stub', createStubExecutor());
+      const dispatcher = createDispatcher(registry, hooks, executors);
 
       const command = createTestCommand();
       const result = await dispatcher.dispatch(command);
@@ -133,7 +155,11 @@ describe('CommandDispatcher', () => {
       // by confirming output passes through when valid
       const snapshot = createTestSnapshot(1, 'hash1');
       const registry = new AtomicRegistryReference(snapshot);
-      const dispatcher = createDispatcher(registry);
+
+      // Register stub executor
+      const executors = new Map();
+      executors.set('stub', createStubExecutor());
+      const dispatcher = createDispatcher(registry, {}, executors);
 
       const command = createTestCommand({ input: { valid: true } });
       const result = await dispatcher.dispatch(command);
@@ -185,7 +211,10 @@ describe('CommandDispatcher', () => {
         },
       };
 
-      const dispatcherWithHooks = createDispatcher(registry, hooks);
+      // Register stub executor
+      const executors = new Map();
+      executors.set('stub', createStubExecutor());
+      const dispatcherWithHooks = createDispatcher(registry, hooks, executors);
 
       // Start dispatch against snapshot1
       const command = createTestCommand();
@@ -234,7 +263,11 @@ describe('CommandDispatcher', () => {
 
       const snapshot = createTestSnapshot(1, 'hash1');
       const registry = new AtomicRegistryReference(snapshot);
-      const dispatcher = createDispatcher(registry, hooks);
+
+      // Register stub executor
+      const executors = new Map();
+      executors.set('stub', createStubExecutor());
+      const dispatcher = createDispatcher(registry, hooks, executors);
 
       const command = createTestCommand();
       const result = await dispatcher.dispatch(command);
@@ -301,6 +334,134 @@ describe('CommandDispatcher', () => {
       // Attempting to inject code between stages requires editing the sealed class
 
       expect(true).toBe(true); // Structural invariant, not runtime check
+    });
+  });
+
+  describe('executor invocation (regression test for #83)', () => {
+    it('should invoke the bound executor and return its real output (not echo)', async () => {
+      // Regression test: proves dispatcher actually calls operation.executor
+      // instead of echoing input. This is the exact class of test that was
+      // missing and let the stub ship in #13.
+
+      // Create a mock executor that returns a DIFFERENT value than input
+      const mockExecutor = {
+        execute: async (
+          _operation: OperationDefinition,
+          input: unknown,
+          _context: any,
+        ) => {
+          // Transform the input to prove we're not echoing
+          return {
+            ok: true as const,
+            value: {
+              transformed: true,
+              originalInput: input,
+              executorInvoked: true,
+            },
+          };
+        },
+      };
+
+      // Register the mock executor
+      const executors = new Map();
+      executors.set('handler', mockExecutor);
+
+      // Create operation that binds to our executor
+      const operations = new Map<string, OperationDefinition>([
+        [
+          'transform',
+          {
+            id: 'transform',
+            name: 'transform',
+            description: 'Test operation',
+            input: { type: 'object' },
+            output: { type: 'object' },
+            effects: {
+              readOnly: false,
+              idempotent: false,
+              retryable: false,
+              idempotencyKeyRequired: false,
+              classifications: [],
+            },
+            executor: { type: 'handler' }, // Binds to our mock
+          },
+        ],
+      ]);
+
+      const snapshot: RegistrySnapshot = {
+        version: 1,
+        hash: 'test-hash',
+        createdAt: new Date(),
+        operations: freezeMap(operations),
+      };
+
+      const registry = new AtomicRegistryReference(snapshot);
+      const dispatcher = createDispatcher(registry, {}, executors);
+
+      const command = createTestCommand({
+        operationId: 'transform',
+        input: { value: 42 },
+      });
+
+      const result = await dispatcher.dispatch(command);
+
+      // Verify the executor was actually invoked
+      expect(result.isError).toBe(false);
+      if (!result.isError) {
+        // The output should be the TRANSFORMED value, not an echo of input
+        expect(result.content).toEqual({
+          transformed: true,
+          originalInput: { value: 42 },
+          executorInvoked: true,
+        });
+        // Explicitly verify this is NOT an echo
+        expect(result.content).not.toEqual({ value: 42 });
+      }
+    });
+
+    it('should return error when no executor is registered for operation type', async () => {
+      // Test error handling when executor type is not registered
+
+      const operations = new Map<string, OperationDefinition>([
+        [
+          'unbound',
+          {
+            id: 'unbound',
+            name: 'unbound',
+            description: 'Operation with unregistered executor',
+            input: { type: 'object' },
+            output: { type: 'object' },
+            effects: {
+              readOnly: false,
+              idempotent: false,
+              retryable: false,
+              idempotencyKeyRequired: false,
+              classifications: [],
+            },
+            executor: { type: 'nonexistent' }, // No executor registered
+          },
+        ],
+      ]);
+
+      const snapshot: RegistrySnapshot = {
+        version: 1,
+        hash: 'test-hash',
+        createdAt: new Date(),
+        operations: freezeMap(operations),
+      };
+
+      const registry = new AtomicRegistryReference(snapshot);
+      const dispatcher = createDispatcher(registry, {}, new Map()); // Empty executors
+
+      const command = createTestCommand({ operationId: 'unbound' });
+      const result = await dispatcher.dispatch(command);
+
+      // Should return INTERNAL_ERROR when executor not found
+      expect(result.isError).toBe(true);
+      if (result.isError) {
+        expect(result.error?.code).toBe('INTERNAL_ERROR');
+        expect(result.error?.message).toContain('No executor registered');
+      }
     });
   });
 });

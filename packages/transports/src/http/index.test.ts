@@ -28,6 +28,7 @@ class MockRequest {
   url = '/mcp';
   private chunks: Buffer[] = [];
   private ended = false;
+  private closeHandler?: () => void;
 
   setBody(body: string) {
     this.chunks = [Buffer.from(body, 'utf-8')];
@@ -38,6 +39,15 @@ class MockRequest {
       this.chunks.forEach((chunk) => handler(chunk));
     } else if (event === 'end') {
       handler();
+    } else if (event === 'close') {
+      this.closeHandler = handler;
+    }
+  }
+
+  // Simulate connection close (call this in tests to trigger cleanup)
+  simulateClose() {
+    if (this.closeHandler) {
+      this.closeHandler();
     }
   }
 }
@@ -529,6 +539,9 @@ describe('HTTP Transport', () => {
       expect(res.headers['Content-Type']).toBe('text/event-stream');
       expect(res.headers['Cache-Control']).toBe('no-cache');
       expect(res.headers.Connection).toBe('keep-alive');
+
+      // Simulate connection close to trigger cleanup and prevent test hang
+      req.simulateClose();
     });
   });
 

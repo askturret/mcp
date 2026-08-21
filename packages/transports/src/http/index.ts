@@ -6,7 +6,8 @@
  * and integration with AskTurret's dispatcher.
  *
  * SDK import boundary: This is the ONLY package that imports from @modelcontextprotocol/sdk.
- * Enforced by lint rule to ensure SDK upgrades don't ripple through the codebase.
+ * NOTE: Enforcement via dependency-cruiser/ESLint is planned but not yet configured.
+ * For now, this boundary is maintained by convention and code review.
  */
 
 import { randomUUID } from 'crypto';
@@ -131,7 +132,7 @@ class StreamableHttpTransport implements HttpTransport {
     }
 
     // Strip port if present
-    const hostname = host.split(':')[0];
+    const hostname = host.split(':')[0] || host;
     return this.allowedHosts.has(hostname);
   }
 
@@ -282,7 +283,7 @@ class StreamableHttpTransport implements HttpTransport {
   }
 
   private async handleToolsCall(params: any, sessionId: string | null): Promise<any> {
-    // Update session activity if sessions enabled
+    // Update session activity and get client info if sessions enabled
     let clientInfo;
     if (this.sessionStore && sessionId) {
       const session = await this.sessionStore.get(sessionId);
@@ -302,9 +303,12 @@ class StreamableHttpTransport implements HttpTransport {
     const deadline = new Date(Date.now() + this.deadlineMs);
     const abortController = new AbortController();
     const requestId = params.id || randomUUID();
+    const traceId = params._meta?.traceId || randomUUID();
 
     const command: OperationCommand = {
       requestId,
+      traceId,
+      clientInfo,
       operationId: params.name,
       input: params.arguments || {},
       deadline,
@@ -312,11 +316,34 @@ class StreamableHttpTransport implements HttpTransport {
       registryHash: snapshot.hash,
     };
 
-    // Dispatch through the full 12-stage envelope
-    const result: MCPResult = await this.dispatcher.dispatch(command);
+    // Enforce deadline using Promise.race (same pattern as viaHandler fix in #14)
+    const deadlineMs = deadline.getTime() - Date.now();
+    let timeoutId: NodeJS.Timeout | undefined;
+
+    const dispatchPromise = this.dispatcher.dispatch(command);
+    const timeoutPromise = new Promise<MCPResult>((resolve) => {
+      timeoutId = setTimeout(() => {
+        abortController.abort(); // Signal cancellation
+        resolve({
+          ok: false,
+          error: {
+            code: 'TIMEOUT',
+            message: 'Request exceeded deadline',
+          },
+        });
+      }, deadlineMs);
+    });
+
+    // Race dispatch against deadline
+    const result: MCPResult = await Promise.race([dispatchPromise, timeoutPromise]);
+
+    // Clean up timeout
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
 
     // Map to MCP wire format
-    if ('error' in result) {
+    if (!result.ok) {
       return {
         jsonrpc: '2.0',
         id: requestId,
@@ -334,7 +361,7 @@ class StreamableHttpTransport implements HttpTransport {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result.result),
+            text: JSON.stringify(result.value),
           },
         ],
       },

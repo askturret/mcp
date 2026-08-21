@@ -5,6 +5,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { AtomicRegistryReference } from '../registry-reference.js';
 import type { RegistrySnapshot, OperationDefinition } from '../types.js';
+import { freezeMap } from '../compiler/passes/freeze-and-hash.js';
 
 /**
  * Create a minimal test snapshot
@@ -31,16 +32,18 @@ function createTestSnapshot(version: number, hash: string): RegistrySnapshot {
     ],
   ]);
 
+  // Create truly immutable Map (runtime enforcement via Proxy)
+  const immutableOperations = freezeMap(operations);
+
   // Deep-freeze the snapshot
   const snapshot: RegistrySnapshot = {
     version,
     hash,
     createdAt: new Date(),
-    operations,
+    operations: immutableOperations,
   };
 
   Object.freeze(snapshot);
-  Object.freeze(snapshot.operations);
 
   return snapshot;
 }
@@ -109,8 +112,8 @@ describe('AtomicRegistryReference', () => {
       await Promise.all([dispatch1, dispatch2]);
 
       // Verify: Dispatch 1 kept v41, Dispatch 2 got v42
-      expect(capturedSnapshots[0].version).toBe(41);
-      expect(capturedSnapshots[1].version).toBe(42);
+      expect(capturedSnapshots[0]?.version).toBe(41);
+      expect(capturedSnapshots[1]?.version).toBe(42);
     });
   });
 

@@ -32,6 +32,46 @@ function deepFreeze<T>(obj: T): T {
 }
 
 /**
+ * Create a truly immutable Map with runtime enforcement.
+ *
+ * Object.freeze() on a Map instance does not prevent .set()/.delete()/.clear()
+ * because Map entries live in an internal slot that Object.freeze() cannot touch.
+ * This function wraps the Map in a Proxy that throws on mutation attempts.
+ *
+ * @param map - The Map to make immutable
+ * @returns A Proxy that supports ReadonlyMap interface but throws on mutations
+ */
+export function freezeMap<K, V>(map: Map<K, V>): ReadonlyMap<K, V> {
+  return new Proxy(map, {
+    get(target, prop) {
+      // Allow read operations
+      if (prop === 'get' || prop === 'has' || prop === 'entries' ||
+          prop === 'keys' || prop === 'values' || prop === 'forEach' ||
+          prop === 'size' || prop === Symbol.iterator || prop === Symbol.toStringTag) {
+        const value = target[prop as keyof Map<K, V>];
+        return typeof value === 'function' ? value.bind(target) : value;
+      }
+
+      // Block mutation operations
+      if (prop === 'set' || prop === 'delete' || prop === 'clear') {
+        return () => {
+          throw new TypeError(`Cannot ${String(prop)} on an immutable Map`);
+        };
+      }
+
+      // For any other property access, delegate to the target
+      return target[prop as keyof Map<K, V>];
+    },
+    set() {
+      throw new TypeError('Cannot modify an immutable Map');
+    },
+    deleteProperty() {
+      throw new TypeError('Cannot delete properties from an immutable Map');
+    },
+  }) as ReadonlyMap<K, V>;
+}
+
+/**
  * Compute deterministic content-addressed hash of operations.
  *
  * Hash contract (ADR-004, Issue #12):
@@ -125,11 +165,14 @@ export function createSnapshot(
   const hash = computeHash(operations);
   const operationsMap = new Map(operations.map(op => [op.id, op]));
 
+  // Create truly immutable Map (Proxy-based runtime enforcement)
+  const immutableOperations = freezeMap(operationsMap);
+
   const snapshot: RegistrySnapshot = {
     version,
     hash,
     createdAt: new Date(),
-    operations: operationsMap,
+    operations: immutableOperations,
   };
 
   return deepFreeze(snapshot);

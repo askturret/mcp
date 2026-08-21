@@ -104,7 +104,6 @@ export function expressMcp(options: ExpressMcpOptions): Router {
       const discoveryContext: DiscoveryContext = {
         logger,
         abortSignal: abortController.signal,
-        overlays: [],
       };
 
       const discovered: DiscoveredOperation[] = [];
@@ -119,7 +118,6 @@ export function expressMcp(options: ExpressMcpOptions): Router {
         logger,
         preset: 'light' as const,
         overlays: [],
-        abortSignal: abortController.signal,
       };
       const fullSnapshot = await compiler.compile(discovered, compilerContext);
 
@@ -206,9 +204,10 @@ function createTransportMiddleware(
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
       // Extract request context from Express req
+      const user = extractUserContext(req);
       const context: RequestContext = {
         requestId: (req.headers['x-request-id'] as string) || randomUUID(),
-        user: extractUserContext(req),
+        ...(user !== undefined && { user }),
       };
 
       // Set deadline for this request

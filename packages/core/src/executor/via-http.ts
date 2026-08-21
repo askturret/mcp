@@ -16,6 +16,7 @@ import type {
   HttpRequestOptions,
   HttpResponse,
 } from './types.js';
+import { omitUndefined } from '../utils.js';
 
 /**
  * Create an HTTP-based executor.
@@ -193,7 +194,7 @@ class HttpExecutor implements OperationExecutor {
           error: {
             code: 'RATE_LIMITED',
             message: 'Rate limit exceeded',
-            retryAfter,
+            ...(retryAfter !== undefined && { retryAfter }),
           },
         };
       }
@@ -255,12 +256,15 @@ class HttpExecutor implements OperationExecutor {
 function createDefaultHttpClient(): HttpClient {
   return {
     async request(url: string, options: HttpRequestOptions): Promise<HttpResponse> {
-      const response = await fetch(url, {
-        method: options.method,
-        headers: options.headers,
-        body: options.body,
-        signal: options.signal,
-      });
+      const response = await fetch(
+        url,
+        omitUndefined({
+          method: options.method,
+          headers: options.headers,
+          body: options.body,
+          signal: options.signal,
+        }),
+      );
 
       const body = await response.text();
 

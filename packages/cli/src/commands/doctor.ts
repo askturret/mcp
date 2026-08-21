@@ -70,7 +70,10 @@ function parseArgs(args: string[]): {
     if (!arg) continue;
     if (arg === '--url') {
       flags.url = true;
-      flags.input = args[++i];
+      const urlValue = args[++i];
+      if (urlValue !== undefined) {
+        flags.input = urlValue;
+      }
     } else if (arg === '--json') {
       flags.json = true;
     } else if (!arg.startsWith('--')) {

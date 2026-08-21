@@ -73,7 +73,7 @@ export async function testCompositeWithOverlappingIds(): Promise<void> {
   }
 
   // Verify they came from different sources
-  const sources = new Set(op2Operations.map((op) => op.hints?.definitionSource));
+  const sources = new Set(op2Operations.map((op) => op.hints?.['definitionSource']));
   if (sources.size !== 2) {
     throw new Error('Expected op2 operations from 2 different sources');
   }

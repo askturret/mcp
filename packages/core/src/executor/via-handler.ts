@@ -73,7 +73,7 @@ class HandlerExecutor implements OperationExecutor {
       // but execute() returns TIMEOUT at the deadline regardless
       const handlerPromise = this.handler(input, context).then(
         (value) => ({ ok: true as const, value }),
-        (error) => {
+        (_error) => {
           // Handler threw an exception
           // Check if aborted (deadline or cancellation)
           if (abortController.signal.aborted) {

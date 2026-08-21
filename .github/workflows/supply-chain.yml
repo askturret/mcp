@@ -53,16 +53,37 @@ jobs:
       - run: npm install
 
       - name: Generate CycloneDX SBOM
-        run: node .github/scripts/generate-sbom.mjs --output sbom.cdx.json
+        # pipefail matters here: GitHub Actions runs `bash -e` without it, so
+        # piping into tee would take tee's exit code and a failed generation
+        # would pass silently — the exact failure this repo keeps hitting (#79).
+        run: |
+          set -o pipefail
+          node .github/scripts/generate-sbom.mjs --output sbom.cdx.json | tee sbom-summary.txt
 
-      # Retained on every run, so the inventory for any commit can be recovered
-      # even though no release has been cut yet.
+      # Put the inventory counts in the job summary, so a reviewer can see what
+      # the SBOM contains without downloading anything.
+      - name: Summarise SBOM
+        run: |
+          {
+            echo '### CycloneDX SBOM'
+            echo ''
+            echo '```'
+            cat sbom-summary.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Deliberately NOT uploaded on pull requests. Generation is what a PR
+      # needs to prove, and keeping a throwaway copy per PR run is what
+      # exhausted the account's artifact storage quota. Releases get the durable
+      # copy as a release asset below, which does not consume that quota.
       - name: Upload SBOM artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-artifact@v4
         with:
           name: sbom-${{ github.sha }}
           path: sbom.cdx.json
           if-no-files-found: error
+          retention-days: 30
 
       # Attach to the GitHub release when this run was triggered by one.
       - name: Attach SBOM to release

@@ -64,6 +64,11 @@
       "post": {
         "operationId": "createProduct",
         "summary": "Create a new product",
+        "x-mcp": {
+          "effects": {
+            "classifications": ["commerce"]
+          }
+        },
         "requestBody": {
           "required": true,
           "content": {

@@ -25,13 +25,12 @@
  * ```
  */
 export function omitUndefined<T extends object>(
-  obj: T,
+  obj: { [K in keyof T]: T[K] | undefined },
 ): T {
-  const result: Partial<T> = {};
+  const result = {} as T;
   for (const key in obj) {
-    if (obj[key] !== undefined) {
-      result[key] = obj[key];
-    }
+    const value = obj[key as keyof typeof obj];
+    if (value !== undefined) result[key as keyof T] = value as T[keyof T];
   }
-  return result as T;
+  return result;
 }

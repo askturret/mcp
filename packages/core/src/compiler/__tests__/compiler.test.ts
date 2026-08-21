@@ -277,4 +277,65 @@ describe('Compiler', () => {
       }).toThrow();
     });
   });
+
+  describe('pass ordering', () => {
+    it('should be order-sensitive (permutation MUST fail)', async () => {
+      // This test proves pass order is intentional, not accidental.
+      // Swapping critical passes (resolve-identity assigns canonical IDs,
+      // validate-invariants checks those IDs exist) must produce different
+      // results — otherwise order-sensitivity would be meaningless.
+
+      const discovered = createPetstoreFixture();
+      const context = {
+        logger: createTestLogger(),
+        overlays: [],
+        preset: 'light' as const,
+      };
+
+      // Import passes directly to test permutation
+      const { COMPILER_PASSES } = await import('../index.js');
+      const { resolveIdentity } = await import('../passes/resolve-identity.js');
+      const { validateInvariants } = await import('../passes/validate-invariants.js');
+
+      // Find the indices of these two passes in the correct order
+      const resolveIdx = COMPILER_PASSES.findIndex(p => p.name === 'resolve-identity');
+      const validateIdx = COMPILER_PASSES.findIndex(p => p.name === 'validate-invariants');
+
+      expect(resolveIdx).toBeGreaterThanOrEqual(0);
+      expect(validateIdx).toBeGreaterThanOrEqual(0);
+      expect(resolveIdx).toBeLessThan(validateIdx); // Correct order: resolve before validate
+
+      // Test 1: Correct order produces valid operations
+      const compiler = createCompiler(1);
+      const snapshot = await compiler.compile(discovered, context);
+      expect(snapshot.operations.size).toBe(2);
+
+      // Test 2: Swapped order produces different result (order-sensitivity proof)
+      // Run just the two passes in SWAPPED order to show the dependency
+      const warnings = {
+        warnings: [] as unknown[],
+        warn(w: unknown) { this.warnings.push(w); },
+        getWarnings() { return this.warnings; },
+      };
+      const testContext = { ...context, warnings };
+
+      // Convert discovered to intermediate form
+      let operations = discovered.map(op => ({
+        candidateId: op.candidateId,
+        name: op.name,
+        description: op.description,
+        source: op.source,
+        effects: op.effects,
+      }));
+
+      // Run validate-invariants BEFORE resolve-identity (wrong order)
+      // validate-invariants checks for op.id, which resolve-identity assigns
+      operations = await validateInvariants.run(operations, testContext);
+
+      // Swapped order: validate runs first, sees no IDs, drops all operations
+      expect(operations.length).toBe(0); // All dropped vs. 2 in correct order
+
+      // This proves order-sensitivity is real and intentional, not accidental
+    });
+  });
 });

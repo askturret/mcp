@@ -150,6 +150,11 @@ export interface InspectResult {
   dryRun?: DryRunResult;
 
   /**
+   * Diff result (if --diff-against was provided)
+   */
+  diffSnapshot?: DiffResult;
+
+  /**
    * Health status
    */
   healthy: boolean;

@@ -73,7 +73,8 @@ export async function inspectCommand(args: string[]): Promise<void> {
   }
 
   try {
-    const result = await inspectServer(flags);
+    // After check above, url is guaranteed to be string
+    const result = await inspectServer({ ...flags, url: flags.url as string });
 
     if (flags.json) {
       console.log(formatJson(result));
@@ -115,15 +116,18 @@ function parseArgs(args: string[]): {
     if (!arg) continue;
 
     if (arg === '--url') {
-      flags.url = args[++i];
+      const value = args[++i];
+      if (value !== undefined) flags.url = value;
     } else if (arg === '--tool') {
-      flags.tool = args[++i];
+      const value = args[++i];
+      if (value !== undefined) flags.tool = value;
     } else if (arg === '--dry-run') {
       flags.dryRun = true;
     } else if (arg === '--json') {
       flags.json = true;
     } else if (arg === '--diff-against') {
-      flags.diffAgainst = args[++i];
+      const value = args[++i];
+      if (value !== undefined) flags.diffAgainst = value;
     }
   }
 

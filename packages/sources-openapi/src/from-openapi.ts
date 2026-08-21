@@ -344,35 +344,66 @@ function capitalize(str: string): string {
  * Extract input schema from OpenAPI operation
  */
 function extractInputSchema(operation: OpenAPIOperation): Record<string, unknown> | undefined {
+  // For operations with requestBody (POST, PUT, PATCH), use that
   const requestBody = operation.requestBody;
-  if (!requestBody || typeof requestBody !== 'object') {
+  if (requestBody && typeof requestBody === 'object') {
+    // Type guard: SwaggerParser.dereference() should have resolved all $refs,
+    // but the type system doesn't know that. Skip if this is a ReferenceObject.
+    if (!('$ref' in requestBody)) {
+      const content = requestBody.content;
+      if (content) {
+        // Prefer application/json, fall back to first available
+        const jsonSchema = content['application/json']?.schema;
+        if (jsonSchema) {
+          return jsonSchema as Record<string, unknown>;
+        }
+
+        // Try other content types
+        const firstContent = Object.values(content)[0];
+        if (firstContent?.schema) {
+          return firstContent.schema as Record<string, unknown>;
+        }
+      }
+    }
+  }
+
+  // For operations with parameters (GET, DELETE), build schema from parameters
+  const parameters = operation.parameters;
+  if (!parameters || !Array.isArray(parameters) || parameters.length === 0) {
     return undefined;
   }
 
-  // Type guard: SwaggerParser.dereference() should have resolved all $refs,
-  // but the type system doesn't know that. Skip if this is a ReferenceObject.
-  if ('$ref' in requestBody) {
+  // Convert parameters array to JSON Schema object
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+
+  for (const param of parameters) {
+    // Skip if this is a ReferenceObject
+    if (!param || typeof param !== 'object' || '$ref' in param) {
+      continue;
+    }
+
+    const name = param.name;
+    const paramSchema = param.schema;
+
+    if (name && paramSchema && typeof paramSchema === 'object') {
+      properties[name] = paramSchema;
+      if (param.required === true) {
+        required.push(name);
+      }
+    }
+  }
+
+  // Return schema only if we found parameters
+  if (Object.keys(properties).length === 0) {
     return undefined;
   }
 
-  const content = requestBody.content;
-  if (!content) {
-    return undefined;
-  }
-
-  // Prefer application/json, fall back to first available
-  const jsonSchema = content['application/json']?.schema;
-  if (jsonSchema) {
-    return jsonSchema as Record<string, unknown>;
-  }
-
-  // Try other content types
-  const firstContent = Object.values(content)[0];
-  if (firstContent?.schema) {
-    return firstContent.schema as Record<string, unknown>;
-  }
-
-  return undefined;
+  return {
+    type: 'object',
+    properties,
+    ...(required.length > 0 && { required }),
+  };
 }
 
 /**

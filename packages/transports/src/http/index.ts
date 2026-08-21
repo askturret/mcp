@@ -95,7 +95,8 @@ class StreamableHttpTransport implements HttpTransport {
         }
 
         // Route by method and path
-        const url = new URL(req.url || '/', `http://${host}`);
+        const rawPath = (req as any).originalUrl ?? req.url ?? '/';
+        const url = new URL(rawPath, `http://${host}`);
 
         if (url.pathname !== this.basePath) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
@@ -190,13 +191,13 @@ class StreamableHttpTransport implements HttpTransport {
     try {
       switch (method) {
         case 'initialize':
-          return await this.handleInitialize(params, sessionId);
+          return await this.handleInitialize(id, params, sessionId);
 
         case 'tools/list':
-          return await this.handleToolsList(sessionId);
+          return await this.handleToolsList(id, sessionId);
 
         case 'tools/call':
-          return await this.handleToolsCall(params, sessionId);
+          return await this.handleToolsCall(id, params, sessionId);
 
         case 'ping':
           return { jsonrpc: '2.0', id, result: { status: 'ok' } };
@@ -223,7 +224,7 @@ class StreamableHttpTransport implements HttpTransport {
     }
   }
 
-  private async handleInitialize(params: any, sessionId: string | null): Promise<any> {
+  private async handleInitialize(id: any, params: any, sessionId: string | null): Promise<any> {
     // Negotiate MCP protocol version
     const protocolVersion = '2024-11-05'; // MCP SDK version 0.5.0
 
@@ -239,7 +240,7 @@ class StreamableHttpTransport implements HttpTransport {
 
     return {
       jsonrpc: '2.0',
-      id: params.id || randomUUID(),
+      id,
       result: {
         protocolVersion,
         serverInfo: {
@@ -253,7 +254,7 @@ class StreamableHttpTransport implements HttpTransport {
     };
   }
 
-  private async handleToolsList(sessionId: string | null): Promise<any> {
+  private async handleToolsList(id: any, sessionId: string | null): Promise<any> {
     // Update session activity if sessions enabled
     if (this.sessionStore && sessionId) {
       const session = await this.sessionStore.get(sessionId);
@@ -277,13 +278,14 @@ class StreamableHttpTransport implements HttpTransport {
 
     return {
       jsonrpc: '2.0',
+      id,
       result: {
         tools,
       },
     };
   }
 
-  private async handleToolsCall(params: any, sessionId: string | null): Promise<any> {
+  private async handleToolsCall(id: any, params: any, sessionId: string | null): Promise<any> {
     // Update session activity and get client info if sessions enabled
     let clientInfo;
     if (this.sessionStore && sessionId) {
@@ -344,10 +346,12 @@ class StreamableHttpTransport implements HttpTransport {
     }
 
     // Map to MCP wire format
+    // Note: `id` here is the client's JSON-RPC envelope id, distinct from
+    // `requestId`, which is the internal dispatcher/command trace id.
     if (result.isError) {
       return {
         jsonrpc: '2.0',
-        id: requestId,
+        id,
         error: {
           code: result.error!.code,
           message: result.error!.message,
@@ -357,7 +361,7 @@ class StreamableHttpTransport implements HttpTransport {
 
     return {
       jsonrpc: '2.0',
-      id: requestId,
+      id,
       result: {
         content: [
           {

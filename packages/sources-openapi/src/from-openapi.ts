@@ -10,7 +10,7 @@
  */
 
 import SwaggerParser from '@apidevtools/swagger-parser';
-import type { OpenAPI, OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
+import type { OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
 import type {
   OperationSource,
   DiscoveredOperation,
@@ -257,8 +257,8 @@ function discoverOperation(
     candidateId,
     name,
     description,
-    rawInput,
-    rawOutput,
+    ...(rawInput && { rawInput }),
+    ...(rawOutput && { rawOutput }),
     source: {
       kind: 'openapi',
       ...(location && { location: `${location}#/paths/${pathPattern}/${method}` }),
@@ -339,7 +339,13 @@ function capitalize(str: string): string {
  */
 function extractInputSchema(operation: OpenAPIOperation): Record<string, unknown> | undefined {
   const requestBody = operation.requestBody;
-  if (!requestBody || typeof requestBody !== 'object' || 'readOnly' in requestBody) {
+  if (!requestBody || typeof requestBody !== 'object') {
+    return undefined;
+  }
+
+  // Type guard: SwaggerParser.dereference() should have resolved all $refs,
+  // but the type system doesn't know that. Skip if this is a ReferenceObject.
+  if ('$ref' in requestBody) {
     return undefined;
   }
 
@@ -374,7 +380,13 @@ function extractOutputSchema(operation: OpenAPIOperation): Record<string, unknow
 
   // Prefer 200/201/default, in that order
   const successResponse = responses['200'] ?? responses['201'] ?? responses['default'];
-  if (!successResponse || typeof successResponse !== 'object' || 'readOnly' in successResponse) {
+  if (!successResponse || typeof successResponse !== 'object') {
+    return undefined;
+  }
+
+  // Type guard: SwaggerParser.dereference() should have resolved all $refs,
+  // but the type system doesn't know that. Skip if this is a ReferenceObject.
+  if ('$ref' in successResponse) {
     return undefined;
   }
 

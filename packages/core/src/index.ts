@@ -28,3 +28,4 @@ export const VERSION = '0.1.0';
  * Re-export all core types and utilities
  */
 export * from './types.js';
+export * from './sources/index.js';

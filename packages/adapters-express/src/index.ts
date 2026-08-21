@@ -188,17 +188,23 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   router.use(createTransportMiddleware(transport, basePath, deadlineMs));
 
   // Mount Explorer UI if enabled
+  // Routes are relative to router mount point (user mounts at basePath)
   if (enableExplorer) {
-    router.get(`${basePath}/explorer`, (_req: Request, res: Response) => {
+    router.get('/explorer', (_req: Request, res: Response) => {
       res.setHeader('Content-Type', 'text/html');
       res.send(createExplorerHtml(basePath));
     });
   } else {
     // Return 404 in production
-    router.get(`${basePath}/explorer`, (_req: Request, res: Response) => {
+    router.get('/explorer', (_req: Request, res: Response) => {
       res.status(404).json({ error: 'Explorer not available in production' });
     });
   }
+
+  // Catch-all 404 handler for unknown paths
+  router.use((_req: Request, res: Response) => {
+    res.status(404).json({ error: { code: -32601, message: 'Not found' } });
+  });
 
   return router;
 }

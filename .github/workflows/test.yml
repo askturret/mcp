@@ -76,7 +76,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspace=packages/adapters-express
+      - run: npm run build --workspaces
       - run: npm test --workspace=packages/adapters-express
 
   # Test sources-openapi package
@@ -90,7 +90,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspace=packages/sources-openapi
+      - run: npm run build --workspaces
       - run: npm test --workspace=packages/sources-openapi
 
   # Test transports package
@@ -104,7 +104,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspace=packages/transports
+      - run: npm run build --workspaces
       - run: npm test --workspace=packages/transports
 
   # Test observability package
@@ -118,7 +118,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspace=packages/observability
+      - run: npm run build --workspaces
       - run: npm test --workspace=packages/observability
 
   # Test explorer package
@@ -132,7 +132,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspace=packages/explorer
+      - run: npm run build --workspaces
       - run: npm test --workspace=packages/explorer
 
   # Test CLI package
@@ -146,7 +146,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspace=packages/cli
+      - run: npm run build --workspaces
       - run: npm test --workspace=packages/cli
 
   # Status wrapper jobs for merge-coverage gate

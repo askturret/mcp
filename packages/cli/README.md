@@ -43,6 +43,28 @@ npx @askturret/mcp doctor ./openapi.yaml --json
 - `0` - No errors found (warnings are OK)
 - `1` - Errors detected that must be fixed
 
+### `inspect` - Live Server Introspection
+
+Inspect a running MCP server: handshake, `tools/list`, latency, optional dry-run and snapshot diff.
+
+**Usage:**
+
+```bash
+npx @askturret/mcp inspect --url <endpoint>
+npx @askturret/mcp inspect --url <endpoint> --tool <name> --dry-run
+```
+
+**Exit codes:**
+
+- `0` - Server reached and healthy
+- `1` - Server reached but unreachable or unhealthy
+- `2` - Fatal error: invalid arguments (such as a missing `--url`), or the inspection itself threw
+
+Note that `1` and `2` are distinct on purpose. `1` means the command ran correctly and is
+reporting on the server's state; `2` means the command could not run at all. Scripts that retry
+on a transient outage should retry on `1` and never on `2` — retrying a usage error just repeats
+it.
+
 ## MCP Readiness Score (0-100)
 
 The doctor command calculates a readiness score using a stable, documented rubric:

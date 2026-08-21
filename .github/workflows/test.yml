@@ -73,7 +73,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build -w packages/core -w packages/adapters-express
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/adapters-express
       - run: npm test --workspace=packages/adapters-express
 
   # Test sources-openapi package

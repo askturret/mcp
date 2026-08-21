@@ -94,7 +94,8 @@ class StreamableHttpTransport implements HttpTransport {
         }
 
         // Route by method and path
-        const url = new URL(req.url || '/', `http://${host}`);
+        const rawPath = (req as any).originalUrl ?? req.url ?? '/';
+        const url = new URL(rawPath, `http://${host}`);
 
         if (url.pathname !== this.basePath) {
           res.writeHead(404, { 'Content-Type': 'application/json' });

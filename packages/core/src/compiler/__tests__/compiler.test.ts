@@ -132,7 +132,7 @@ describe('Compiler', () => {
 
       expect(snapshot1.hash).toBe(snapshot2.hash);
       expect(snapshot1.hash).toBeTruthy();
-      expect(snapshot1.hash).toMatch(/^[a-f0-9]{64}$/); // SHA-256 hex
+      expect(snapshot1.hash).toMatch(/^[a-f0-9]{16}$/); // SHA-256 truncated to 16 hex chars
     });
   });
 
@@ -340,6 +340,77 @@ describe('Compiler', () => {
       expect(operations.length).toBe(0); // All dropped vs. 2 in correct order
 
       // This proves order-sensitivity is real and intentional, not accidental
+    });
+  });
+
+  describe('hash stability (Issue #12)', () => {
+    it('should produce identical hash for same operations', async () => {
+      // Hash stability: same operations → same hash (content-addressed)
+      const discovered = createPetstoreFixture();
+      const context = {
+        logger: createTestLogger(),
+        overlays: [],
+        preset: 'light' as const,
+      };
+
+      const compiler = createCompiler(1);
+
+      // Compile twice
+      const snapshot1 = await compiler.compile(discovered, context);
+      const snapshot2 = await compiler.compile(discovered, context);
+
+      // Hashes must be identical (content-addressed)
+      expect(snapshot1.hash).toBe(snapshot2.hash);
+      expect(snapshot1.hash).toBeTruthy();
+      expect(snapshot1.hash).toMatch(/^[a-f0-9]{16}$/); // 16 hex chars
+    });
+
+    it('should exclude provenance from hash (Issue #12)', async () => {
+      // Provenance is metadata, not contract - must not affect hash
+      const discovered = createPetstoreFixture();
+      const context = {
+        logger: createTestLogger(),
+        overlays: [],
+        preset: 'light' as const,
+      };
+
+      const compiler = createCompiler(1);
+
+      // Compile once
+      const snapshot1 = await compiler.compile(discovered, context);
+
+      // Add provenance to operations (simulate different discovery paths)
+      const discoveredWithProvenance = discovered.map(op => ({
+        ...op,
+        provenance: [
+          { field: 'description', kind: 'openapi' as const, location: 'different.yaml' },
+        ],
+      }));
+
+      const snapshot2 = await compiler.compile(discoveredWithProvenance, context);
+
+      // Hash must be identical despite different provenance
+      expect(snapshot1.hash).toBe(snapshot2.hash);
+    });
+
+    it('should be deterministic (sorted keys, sorted operations)', async () => {
+      // Operations in different order should produce same hash
+      const discovered = createPetstoreFixture();
+      const reversed = [...discovered].reverse();
+
+      const context = {
+        logger: createTestLogger(),
+        overlays: [],
+        preset: 'light' as const,
+      };
+
+      const compiler = createCompiler(1);
+
+      const snapshot1 = await compiler.compile(discovered, context);
+      const snapshot2 = await compiler.compile(reversed, context);
+
+      // Hash must be identical (operations sorted by ID internally)
+      expect(snapshot1.hash).toBe(snapshot2.hash);
     });
   });
 });

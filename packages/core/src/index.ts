@@ -32,3 +32,4 @@ export * from './sources/index.js';
 export * from './compiler/index.js';
 export type { CompilerContext, CompilerPass, CompilerWarning } from './compiler/types.js';
 export { omitUndefined } from './utils.js';
+export { AtomicRegistryReference, type RegistryReference } from './registry-reference.js';

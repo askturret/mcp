@@ -32,20 +32,37 @@ function deepFreeze<T>(obj: T): T {
 }
 
 /**
- * Compute deterministic hash of operations.
+ * Compute deterministic content-addressed hash of operations.
+ *
+ * Hash contract (ADR-004, Issue #12):
+ * - **Included**: id, name, description, input, output, effects, executor, annotations
+ * - **Excluded**: provenance (metadata, not contract), createdAt (timing, not content)
+ * - **Format**: SHA-256 truncated to 16 hex chars (sufficient uniqueness at our scale)
  *
  * Determinism requirements:
  * - Object keys sorted alphabetically
- * - Array order preserved (already deterministic from passes)
+ * - Operations sorted by ID
  * - No Date.now() or Math.random()
- * - Stable across Node versions
+ * - Stable across Node versions and processes
  */
 function computeHash(operations: readonly OperationDefinition[]): string {
   // Sort operations by ID for deterministic order
   const sorted = [...operations].sort((a, b) => a.id.localeCompare(b.id));
 
+  // Filter operations to include only contract fields (exclude provenance)
+  const contractFields = sorted.map(op => ({
+    id: op.id,
+    name: op.name,
+    description: op.description,
+    input: op.input,
+    output: op.output,
+    effects: op.effects,
+    executor: op.executor,
+    ...(op.annotations && { annotations: op.annotations }),
+  }));
+
   // Serialize with sorted keys
-  const canonical = JSON.stringify(sorted, (_key, value) => {
+  const canonical = JSON.stringify(contractFields, (_key, value) => {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       // Sort object keys alphabetically
       const sorted: Record<string, unknown> = {};
@@ -57,8 +74,9 @@ function computeHash(operations: readonly OperationDefinition[]): string {
     return value;
   });
 
-  // SHA-256 hash
-  return createHash('sha256').update(canonical, 'utf8').digest('hex');
+  // SHA-256 hash, truncated to 16 hex chars
+  const fullHash = createHash('sha256').update(canonical, 'utf8').digest('hex');
+  return fullHash.substring(0, 16);
 }
 
 export const freezeAndHash: CompilerPass = {

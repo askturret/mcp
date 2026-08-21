@@ -2,8 +2,10 @@
  * OpenAPI source adapter type definitions
  */
 
+export type { FromOpenApiOptions } from './from-openapi.js';
+
 /**
- * OpenAPI import options
+ * OpenAPI import options (legacy - may be merged into FromOpenApiOptions)
  */
 export interface OpenApiImportOptions {
   /**

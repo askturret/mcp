@@ -22,9 +22,12 @@ jobs:
       workspace: ${{ steps.filter.outputs.workspace }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dorny/paths-filter@v3
         id: filter
         with:
+          base: ${{ github.event.pull_request.base.sha || 'main' }}
           filters: |
             core:
               - 'packages/core/**'

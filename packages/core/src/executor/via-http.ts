@@ -42,7 +42,9 @@ class HttpExecutor implements OperationExecutor {
     // User input can only influence path+query, never host/port/scheme
     this.baseUrl = options.baseUrl;
     this.client = options.client ?? createDefaultHttpClient();
-    this.credentials = options.credentials;
+    if (options.credentials !== undefined) {
+      this.credentials = options.credentials;
+    }
     this.timeoutMs = options.timeoutMs ?? 30000;
   }
 

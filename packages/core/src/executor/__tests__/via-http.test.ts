@@ -203,7 +203,7 @@ describe('viaHttp', () => {
 
       await executor.execute(operation, {}, context);
 
-      expect(capturedHeaders?.Authorization).toBe('Bearer secret-token');
+      expect(capturedHeaders?.['Authorization']).toBe('Bearer secret-token');
       expect(capturedHeaders && capturedHeaders['X-API-Key']).toBe('api-key-123');
     });
   });

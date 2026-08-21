@@ -208,5 +208,71 @@ describe('viaHandler', () => {
       // Handler should detect tight deadline and fail
       expect(result.ok).toBe(false);
     });
+
+    it('should enforce deadline even when handler ignores signal and deadline', async () => {
+      // CRITICAL: This test proves the executor enforces the deadline,
+      // not just relying on the handler to voluntarily check signal.
+      // A handler that ignores context.deadline/signal must still be cut off.
+
+      let handlerStarted = false;
+      let handlerCompleted = false;
+
+      const handler = async (_input: unknown, _ctx: DispatchContext) => {
+        handlerStarted = true;
+
+        // Deliberately ignore context.signal and context.deadline
+        // Sleep way past the deadline (300ms vs 50ms deadline)
+        await new Promise(resolve => setTimeout(resolve, 300));
+
+        handlerCompleted = true;
+        return { ok: true };
+      };
+
+      const executor = viaHandler(handler);
+      const operation = createTestOperation();
+      const deadline = new Date(Date.now() + 50); // 50ms deadline
+      const context = createTestContext({ deadline });
+
+      const startTime = Date.now();
+      const result = await executor.execute(operation, {}, context);
+      const elapsed = Date.now() - startTime;
+
+      // Executor MUST cut off the handler at the deadline
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe('TIMEOUT');
+        expect(result.error.message).toContain('Deadline exceeded');
+      }
+
+      // Verify handler was started
+      expect(handlerStarted).toBe(true);
+
+      // CRITICAL: Handler should NOT have completed
+      // The executor must cut it off before it finishes sleeping
+      expect(handlerCompleted).toBe(false);
+
+      // Verify execution was cut off near the deadline (within tolerance)
+      // Should be ~50ms, not 300ms
+      expect(elapsed).toBeGreaterThanOrEqual(40); // Some tolerance for scheduling
+      expect(elapsed).toBeLessThan(200); // Must not wait for handler to complete
+    });
+
+    it('should return TIMEOUT if deadline is already exceeded', async () => {
+      const handler = async () => {
+        return { ok: true };
+      };
+
+      const executor = viaHandler(handler);
+      const operation = createTestOperation();
+      const deadline = new Date(Date.now() - 1000); // Already passed
+      const context = createTestContext({ deadline });
+
+      const result = await executor.execute(operation, {}, context);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe('TIMEOUT');
+      }
+    });
   });
 });

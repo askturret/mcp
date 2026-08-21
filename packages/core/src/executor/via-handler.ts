@@ -42,13 +42,80 @@ class HandlerExecutor implements OperationExecutor {
         };
       }
 
-      // Call handler with input and context
-      // Handler can access AbortSignal via context.signal
-      const result = await this.handler(input, context);
+      // Enforce deadline independently of handler cooperation
+      // ADR-014: executors must enforce deadlines, not rely on handler checking signal
+      const now = new Date();
+      const deadlineMs = context.deadline.getTime() - now.getTime();
+
+      if (deadlineMs <= 0) {
+        return {
+          ok: false,
+          error: {
+            code: 'TIMEOUT',
+            message: 'Deadline exceeded',
+          },
+        };
+      }
+
+      // Create AbortController for deadline enforcement
+      const abortController = new AbortController();
+      const timeoutId = setTimeout(() => abortController.abort(), deadlineMs);
+
+      // Wire context.signal to our AbortController
+      if (context.signal.aborted) {
+        abortController.abort();
+      } else {
+        context.signal.addEventListener('abort', () => abortController.abort());
+      }
+
+      // Race handler execution against deadline
+      let handlerCompleted = false;
+      let handlerResult: unknown;
+
+      try {
+        // Call handler with input and context
+        // Handler can access AbortSignal via context.signal
+        handlerResult = await this.handler(input, context);
+        handlerCompleted = true;
+        clearTimeout(timeoutId);
+      } catch (error) {
+        clearTimeout(timeoutId);
+
+        // Check if aborted (deadline or cancellation)
+        if (abortController.signal.aborted) {
+          if (context.signal.aborted) {
+            return {
+              ok: false,
+              error: {
+                code: 'CANCELLED',
+                message: 'Request cancelled',
+              },
+            };
+          }
+          return {
+            ok: false,
+            error: {
+              code: 'TIMEOUT',
+              message: 'Deadline exceeded',
+            },
+          };
+        }
+
+        // Map any other exception to INTERNAL_ERROR
+        // NEVER leak exception message, stack, or type name
+        return {
+          ok: false,
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: 'Execution failed',
+          },
+        };
+      }
 
       // Success
-      return { ok: true, value: result };
+      return { ok: true, value: handlerResult };
     } catch (error) {
+      // Catch any unexpected exception
       // Check if cancellation happened during execution
       if (context.signal.aborted) {
         return {
@@ -60,8 +127,7 @@ class HandlerExecutor implements OperationExecutor {
         };
       }
 
-      // Map any other exception to INTERNAL_ERROR
-      // NEVER leak exception message, stack, or type name
+      // Map to INTERNAL_ERROR, never leak exception details
       return {
         ok: false,
         error: {

@@ -6,23 +6,19 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": "./dist/index.js"
     },
     "./openapi": {
       "types": "./dist/openapi.d.ts",
-      "import": "./dist/openapi.js",
-      "require": "./dist/openapi.cjs"
+      "import": "./dist/openapi.js"
     },
     "./express": {
       "types": "./dist/express.d.ts",
-      "import": "./dist/express.js",
-      "require": "./dist/express.cjs"
+      "import": "./dist/express.js"
     },
     "./otel": {
       "types": "./dist/otel.d.ts",
-      "import": "./dist/otel.js",
-      "require": "./dist/otel.cjs"
+      "import": "./dist/otel.js"
     }
   },
   "engines": {
@@ -32,7 +28,8 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build:root && npm run build --workspaces --if-present",
+    "build:root": "tsc -p tsconfig.build.json",
     "test": "npm test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "tsc --noEmit"

@@ -19,9 +19,9 @@
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {
-    "@askturret/mcp-core": "workspace:*"
+    "@askturret/mcp-core": "*"
   },
   "devDependencies": {
-    "typescript": "workspace:*"
+    "typescript": "*"
   }
 }

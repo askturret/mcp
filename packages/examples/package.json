@@ -9,11 +9,11 @@
     "test": "echo \"Tests not yet implemented\""
   },
   "dependencies": {
-    "@askturret/mcp-core": "workspace:*",
-    "@askturret/mcp-sources-openapi": "workspace:*",
-    "@askturret/mcp-adapters-express": "workspace:*"
+    "@askturret/mcp-core": "*",
+    "@askturret/mcp-sources-openapi": "*",
+    "@askturret/mcp-adapters-express": "*"
   },
   "devDependencies": {
-    "typescript": "workspace:*"
+    "typescript": "*"
   }
 }

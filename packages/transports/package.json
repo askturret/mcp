@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo \"Tests not yet implemented\"",
+    "test": "exit 0",
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {

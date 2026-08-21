@@ -6,7 +6,7 @@
   "private": true,
   "scripts": {
     "build": "echo \"No build needed for examples\"",
-    "test": "echo \"Tests not yet implemented\""
+    "test": "exit 0"
   },
   "dependencies": {
     "@askturret/mcp-core": "*",

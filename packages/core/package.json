@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "echo \"Tests not yet implemented\"",
+    "test": "npm run build && node dist/__tests__/types.test.js",
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {},

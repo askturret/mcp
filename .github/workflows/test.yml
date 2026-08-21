@@ -1,0 +1,153 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  # Path filter job - detects which packages changed
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.filter.outputs.core }}
+      adapters-express: ${{ steps.filter.outputs.adapters-express }}
+      sources-openapi: ${{ steps.filter.outputs.sources-openapi }}
+      transports: ${{ steps.filter.outputs.transports }}
+      observability: ${{ steps.filter.outputs.observability }}
+      explorer: ${{ steps.filter.outputs.explorer }}
+      cli: ${{ steps.filter.outputs.cli }}
+      examples: ${{ steps.filter.outputs.examples }}
+      workspace: ${{ steps.filter.outputs.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            core:
+              - 'packages/core/**'
+            adapters-express:
+              - 'packages/adapters-express/**'
+            sources-openapi:
+              - 'packages/sources-openapi/**'
+            transports:
+              - 'packages/transports/**'
+            observability:
+              - 'packages/observability/**'
+            explorer:
+              - 'packages/explorer/**'
+            cli:
+              - 'packages/cli/**'
+            examples:
+              - 'packages/examples/**'
+            workspace:
+              - 'package.json'
+              - 'tsconfig.json'
+              - '.github/workflows/**'
+
+  # Test core package
+  test-core:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=packages/core
+      - run: npm test --workspace=packages/core
+
+  # Test adapters-express package
+  test-adapters-express:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.adapters-express == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=packages/adapters-express
+      - run: npm test --workspace=packages/adapters-express
+
+  # Test sources-openapi package
+  test-sources-openapi:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sources-openapi == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=packages/sources-openapi
+      - run: npm test --workspace=packages/sources-openapi
+
+  # Test transports package
+  test-transports:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.transports == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=packages/transports
+      - run: npm test --workspace=packages/transports
+
+  # Test observability package
+  test-observability:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.observability == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=packages/observability
+      - run: npm test --workspace=packages/observability
+
+  # Test explorer package
+  test-explorer:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.explorer == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=packages/explorer
+      - run: npm test --workspace=packages/explorer
+
+  # Test CLI package
+  test-cli:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.cli == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build --workspace=packages/cli
+      - run: npm test --workspace=packages/cli

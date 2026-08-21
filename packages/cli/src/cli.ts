@@ -5,40 +5,63 @@
  */
 
 import { doctorCommand } from './commands/doctor.js';
-
-const args = process.argv.slice(2);
-const command = args[0];
+import { inspectCommand } from './commands/inspect.js';
 
 async function main() {
+  const args = process.argv.slice(2);
+
+  if (args.length === 0) {
+    printHelp();
+    process.exit(0);
+  }
+
+  const command = args[0];
+
   switch (command) {
     case 'doctor':
       await doctorCommand(args.slice(1));
       break;
 
+    case 'inspect':
+      await inspectCommand(args.slice(1));
+      break;
+
+    case 'help':
     case '--help':
     case '-h':
-    case undefined:
-      console.log(`
-AskTurret MCP CLI
-
-Usage:
-  npx @askturret/mcp doctor <path-to-spec-or-config>   Analyze API readiness
-  npx @askturret/mcp doctor --url <mcp-endpoint>       Analyze remote server
-
-Options:
-  --json                Output machine-readable JSON
-  --help, -h            Show this help message
-      `);
+      printHelp();
       process.exit(0);
 
     default:
       console.error(`Unknown command: ${command}`);
-      console.error('Run with --help to see available commands');
+      console.error('');
+      printHelp();
       process.exit(1);
   }
 }
 
+function printHelp() {
+  console.log('');
+  console.log('AskTurret MCP CLI');
+  console.log('');
+  console.log('Usage:');
+  console.log('  npx @askturret/mcp <command> [options]');
+  console.log('');
+  console.log('Commands:');
+  console.log('  doctor <spec>           Analyze OpenAPI spec for MCP readiness (offline)');
+  console.log('  doctor --url <url>      Analyze remote MCP server readiness');
+  console.log('  inspect --url <url>     Inspect a running MCP server (live)');
+  console.log('  help                    Show this help message');
+  console.log('');
+  console.log('Examples:');
+  console.log('  npx @askturret/mcp doctor ./openapi.yaml');
+  console.log('  npx @askturret/mcp doctor --url http://localhost:7000/mcp');
+  console.log('  npx @askturret/mcp inspect --url http://localhost:7000/mcp');
+  console.log('  npx @askturret/mcp inspect --url ... --tool createOrder --dry-run');
+  console.log('');
+}
+
 main().catch((err) => {
   console.error('Fatal error:', err);
-  process.exit(1);
+  process.exit(2);
 });

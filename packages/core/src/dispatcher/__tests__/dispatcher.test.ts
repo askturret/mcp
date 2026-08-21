@@ -2,17 +2,17 @@
  * Command dispatcher tests - envelope order, snapshot capture, error mapping
  */
 
-import { describe, it, expect, jest } from '@jest/globals';
+import { describe, it, expect } from '@jest/globals';
 import { createDispatcher } from '../index.js';
 import { AtomicRegistryReference } from '../../registry-reference.js';
-import type { RegistrySnapshot, OperationCommand, OperationDefinition } from '../../types.js';
+import type { OperationDefinition } from '../../types.js';
 import type { DispatcherHooks } from '../types.js';
 import { freezeMap } from '../../compiler/passes/freeze-and-hash.js';
 
 /**
  * Create a minimal test snapshot
  */
-function createTestSnapshot(version: number, hash: string): RegistrySnapshot {
+function createTestSnapshot(version: number, hash: string) {
   const operations = new Map<string, OperationDefinition>([
     [
       'listPets',
@@ -51,7 +51,7 @@ function createTestSnapshot(version: number, hash: string): RegistrySnapshot {
 /**
  * Create a minimal test command
  */
-function createTestCommand(overrides?: Partial<OperationCommand>): OperationCommand {
+function createTestCommand(overrides?: Record<string, unknown>) {
   const abortController = new AbortController();
 
   return {
@@ -166,7 +166,6 @@ describe('CommandDispatcher', () => {
       const snapshot2 = createTestSnapshot(2, 'hash2');
 
       const registry = new AtomicRegistryReference(snapshot1);
-      const dispatcher = createDispatcher(registry);
 
       // Track which snapshot hash was used
       let capturedHash: string | undefined;

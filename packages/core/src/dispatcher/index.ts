@@ -14,6 +14,7 @@ import type {
   OperationError,
   RegistrySnapshot,
   OperationDefinition,
+  Principal,
 } from '../types.js';
 import type { RegistryReference } from '../registry-reference.js';
 import type {
@@ -75,7 +76,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       }
 
       // Build dispatch context (immutable for entire pipeline)
-      const context: DispatchContext = {
+      const context: DispatchContext = omitUndefined({
         requestId: command.requestId,
         operationId: command.operationId,
         registryHash: snapshot.hash,
@@ -83,7 +84,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         confirmation: command.confirmation,
         deadline: command.deadline,
         signal: command.signal,
-      };
+      });
 
       // STAGE 2: Authenticate
       const principal = await this.authenticate(context);
@@ -94,7 +95,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
       // STAGE 3: Authorize
       const authDecision = await this.authorize(contextWithPrincipal, command.input);
-      if (authDecision.shortCircuit) {
+      if ('shortCircuit' in authDecision) {
         return this.mapResult(authDecision.result);
       }
 
@@ -109,7 +110,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         contextWithPrincipal,
         command.input,
       );
-      if (confirmDecision.shortCircuit) {
+      if ('shortCircuit' in confirmDecision) {
         return this.mapResult(confirmDecision.result);
       }
 
@@ -182,7 +183,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
   private validateInput(
     input: unknown,
-    operation: OperationDefinition,
+    _operation: OperationDefinition,
   ): OperationResult {
     // v0.1: basic type check (full JSON Schema validation deferred)
     if (input === null || input === undefined) {
@@ -251,7 +252,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
   private validateOutput(
     output: unknown,
-    operation: OperationDefinition,
+    _operation: OperationDefinition,
   ): OperationResult {
     // v0.1: basic type check (full JSON Schema validation deferred)
     if (output === null || output === undefined) {
@@ -312,4 +313,4 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 }
 
 // Re-export types
-export type { CommandDispatcher, DispatcherHooks, DispatchContext, MCPResult } from './types.js';
+export type { DispatcherHooks, DispatchContext, MCPResult } from './types.js';

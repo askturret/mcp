@@ -6,3 +6,5 @@
  */
 
 export * from './types.js';
+export * from './commands/doctor-types.js';
+export { doctorCommand } from './commands/doctor.js';

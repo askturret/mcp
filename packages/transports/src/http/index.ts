@@ -56,7 +56,7 @@ class StreamableHttpTransport implements HttpTransport {
 
   constructor(options: HttpTransportOptions) {
     this.registry = options.registry;
-    this.dispatcher = createDispatcher(options.registry, options.hooks);
+    this.dispatcher = createDispatcher(options.registry, options.hooks, options.executors);
     this.basePath = options.basePath ?? '/mcp';
     this.deadlineMs = options.deadlineMs ?? 30000;
     this.maxRequestBodySize = options.maxRequestBodySize ?? 1048576; // 1 MiB

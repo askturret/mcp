@@ -3,7 +3,7 @@
  * HTTP transport types - MCP Streamable HTTP server configuration
  */
 
-import type { RegistryReference, DispatcherHooks } from '@askturret/mcp-core';
+import type { RegistryReference, DispatcherHooks, OperationExecutor } from '@askturret/mcp-core';
 
 /**
  * Session store interface - pluggable session persistence
@@ -61,6 +61,11 @@ export interface HttpTransportOptions {
    * Optional dispatcher hooks for auth, policy, etc.
    */
   readonly hooks?: DispatcherHooks;
+
+  /**
+   * Optional executors map (for testing or custom executor registration)
+   */
+  readonly executors?: Map<string, OperationExecutor>;
 
   /**
    * Base path for MCP endpoints (default: '/mcp')

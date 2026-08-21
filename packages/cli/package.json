@@ -19,13 +19,21 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "exit 0",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:watch": "npm test -- --watch",
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {
-    "@askturret/mcp-core": "*"
+    "@askturret/mcp-core": "*",
+    "@apidevtools/swagger-parser": "^10.1.0",
+    "openapi-types": "^12.1.3"
   },
   "devDependencies": {
-    "typescript": "*"
+    "typescript": "*",
+    "@types/node": "^20.14.0",
+    "@jest/globals": "^29.7.0",
+    "@types/jest": "^29.5.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0"
   }
 }

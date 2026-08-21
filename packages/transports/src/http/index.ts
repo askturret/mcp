@@ -308,7 +308,7 @@ class StreamableHttpTransport implements HttpTransport {
     const command: OperationCommand = {
       requestId,
       traceId,
-      clientInfo,
+      ...(clientInfo !== undefined && { clientInfo }),
       operationId: params.name,
       input: params.arguments || {},
       deadline,
@@ -325,7 +325,7 @@ class StreamableHttpTransport implements HttpTransport {
       timeoutId = setTimeout(() => {
         abortController.abort(); // Signal cancellation
         resolve({
-          ok: false,
+          isError: true,
           error: {
             code: 'TIMEOUT',
             message: 'Request exceeded deadline',
@@ -343,13 +343,13 @@ class StreamableHttpTransport implements HttpTransport {
     }
 
     // Map to MCP wire format
-    if (!result.ok) {
+    if (result.isError) {
       return {
         jsonrpc: '2.0',
         id: requestId,
         error: {
-          code: result.error.code,
-          message: result.error.message,
+          code: result.error!.code,
+          message: result.error!.message,
         },
       };
     }
@@ -361,7 +361,7 @@ class StreamableHttpTransport implements HttpTransport {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(result.value),
+            text: JSON.stringify(result.content),
           },
         ],
       },

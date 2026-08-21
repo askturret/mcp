@@ -7,7 +7,7 @@
 /**
  * Placeholder for createMcpServer - the main entry point for the Light API
  */
-export function createMcpServer(options?: unknown): unknown {
+export function createMcpServer(_options?: unknown): unknown {
   // Stub implementation for v0.1
   return {
     start: async () => {
@@ -25,6 +25,7 @@ export function createMcpServer(options?: unknown): unknown {
 export const VERSION = '0.1.0';
 
 /**
- * Re-export all core types and utilities (to be implemented)
+ * Re-export all core types and utilities
  */
 export * from './types.js';
+export * from './freeze.js';

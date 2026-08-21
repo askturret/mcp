@@ -10,7 +10,7 @@
  * @param options - Telemetry configuration
  * @returns Telemetry adapter
  */
-export function openTelemetry(options?: unknown): unknown {
+export function openTelemetry(_options?: unknown): unknown {
   // Stub implementation for v0.1
   return {
     trace: () => {

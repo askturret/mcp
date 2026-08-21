@@ -5,20 +5,20 @@
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./packages/core/dist/index.d.ts",
+      "import": "./packages/core/dist/index.js"
     },
     "./openapi": {
-      "types": "./dist/openapi.d.ts",
-      "import": "./dist/openapi.js"
+      "types": "./packages/sources-openapi/dist/index.d.ts",
+      "import": "./packages/sources-openapi/dist/index.js"
     },
     "./express": {
-      "types": "./dist/express.d.ts",
-      "import": "./dist/express.js"
+      "types": "./packages/adapters-express/dist/index.d.ts",
+      "import": "./packages/adapters-express/dist/index.js"
     },
     "./otel": {
-      "types": "./dist/otel.d.ts",
-      "import": "./dist/otel.js"
+      "types": "./packages/observability/dist/index.d.ts",
+      "import": "./packages/observability/dist/index.js"
     }
   },
   "engines": {
@@ -28,8 +28,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "npm run build:root && npm run build --workspaces --if-present",
-    "build:root": "tsc -p tsconfig.build.json",
+    "build": "npm run build --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "tsc --noEmit"

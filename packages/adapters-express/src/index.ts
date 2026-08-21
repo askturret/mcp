@@ -10,10 +10,10 @@
  * @param options - Configuration options
  * @returns Express middleware/router
  */
-export function expressMcp(options?: unknown): unknown {
+export function expressMcp(_options?: unknown): unknown {
   // Stub implementation for v0.1
   // Returns a placeholder middleware
-  return (req: unknown, res: unknown, next: unknown) => {
+  return (_req: unknown, _res: unknown, next: unknown) => {
     if (typeof next === 'function') {
       next();
     }

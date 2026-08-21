@@ -1,0 +1,37 @@
+name: DCO
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  # Enforces the sign-off requirement documented in CONTRIBUTING.md.
+  dco:
+    name: DCO sign-off
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history: the check walks every commit from the merge-base to
+          # the PR head, which a shallow clone cannot resolve.
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Verify Signed-off-by on every commit
+        run: .github/scripts/dco-check.sh "$BASE_SHA" "$HEAD_SHA"
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+
+  # Guards the checker itself, so a change that stops it detecting unsigned
+  # commits fails here rather than silently passing every PR.
+  dco-self-test:
+    name: DCO checker self-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run dco-check.sh test suite
+        run: .github/scripts/dco-check.test.sh

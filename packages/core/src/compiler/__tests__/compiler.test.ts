@@ -6,7 +6,7 @@ import { describe, it, expect } from '@jest/globals';
 import { createCompiler } from '../index.js';
 import type { DiscoveredOperation } from '../../sources/types.js';
 import type { Logger } from '../../sources/types.js';
-import type { CompiledOperation } from '../types.js';
+import type { CompiledOperation, CompilerWarning } from '../types.js';
 
 /**
  * Create a minimal logger for testing
@@ -317,8 +317,8 @@ describe('Compiler', () => {
       // Test 2: Swapped order produces different result (order-sensitivity proof)
       // Run just the two passes in SWAPPED order to show the dependency
       const warnings = {
-        warnings: [] as unknown[],
-        warn(w: unknown) { this.warnings.push(w); },
+        warnings: [] as CompilerWarning[],
+        warn(w: CompilerWarning) { this.warnings.push(w); },
         getWarnings() { return this.warnings; },
       };
       const testContext = { ...context, warnings };

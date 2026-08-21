@@ -22,9 +22,10 @@ export const normalizeSchemas: CompilerPass = {
     // This pass is a placeholder for future schema normalization logic
     return operations.map(op => ({
       ...op,
-      // Ensure input/output exist (may be undefined from source)
-      input: op.rawInput ?? {},
-      output: op.rawOutput ?? {},
+      // Only set input/output when raw schemas exist
+      // Leave undefined when absent — validate-invariants (pass 8) decides what to do
+      ...(op.rawInput && { input: op.rawInput }),
+      ...(op.rawOutput && { output: op.rawOutput }),
     }));
   },
 };

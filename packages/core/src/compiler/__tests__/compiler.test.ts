@@ -294,7 +294,6 @@ describe('Compiler', () => {
 
       // Import passes directly to test permutation
       const { COMPILER_PASSES } = await import('../index.js');
-      const { resolveIdentity } = await import('../passes/resolve-identity.js');
       const { validateInvariants } = await import('../passes/validate-invariants.js');
 
       // Find the indices of these two passes in the correct order
@@ -319,13 +318,21 @@ describe('Compiler', () => {
       };
       const testContext = { ...context, warnings };
 
-      // Convert discovered to intermediate form
-      let operations = discovered.map(op => ({
+      // Convert discovered to intermediate form (explicit typing to satisfy exactOptionalPropertyTypes)
+      type IntermediateOp = {
+        candidateId?: string;
+        name: string;
+        description: string;
+        source?: { kind: string; location?: string };
+        effects?: { readOnly: boolean; idempotent: boolean; retryable: boolean; idempotencyKeyRequired: boolean; classifications: readonly string[] };
+      };
+
+      let operations: readonly IntermediateOp[] = discovered.map(op => ({
         candidateId: op.candidateId,
         name: op.name,
         description: op.description,
-        source: op.source,
-        effects: op.effects,
+        ...(op.source && { source: op.source }),
+        ...(op.effects && { effects: op.effects }),
       }));
 
       // Run validate-invariants BEFORE resolve-identity (wrong order)

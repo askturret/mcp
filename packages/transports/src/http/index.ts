@@ -10,7 +10,13 @@
  */
 
 import { randomUUID } from 'crypto';
-import type { RegistrySnapshot } from '@askturret/mcp-core';
+import type {
+  RegistrySnapshot,
+  CommandDispatcher,
+  OperationCommand,
+  MCPResult,
+} from '@askturret/mcp-core';
+import { createDispatcher } from '@askturret/mcp-core';
 import type {
   HttpTransport,
   HttpTransportOptions,
@@ -38,6 +44,7 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
  */
 class StreamableHttpTransport implements HttpTransport {
   private readonly registry;
+  private readonly dispatcher: CommandDispatcher;
   private readonly basePath: string;
   private readonly sessionStore: SessionStore | null;
   private readonly allowedHosts: Set<string>;
@@ -47,6 +54,7 @@ class StreamableHttpTransport implements HttpTransport {
 
   constructor(options: HttpTransportOptions) {
     this.registry = options.registry;
+    this.dispatcher = createDispatcher(options.registry, options.hooks);
     this.basePath = options.basePath ?? '/mcp';
     this.deadlineMs = options.deadlineMs ?? 30000;
     this.maxRequestBodySize = options.maxRequestBodySize ?? 1048576; // 1 MiB
@@ -275,6 +283,7 @@ class StreamableHttpTransport implements HttpTransport {
 
   private async handleToolsCall(params: any, sessionId: string | null): Promise<any> {
     // Update session activity if sessions enabled
+    let clientInfo;
     if (this.sessionStore && sessionId) {
       const session = await this.sessionStore.get(sessionId);
       if (session) {
@@ -282,39 +291,50 @@ class StreamableHttpTransport implements HttpTransport {
           ...session,
           lastActivityAt: new Date(),
         });
+        clientInfo = session.clientInfo;
       }
     }
 
     // Get current registry snapshot
     const snapshot: RegistrySnapshot = this.registry.current();
 
-    // Find operation
-    const operation = snapshot.operations.get(params.name);
-    if (!operation) {
+    // Build OperationCommand with full context
+    const deadline = new Date(Date.now() + this.deadlineMs);
+    const abortController = new AbortController();
+    const requestId = params.id || randomUUID();
+
+    const command: OperationCommand = {
+      requestId,
+      operationId: params.name,
+      input: params.arguments || {},
+      deadline,
+      signal: abortController.signal,
+      registryHash: snapshot.hash,
+    };
+
+    // Dispatch through the full 12-stage envelope
+    const result: MCPResult = await this.dispatcher.dispatch(command);
+
+    // Map to MCP wire format
+    if ('error' in result) {
       return {
         jsonrpc: '2.0',
-        id: params.id,
+        id: requestId,
         error: {
-          code: -32602,
-          message: `Tool not found: ${params.name}`,
+          code: result.error.code,
+          message: result.error.message,
         },
       };
     }
 
-    // Create dispatch context
-    const deadline = new Date(Date.now() + this.deadlineMs);
-    const abortController = new AbortController();
-
-    // TODO: Dispatch through actual dispatcher
-    // For v0.1, return stub response
     return {
       jsonrpc: '2.0',
-      id: params.id,
+      id: requestId,
       result: {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ stub: true, operation: operation.name }),
+            text: JSON.stringify(result.result),
           },
         ],
       },

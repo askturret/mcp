@@ -2,7 +2,7 @@
  * HTTP transport types - MCP Streamable HTTP server configuration
  */
 
-import type { RegistryReference } from '@askturret/mcp-core';
+import type { RegistryReference, DispatcherHooks } from '@askturret/mcp-core';
 
 /**
  * Session store interface - pluggable session persistence
@@ -55,6 +55,11 @@ export interface HttpTransportOptions {
    * Registry reference (snapshot provider)
    */
   readonly registry: RegistryReference;
+
+  /**
+   * Optional dispatcher hooks for auth, policy, etc.
+   */
+  readonly hooks?: DispatcherHooks;
 
   /**
    * Base path for MCP endpoints (default: '/mcp')

@@ -14,7 +14,7 @@
  * - Local Explorer only when NODE_ENV !== 'production'
  */
 
-import type { Request, Response, NextFunction, Router } from 'express';
+import express, { type Request, Response, NextFunction, Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   createCompiler,
@@ -66,9 +66,6 @@ export function mcpFromOpenApi(
  * @returns Express Router
  */
 export function expressMcp(options: ExpressMcpOptions): Router {
-  // Use dynamic import to avoid bundling Express
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const express = require('express');
   const router: Router = express.Router();
 
   // Apply Light preset defaults

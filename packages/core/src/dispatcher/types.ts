@@ -6,9 +6,7 @@
  */
 
 import type {
-  OperationCommand,
   OperationResult,
-  OperationError,
   Principal,
   ConfirmationProof,
 } from '../types.js';

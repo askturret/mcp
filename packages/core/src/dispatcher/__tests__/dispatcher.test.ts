@@ -5,7 +5,7 @@
 import { describe, it, expect } from '@jest/globals';
 import { createDispatcher } from '../index.js';
 import { AtomicRegistryReference } from '../../registry-reference.js';
-import type { OperationDefinition } from '../../types.js';
+import type { OperationDefinition, RegistrySnapshot } from '../../types.js';
 import type { DispatcherHooks } from '../types.js';
 import { freezeMap } from '../../compiler/passes/freeze-and-hash.js';
 
@@ -129,9 +129,18 @@ describe('CommandDispatcher', () => {
     });
 
     it('should validate output (stage 9)', async () => {
-      // This test would require a real executor that returns invalid output
-      // For v0.1 stub executor always returns valid output, so this is deferred
-      expect(true).toBe(true);
+      // v0.1: stub executor echoes input, so we verify the validateOutput stage
+      // by confirming output passes through when valid
+      const snapshot = createTestSnapshot(1, 'hash1');
+      const registry = new AtomicRegistryReference(snapshot);
+      const dispatcher = createDispatcher(registry);
+
+      const command = createTestCommand({ input: { valid: true } });
+      const result = await dispatcher.dispatch(command);
+
+      // Output validation passed (stub returns input, which is valid)
+      expect(result.isError).toBe(false);
+      expect(result.content).toEqual({ valid: true });
     });
 
     it('should handle authorization short-circuit (stage 3)', async () => {
@@ -213,23 +222,29 @@ describe('CommandDispatcher', () => {
     });
 
     it('should map internal exceptions to INTERNAL_ERROR without leaking details', async () => {
-      // This test would require injecting an executor that throws
-      // For v0.1, the try-catch in dispatch() catches any exception
-      // and maps it to INTERNAL_ERROR with a generic message
+      // v0.1: Test verifies the error mapping contract
+      // Real executor injection deferred, but we verify INTERNAL_ERROR shape
 
-      // Simulate by testing the catch block indirectly
-      // (Real test would require dependency injection of executor)
+      // Use a hook that throws to simulate internal exception path
+      const hooks: DispatcherHooks = {
+        audit: async () => {
+          throw new Error('Secret internal details should never leak');
+        },
+      };
 
       const snapshot = createTestSnapshot(1, 'hash1');
       const registry = new AtomicRegistryReference(snapshot);
-      const dispatcher = createDispatcher(registry);
+      const dispatcher = createDispatcher(registry, hooks);
 
       const command = createTestCommand();
       const result = await dispatcher.dispatch(command);
 
-      // For stub executor, this succeeds
-      // Real test deferred to when executor injection is available
-      expect(result).toBeDefined();
+      // Verify internal exception mapped to INTERNAL_ERROR
+      expect(result.isError).toBe(true);
+      expect(result.error?.code).toBe('INTERNAL_ERROR');
+      expect(result.error?.message).toBe('An internal error occurred');
+      // Verify no internal details leaked
+      expect(result.error?.message).not.toContain('Secret');
     });
 
     it('should preserve error details and retryAfter if present', async () => {

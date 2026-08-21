@@ -12,7 +12,6 @@ import type {
   OperationCommand,
   OperationResult,
   OperationError,
-  RegistrySnapshot,
   OperationDefinition,
   Principal,
 } from '../types.js';
@@ -88,10 +87,10 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
       // STAGE 2: Authenticate
       const principal = await this.authenticate(context);
-      const contextWithPrincipal: DispatchContext = {
+      const contextWithPrincipal: DispatchContext = omitUndefined({
         ...context,
         principal: principal ?? context.principal,
-      };
+      });
 
       // STAGE 3: Authorize
       const authDecision = await this.authorize(contextWithPrincipal, command.input);
@@ -215,7 +214,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   }
 
   private async execute(
-    operation: OperationDefinition,
+    _operation: OperationDefinition,
     input: unknown,
     context: DispatchContext,
   ): Promise<OperationResult> {

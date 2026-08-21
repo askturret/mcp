@@ -59,7 +59,7 @@ class HandlerExecutor implements OperationExecutor {
 
       // Create AbortController for deadline enforcement
       const abortController = new AbortController();
-      const timeoutId = setTimeout(() => abortController.abort(), deadlineMs);
+      let timeoutId: NodeJS.Timeout | undefined;
 
       // Wire context.signal to our AbortController
       if (context.signal.aborted) {
@@ -69,51 +69,65 @@ class HandlerExecutor implements OperationExecutor {
       }
 
       // Race handler execution against deadline
-      let handlerCompleted = false;
-      let handlerResult: unknown;
-
-      try {
-        // Call handler with input and context
-        // Handler can access AbortSignal via context.signal
-        handlerResult = await this.handler(input, context);
-        handlerCompleted = true;
-        clearTimeout(timeoutId);
-      } catch (error) {
-        clearTimeout(timeoutId);
-
-        // Check if aborted (deadline or cancellation)
-        if (abortController.signal.aborted) {
-          if (context.signal.aborted) {
+      // The handler promise itself is NOT cancelled (JS can't cancel in-flight promises)
+      // but execute() returns TIMEOUT at the deadline regardless
+      const handlerPromise = this.handler(input, context).then(
+        (value) => ({ ok: true as const, value }),
+        (error) => {
+          // Handler threw an exception
+          // Check if aborted (deadline or cancellation)
+          if (abortController.signal.aborted) {
+            if (context.signal.aborted) {
+              return {
+                ok: false as const,
+                error: {
+                  code: 'CANCELLED' as const,
+                  message: 'Request cancelled',
+                },
+              };
+            }
             return {
-              ok: false,
+              ok: false as const,
               error: {
-                code: 'CANCELLED',
-                message: 'Request cancelled',
+                code: 'TIMEOUT' as const,
+                message: 'Deadline exceeded',
               },
             };
           }
+
+          // Map any other exception to INTERNAL_ERROR
+          // NEVER leak exception message, stack, or type name
           return {
+            ok: false as const,
+            error: {
+              code: 'INTERNAL_ERROR' as const,
+              message: 'Execution failed',
+            },
+          };
+        },
+      );
+
+      const timeoutPromise = new Promise<OperationResult>((resolve) => {
+        timeoutId = setTimeout(() => {
+          resolve({
             ok: false,
             error: {
               code: 'TIMEOUT',
               message: 'Deadline exceeded',
             },
-          };
-        }
+          });
+        }, deadlineMs);
+      });
 
-        // Map any other exception to INTERNAL_ERROR
-        // NEVER leak exception message, stack, or type name
-        return {
-          ok: false,
-          error: {
-            code: 'INTERNAL_ERROR',
-            message: 'Execution failed',
-          },
-        };
+      // Race the two promises
+      const result = await Promise.race([handlerPromise, timeoutPromise]);
+
+      // Clean up timeout
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
       }
 
-      // Success
-      return { ok: true, value: handlerResult };
+      return result;
     } catch (error) {
       // Catch any unexpected exception
       // Check if cancellation happened during execution

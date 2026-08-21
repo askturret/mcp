@@ -184,7 +184,9 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   });
 
   // Mount HTTP transport handler
-  router.use(basePath, createTransportMiddleware(transport, deadlineMs));
+  // Note: Mount at root (no path prefix) because Express's router.use(path, middleware)
+  // strips the path from req.url, but the transport expects to see the full basePath.
+  router.use(createTransportMiddleware(transport, deadlineMs));
 
   // Mount Explorer UI if enabled
   if (enableExplorer) {

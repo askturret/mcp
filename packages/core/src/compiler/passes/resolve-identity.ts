@@ -49,7 +49,9 @@ export const resolveIdentity: CompilerPass = {
     for (const [id, ops] of byId) {
       if (ops.length === 1) {
         // No conflict
-        const { candidateId: _, ...rest } = ops[0];
+        const op = ops[0];
+        if (!op) continue; // Should never happen, but satisfy TypeScript
+        const { candidateId: _, ...rest } = op;
         resolved.push({
           ...rest,
           id,

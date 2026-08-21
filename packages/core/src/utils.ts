@@ -9,6 +9,9 @@
  * `field: undefined` is rejected by TypeScript. Instead of manually checking
  * each field, use this helper to strip undefined values before object construction.
  *
+ * Runtime: strips keys whose values are undefined.
+ * Type: returns T (safe cast - only optional fields should have undefined values).
+ *
  * @param obj - Object potentially containing undefined values
  * @returns New object with undefined values omitted
  *
@@ -23,12 +26,12 @@
  */
 export function omitUndefined<T extends Record<string, unknown>>(
   obj: T,
-): Partial<T> {
+): T {
   const result: Partial<T> = {};
   for (const key in obj) {
     if (obj[key] !== undefined) {
       result[key] = obj[key];
     }
   }
-  return result;
+  return result as T;
 }

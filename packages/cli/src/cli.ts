@@ -29,7 +29,6 @@ Options:
   --help, -h            Show this help message
       `);
       process.exit(0);
-      break;
 
     default:
       console.error(`Unknown command: ${command}`);

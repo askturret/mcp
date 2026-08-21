@@ -189,7 +189,7 @@ function analyzeOperation(
 
   // Check 3: Naming - operationId present and agent-friendly
   if (!operationId) {
-    findings.push(omitUndefined({
+    findings.push(omitUndefined<Finding>({
       severity: 'error',
       code: 'MISSING_OPERATION_ID',
       message: 'Operation must have an operationId',
@@ -198,7 +198,7 @@ function analyzeOperation(
       operationId: undefined,
     }));
   } else if (!isAgentFriendlyName(operationId)) {
-    findings.push(omitUndefined({
+    findings.push(omitUndefined<Finding>({
       severity: 'warning',
       code: 'UNFRIENDLY_OPERATION_ID',
       message: `Operation ID "${operationId}" is not agent-friendly. Consider using camelCase or snake_case descriptive names.`,
@@ -212,7 +212,7 @@ function analyzeOperation(
   // Check 4: Descriptions - non-empty, longer than N chars
   const MIN_DESCRIPTION_LENGTH = 20;
   if (!operation.description || operation.description.trim().length === 0) {
-    findings.push(omitUndefined({
+    findings.push(omitUndefined<Finding>({
       severity: 'warning',
       code: 'MISSING_DESCRIPTION',
       message: 'Operation should have a description',
@@ -221,7 +221,7 @@ function analyzeOperation(
       method,
     }));
   } else if (operation.description.trim().length < MIN_DESCRIPTION_LENGTH) {
-    findings.push(omitUndefined({
+    findings.push(omitUndefined<Finding>({
       severity: 'info',
       code: 'SHORT_DESCRIPTION',
       message: `Description is very short (${operation.description.length} chars). Consider adding more detail for better agent understanding.`,
@@ -236,7 +236,7 @@ function analyzeOperation(
   const hasOutputSchema = hasValidOutputSchema(operation, method);
 
   if (!hasInputSchema && (method === 'POST' || method === 'PUT' || method === 'PATCH')) {
-    findings.push(omitUndefined({
+    findings.push(omitUndefined<Finding>({
       severity: 'warning',
       code: 'MISSING_INPUT_SCHEMA',
       message: 'Mutating operation should define request body schema',
@@ -247,7 +247,7 @@ function analyzeOperation(
   }
 
   if (!hasOutputSchema && method === 'GET') {
-    findings.push(omitUndefined({
+    findings.push(omitUndefined<Finding>({
       severity: 'error',
       code: 'MISSING_OUTPUT_SCHEMA',
       message: 'GET operation must have a non-empty output schema',
@@ -262,7 +262,7 @@ function analyzeOperation(
   const hasEffects = hasEffectClassification(operation);
 
   if (isMutating && !hasEffects) {
-    findings.push(omitUndefined({
+    findings.push(omitUndefined<Finding>({
       severity: 'warning',
       code: 'MISSING_EFFECTS',
       message: 'Mutating operation should have x-mcp-effects classification',
@@ -278,7 +278,7 @@ function analyzeOperation(
   // Check 7: Unsafe fields in request body
   const unsafeFields = findUnsafeFields(operation);
   if (unsafeFields.length > 0) {
-    findings.push(omitUndefined({
+    findings.push(omitUndefined<Finding>({
       severity: 'warning',
       code: 'UNSAFE_FIELDS_DETECTED',
       message: `Request body contains potentially sensitive fields: ${unsafeFields.join(', ')}. Consider adding redaction hints.`,
@@ -484,7 +484,7 @@ function findOverlappingTools(operations: OperationAnalysis[]): Finding[] {
     // Check for exact duplicates
     if (seen.has(op.operationId)) {
       const duplicate = seen.get(op.operationId)!;
-      findings.push(omitUndefined({
+      findings.push(omitUndefined<Finding>({
         severity: 'error',
         code: 'DUPLICATE_OPERATION_ID',
         message: `Duplicate operationId "${op.operationId}" found`,
@@ -502,7 +502,7 @@ function findOverlappingTools(operations: OperationAnalysis[]): Finding[] {
     // Check for similar names (potential confusion)
     for (const [existingId] of seen.entries()) {
       if (areNamesSimilar(op.operationId, existingId)) {
-        findings.push(omitUndefined({
+        findings.push(omitUndefined<Finding>({
           severity: 'warning',
           code: 'SIMILAR_OPERATION_NAMES',
           message: `Operation names "${op.operationId}" and "${existingId}" are very similar and may cause confusion`,

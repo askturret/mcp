@@ -127,12 +127,12 @@ function formatFinding(finding: Finding, indent: string): string {
   let line = `${indent}${icon} [${finding.code}] ${finding.message}`;
 
   if (finding.context) {
-    const ctx = finding.context;
-    if (ctx.suggestion) {
+    const ctx = finding.context as Record<string, unknown>;
+    if (typeof ctx.suggestion === 'string') {
       line += `\n${indent}  Suggestion: ${ctx.suggestion}`;
     }
     if (ctx.unsafeFields && Array.isArray(ctx.unsafeFields)) {
-      line += `\n${indent}  Fields: ${ctx.unsafeFields.join(', ')}`;
+      line += `\n${indent}  Fields: ${(ctx.unsafeFields as string[]).join(', ')}`;
     }
   }
 

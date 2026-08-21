@@ -1,0 +1,128 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "SendGrid API Subset",
+    "version": "3.0",
+    "description": "Simplified SendGrid email operations"
+  },
+  "servers": [
+    {
+      "url": "https://api.sendgrid.com/v3"
+    }
+  ],
+  "paths": {
+    "/mail/send": {
+      "post": {
+        "operationId": "sendEmail",
+        "summary": "Send an email",
+        "description": "Send a single email to one or more recipients",
+        "x-mcp": {
+          "effects": {
+            "classifications": ["notification"]
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "personalizations": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "to": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "email": { "type": "string" }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  "from": {
+                    "type": "object",
+                    "properties": {
+                      "email": { "type": "string" },
+                      "name": { "type": "string" }
+                    },
+                    "required": ["email"]
+                  },
+                  "subject": { "type": "string" },
+                  "content": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "type": { "type": "string" },
+                        "value": { "type": "string" }
+                      }
+                    }
+                  }
+                },
+                "required": ["personalizations", "from", "subject", "content"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Email accepted for delivery",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message_id": { "type": "string" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/templates": {
+      "get": {
+        "operationId": "listTemplates",
+        "summary": "Retrieve all templates",
+        "parameters": [
+          {
+            "name": "generations",
+            "in": "query",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of templates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "templates": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": { "type": "string" },
+                          "name": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

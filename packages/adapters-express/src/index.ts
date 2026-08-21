@@ -183,11 +183,7 @@ export function expressMcp(options: ExpressMcpOptions): Router {
     ...(options.transport !== undefined && options.transport),
   });
 
-  // Mount HTTP transport handler
-  // Check path match before delegating to transport to avoid swallowing sibling routes
-  router.use(createTransportMiddleware(transport, basePath, deadlineMs));
-
-  // Mount Explorer UI if enabled
+  // Mount Explorer UI BEFORE transport so it gets priority
   // Routes are relative to router mount point (user mounts at basePath)
   if (enableExplorer) {
     router.get('/explorer', (_req: Request, res: Response) => {
@@ -200,6 +196,10 @@ export function expressMcp(options: ExpressMcpOptions): Router {
       res.status(404).json({ error: 'Explorer not available in production' });
     });
   }
+
+  // Mount HTTP transport handler
+  // Check path match before delegating to transport to avoid swallowing sibling routes
+  router.use(createTransportMiddleware(transport, basePath, deadlineMs));
 
   // Catch-all 404 handler for unknown paths
   router.use((_req: Request, res: Response) => {
@@ -220,12 +220,12 @@ function createTransportMiddleware(
   const handler = transport.handler();
 
   return async (req: Request, res: Response, next: NextFunction) => {
-    // Check if request path exactly matches basePath
+    // Check if request path matches basePath or its sub-routes
     // Use req.originalUrl to see the full path before Express prefix-stripping
     const requestPath = req.originalUrl?.split('?')[0] || req.url?.split('?')[0] || '';
 
-    // If path doesn't exactly match basePath, pass to next middleware (allows /explorer, etc.)
-    if (requestPath !== basePath) {
+    // If path doesn't start with basePath, pass to next middleware (allows sibling routes)
+    if (!requestPath.startsWith(basePath)) {
       return next();
     }
 
@@ -291,7 +291,7 @@ function createExplorerHtml(basePath: string): string {
   </style>
 </head>
 <body>
-  <h1>MCP Explorer (Development Only)</h1>
+  <h1>AskTurret MCP Explorer</h1>
   <p>This is a minimal development explorer. Full Explorer UI ships in Epic #1.3 (issue #19).</p>
 
   <div class="endpoint">

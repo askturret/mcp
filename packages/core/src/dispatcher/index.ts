@@ -214,14 +214,17 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   }
 
   private async execute(
-    operation: OperationDefinition,
+    _operation: OperationDefinition,
     input: unknown,
     context: DispatchContext,
   ): Promise<OperationResult> {
-    // v0.1: stub executor that calls the executor if provided
-    // Real executor resolver (from operation.executor binding) deferred to v0.2
+    // v0.1: stub executor - returns echo result
+    // Real executor strategies (viaHandler, viaHttp) ship in issue #14
     try {
-      // Check for cancellation before execution
+      // Simulate async execution
+      await new Promise(resolve => setTimeout(resolve, 0));
+
+      // Check for cancellation
       if (context.signal.aborted) {
         return {
           ok: false,
@@ -232,19 +235,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         };
       }
 
-      // If operation has an executor in the old format (for backwards compatibility with tests),
-      // invoke it directly
-      const executorAny = operation.executor as any;
-      if (executorAny && typeof executorAny.execute === 'function') {
-        // This is an OperationExecutor - call it directly
-        return await executorAny.execute(operation, input, context);
-      } else if (executorAny && typeof executorAny.handler === 'function') {
-        // Old test format with inline handler - call it for backwards compatibility
-        const result = await executorAny.handler(input, context);
-        return { ok: true, value: result };
-      }
-
-      // Fallback: Echo the input as output (stub behavior for operations without executors)
+      // Echo the input as output (stub behavior)
       return { ok: true, value: input };
     } catch (error) {
       // Map executor exceptions to INTERNAL_ERROR

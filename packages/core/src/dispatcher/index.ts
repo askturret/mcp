@@ -22,6 +22,7 @@ import type {
   MCPResult,
   HookDecision,
 } from './types.js';
+import type { OperationExecutor } from '../executor/types.js';
 import { omitUndefined } from '../utils.js';
 
 /**
@@ -42,13 +43,15 @@ export interface CommandDispatcher {
  *
  * @param registry - Registry reference (snapshot captured at dispatch entry)
  * @param hooks - Optional user-extensible hooks
+ * @param executors - Optional executor registry (maps executor type to OperationExecutor instance)
  * @returns CommandDispatcher instance
  */
 export function createDispatcher(
   registry: RegistryReference,
   hooks?: DispatcherHooks,
+  executors?: Map<string, OperationExecutor>,
 ): CommandDispatcher {
-  return new DefaultCommandDispatcher(registry, hooks);
+  return new DefaultCommandDispatcher(registry, hooks, executors);
 }
 
 /**
@@ -58,6 +61,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   constructor(
     private readonly registry: RegistryReference,
     private readonly hooks: DispatcherHooks = {},
+    private readonly executors: Map<string, OperationExecutor> = new Map(),
   ) {}
 
   async dispatch(command: OperationCommand): Promise<MCPResult> {
@@ -214,31 +218,31 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   }
 
   private async execute(
-    _operation: OperationDefinition,
+    operation: OperationDefinition,
     input: unknown,
     context: DispatchContext,
   ): Promise<OperationResult> {
-    // v0.1: stub executor - returns echo result
-    // Real executor strategies (viaHandler, viaHttp) ship in issue #14
+    // Resolve executor from operation binding
+    const executorType = operation.executor.type;
+    const executor = this.executors.get(executorType);
+
+    if (!executor) {
+      // No executor registered for this type - return error
+      return {
+        ok: false,
+        error: {
+          code: 'INTERNAL_ERROR',
+          message: `No executor registered for type '${executorType}'`,
+        },
+      };
+    }
+
+    // Delegate to the actual executor (viaHandler, viaHttp, etc.)
     try {
-      // Simulate async execution
-      await new Promise(resolve => setTimeout(resolve, 0));
-
-      // Check for cancellation
-      if (context.signal.aborted) {
-        return {
-          ok: false,
-          error: {
-            code: 'CANCELLED',
-            message: 'Request cancelled',
-          },
-        };
-      }
-
-      // Echo the input as output (stub behavior)
-      return { ok: true, value: input };
+      return await executor.execute(operation, input, context);
     } catch (error) {
-      // Map executor exceptions to INTERNAL_ERROR
+      // Catch any unhandled executor exceptions and map to INTERNAL_ERROR
+      // Executors should return OperationResult, not throw, but this is a safety net
       return {
         ok: false,
         error: {

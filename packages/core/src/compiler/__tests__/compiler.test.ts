@@ -6,6 +6,7 @@ import { describe, it, expect } from '@jest/globals';
 import { createCompiler } from '../index.js';
 import type { DiscoveredOperation } from '../../sources/types.js';
 import type { Logger } from '../../sources/types.js';
+import type { CompiledOperation } from '../types.js';
 
 /**
  * Create a minimal logger for testing
@@ -181,6 +182,8 @@ describe('Compiler', () => {
           name: 'getPet',
           description: 'From OpenAPI',
           source: { kind: 'openapi' },
+          rawInput: { type: 'object' },
+          rawOutput: { type: 'object' },
           effects: {
             readOnly: true,
             idempotent: true,
@@ -194,6 +197,8 @@ describe('Compiler', () => {
           name: 'getPet',
           description: 'From code',
           source: { kind: 'code' },
+          rawInput: { type: 'object' },
+          rawOutput: { type: 'object' },
           effects: {
             readOnly: true,
             idempotent: true,
@@ -318,16 +323,8 @@ describe('Compiler', () => {
       };
       const testContext = { ...context, warnings };
 
-      // Convert discovered to intermediate form (explicit typing to satisfy exactOptionalPropertyTypes)
-      type IntermediateOp = {
-        candidateId?: string;
-        name: string;
-        description: string;
-        source?: { kind: string; location?: string };
-        effects?: { readOnly: boolean; idempotent: boolean; retryable: boolean; idempotencyKeyRequired: boolean; classifications: readonly string[] };
-      };
-
-      let operations: readonly IntermediateOp[] = discovered.map(op => ({
+      // Convert discovered to intermediate form using real CompiledOperation type
+      let operations: readonly CompiledOperation[] = discovered.map(op => ({
         candidateId: op.candidateId,
         name: op.name,
         description: op.description,

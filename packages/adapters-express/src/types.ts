@@ -83,6 +83,15 @@ export interface McpFromOpenApiOptions {
   include?: string[] | '*';
 
   /**
+   * Explicit upstream base URL for calling the described API.
+   *
+   * Overrides the spec's `servers` array. Supply this when the spec declares no
+   * absolute server, declares several and you want a specific one, or points at
+   * an environment you are not targeting.
+   */
+  baseUrl?: string;
+
+  /**
    * Enable Explorer UI (default: true when NODE_ENV !== 'production')
    */
   enableExplorer?: boolean;

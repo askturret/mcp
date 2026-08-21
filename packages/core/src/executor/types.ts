@@ -53,8 +53,13 @@ export interface HttpExecutorOptions {
   /**
    * Base URL for the upstream service.
    * SSRF safety: fixed at config time, never influenced by user input.
+   *
+   * Optional: when omitted, each operation must supply its own `baseUrl` in its
+   * executor binding config (as operations discovered from an API spec do).
+   * An operation with neither fails with EXECUTOR_MISCONFIGURED rather than
+   * issuing a request to an unintended host.
    */
-  readonly baseUrl: string;
+  readonly baseUrl?: string;
 
   /**
    * Optional HTTP client (defaults to undici).

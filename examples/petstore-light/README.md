@@ -11,6 +11,30 @@ npm start
 
 The server will start on port 3000 (or PORT environment variable).
 
+## Calling a tool
+
+Tool calls are proxied to the upstream API named in the spec's `servers` entry,
+using each operation's own method and path — `listPets` becomes
+`GET {server}/pets`, and `getPetById` becomes `GET {server}/pets/{petId}`.
+
+This example's spec points at `https://petstore.example.com/api/v1`, an
+illustrative host that does not exist, so `tools/call` returns
+`UPSTREAM_UNAVAILABLE` out of the box. `tools/list` and the Explorer work
+regardless — the tool surface is real; only the upstream is a placeholder.
+
+To call a real API, point the server at one:
+
+```js
+app.use('/mcp', mcpFromOpenApi({
+  spec: './openapi.yaml',
+  baseUrl: 'https://your-real-api.example.com',
+}));
+```
+
+`baseUrl` overrides the spec's `servers` entry. Supply it when the spec declares
+no absolute server, declares several and you want a specific one, or points at
+an environment you are not targeting.
+
 ## Endpoints
 
 - **MCP JSON-RPC**: `POST http://localhost:3000/mcp`

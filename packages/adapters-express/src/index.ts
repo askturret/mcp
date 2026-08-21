@@ -19,6 +19,7 @@ import express, { type Request, Response, NextFunction, Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   createCompiler,
+  viaHttp,
   AtomicRegistryReference,
   type RegistrySnapshot,
   type OperationDefinition,
@@ -26,6 +27,7 @@ import {
   type DiscoveredOperation,
   type DiscoveryContext,
   type CompilerContext,
+  type OperationExecutor,
 } from '@askturret/mcp-core';
 import { fromOpenApi } from '@askturret/mcp-sources-openapi';
 import { createHttpTransport } from '@askturret/mcp-transports';
@@ -49,8 +51,11 @@ export function mcpFromOpenApi(
       ? { spec: specOrOptions, ...extraOptions }
       : specOrOptions;
 
-  // Create OpenAPI source
-  const source = fromOpenApi(options.spec);
+  // Create OpenAPI source, forwarding an explicit upstream base URL when given
+  const source = fromOpenApi(
+    options.spec,
+    options.baseUrl !== undefined ? { baseUrl: options.baseUrl } : {},
+  );
 
   // Delegate to composable form
   return expressMcp({
@@ -177,6 +182,22 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   // Attach init promise to router for tests to await
   (router as any)._init = initPromise;
 
+  // Register a default executor for spec-discovered operations.
+  //
+  // Without this, every tools/call fails with "No executor registered" — the
+  // registry knows the tools but nothing can run them (#103). Operations
+  // discovered from an API spec carry executor type 'http' plus their own
+  // method, path and base URL, so viaHttp needs no constructor baseUrl here;
+  // an operation whose spec declared no usable server fails with an actionable
+  // message rather than being routed to an unintended host.
+  const executors = new Map<string, OperationExecutor>([['http', viaHttp({})]]);
+
+  // A caller-supplied executor always wins, per type — including replacing
+  // 'http' outright.
+  for (const [type, executor] of options.transport?.executors ?? []) {
+    executors.set(type, executor);
+  }
+
   // Create HTTP transport
   const transport = createHttpTransport({
     registry,
@@ -186,6 +207,8 @@ export function expressMcp(options: ExpressMcpOptions): Router {
     maxRequestBodySize,
     maxResponseSize,
     ...(options.transport !== undefined && options.transport),
+    // After the spread: the merged map already contains the caller's entries.
+    executors,
   });
 
   // Mount Explorer UI BEFORE transport so it gets priority

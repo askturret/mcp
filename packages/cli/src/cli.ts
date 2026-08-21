@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: Apache-2.0
 /**
  * AskTurret MCP CLI entry point
  */
@@ -49,6 +50,7 @@ function printHelp() {
   console.log('');
   console.log('Commands:');
   console.log('  doctor <spec>           Analyze OpenAPI spec for MCP readiness (offline)');
+  console.log('  doctor --url <url>      Analyze remote MCP server readiness');
   console.log('  inspect --url <url>     Inspect a running MCP server (live)');
   console.log('  help                    Show this help message');
   console.log('');

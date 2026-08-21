@@ -184,9 +184,8 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   });
 
   // Mount HTTP transport handler
-  // Note: Mount at root (no path prefix) because Express's router.use(path, middleware)
-  // strips the path from req.url, but the transport expects to see the full basePath.
-  router.use(createTransportMiddleware(transport, deadlineMs));
+  // Check path match before delegating to transport to avoid swallowing sibling routes
+  router.use(createTransportMiddleware(transport, basePath, deadlineMs));
 
   // Mount Explorer UI if enabled
   if (enableExplorer) {
@@ -209,11 +208,21 @@ export function expressMcp(options: ExpressMcpOptions): Router {
  */
 function createTransportMiddleware(
   transport: ReturnType<typeof createHttpTransport>,
+  basePath: string,
   deadlineMs: number,
 ) {
   const handler = transport.handler();
 
   return async (req: Request, res: Response, next: NextFunction) => {
+    // Check if request path matches basePath or its sub-routes
+    // Use req.originalUrl to see the full path before Express prefix-stripping
+    const requestPath = req.originalUrl?.split('?')[0] || req.url?.split('?')[0] || '';
+
+    // If path doesn't start with basePath, pass to next middleware (allows sibling routes)
+    if (!requestPath.startsWith(basePath)) {
+      return next();
+    }
+
     try {
       // Extract request context from Express req
       const user = extractUserContext(req);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * AskTurret MCP - CLI Tools
  *
@@ -5,3 +6,7 @@
  */
 
 export * from './types.js';
+export * from './commands/doctor-types.js';
+export * from './commands/inspect-types.js';
+export { doctorCommand } from './commands/doctor.js';
+export { inspectCommand } from './commands/inspect.js';

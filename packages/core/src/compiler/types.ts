@@ -6,7 +6,7 @@
  */
 
 import type { Logger } from '../sources/types.js';
-import type { OperationDefinition } from '../types.js';
+import type { OperationDefinition, EffectMetadata } from '../types.js';
 
 // =============================================================================
 // Warning collection
@@ -124,6 +124,12 @@ export interface CompiledOperation extends Partial<OperationDefinition> {
    * Raw output schema (normalized by early pass)
    */
   rawOutput?: Record<string, unknown>;
+
+  /**
+   * Effect metadata - may be partial until infer-effects pass (step 6) completes.
+   * Sources may only specify some effect fields; compiler fills in the rest.
+   */
+  effects?: Partial<EffectMetadata>;
 }
 
 // =============================================================================

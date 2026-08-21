@@ -5,7 +5,7 @@
  * Conflict rule: same ID from two sources → deterministic winner by source precedence.
  */
 
-import type { CompilerPass, CompiledOperation, CompilerContext } from '../types.js';
+import type { CompilerPass, CompiledOperation, CompilerContext, CompilerWarning } from '../types.js';
 import { omitUndefined } from '../../utils.js';
 
 /**
@@ -74,7 +74,7 @@ export const resolveIdentity: CompilerPass = {
 
         // Warn about duplicates
         for (const loser of losers) {
-          context.warnings.warn(omitUndefined({
+          context.warnings.warn(omitUndefined<CompilerWarning>({
             code: 'DUPLICATE_OPERATION_ID',
             message: `Operation ID '${id}' defined by multiple sources`,
             location: loser.source?.location,

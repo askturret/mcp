@@ -18,6 +18,7 @@ import type {
   HttpResponse,
 } from './types.js';
 import { omitUndefined } from '../utils.js';
+import { buildUpstreamRequest, RequestBuildError } from './http-request.js';
 
 /**
  * Create an HTTP-based executor.
@@ -33,7 +34,7 @@ export function viaHttp(options: HttpExecutorOptions): OperationExecutor {
  * HTTP executor implementation.
  */
 class HttpExecutor implements OperationExecutor {
-  private readonly baseUrl: string;
+  private readonly baseUrl: string | undefined;
   private readonly client: HttpClient;
   private readonly credentials?: () => Promise<Record<string, string>>;
   private readonly timeoutMs: number;
@@ -41,6 +42,8 @@ class HttpExecutor implements OperationExecutor {
   constructor(options: HttpExecutorOptions) {
     // SSRF safety: base URL is fixed at config time
     // User input can only influence path+query, never host/port/scheme
+    // May be undefined when each operation's compiled binding carries its own
+    // baseUrl (e.g. several specs behind one server) — still config, not input.
     this.baseUrl = options.baseUrl;
     this.client = options.client ?? createDefaultHttpClient();
     if (options.credentials !== undefined) {
@@ -98,20 +101,33 @@ class HttpExecutor implements OperationExecutor {
         ? await this.credentials()
         : {};
 
-      // Build request URL
-      // SSRF safety: user input only influences path, not baseUrl
-      const url = `${this.baseUrl}/${operation.id}`;
+      // Build request URL and method from the operation's executor binding.
+      // SSRF safety: user input only influences path+query, not baseUrl.
+      let built;
+      try {
+        built = buildUpstreamRequest(operation, input, this.baseUrl);
+      } catch (err) {
+        clearTimeout(timeoutId);
+        if (err instanceof RequestBuildError) {
+          // Actionable by design: an unroutable operation should say what is
+          // wrong, not surface as a generic internal error.
+          return { ok: false, error: { code: err.code, message: err.message } };
+        }
+        throw err;
+      }
+
+      const url = built.url;
 
       // Build request
-      const requestOptions: HttpRequestOptions = {
-        method: 'POST',
+      const requestOptions: HttpRequestOptions = omitUndefined({
+        method: built.method,
         headers: {
           'Content-Type': 'application/json',
           ...credentialHeaders,
         },
-        body: JSON.stringify(input),
+        body: built.body,
         signal: abortController.signal,
-      };
+      }) as HttpRequestOptions;
 
       let response: HttpResponse;
       let requestSent = false;

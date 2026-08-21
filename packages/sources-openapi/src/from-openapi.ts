@@ -12,6 +12,7 @@
 
 import SwaggerParser from '@apidevtools/swagger-parser';
 import type { OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
+import { resolveServerUrl, type OpenApiServer } from './resolve-server-url.js';
 import type {
   OperationSource,
   DiscoveredOperation,
@@ -52,6 +53,15 @@ export interface FromOpenApiOptions {
    * Source location hint (file path or URL)
    */
   location?: string;
+
+  /**
+   * Explicit upstream base URL for calling the described API.
+   *
+   * Overrides whatever the spec's `servers` array resolves to. Supply this when
+   * the spec declares no absolute server, declares several and you want a
+   * specific one, or points at an environment you are not targeting.
+   */
+  baseUrl?: string;
 
   /**
    * Allow external URL $refs (defaults to false for security)
@@ -119,6 +129,27 @@ export function fromOpenApi(
 
         logger.debug('Parsed OpenAPI document', { version, title: api.info?.title });
 
+        // Resolve the upstream base URL once per spec, so every operation this
+        // source emits can carry it in its executor binding.
+        const resolution = resolveServerUrl(
+          (api as { servers?: OpenApiServer[] }).servers,
+          typeof spec === 'string' ? spec : undefined,
+          logger,
+        );
+        const upstreamBaseUrl = options.baseUrl ?? resolution.baseUrl;
+
+        if (!upstreamBaseUrl) {
+          // Not fatal: discovery still works and tools/list stays useful. The
+          // call path fails with an actionable message instead of a wrong host.
+          logger.warn(
+            'Could not resolve an upstream base URL for this spec; tools will be listed but ' +
+              'calls will fail until one is supplied via the baseUrl option',
+            { sourceId, location, reason: resolution.reason },
+          );
+        } else {
+          logger.info('Resolved upstream base URL', { sourceId, upstreamBaseUrl });
+        }
+
         // Discover operations from paths
         const operations: DiscoveredOperation[] = [];
         const paths = api.paths ?? {};
@@ -145,6 +176,7 @@ export function fromOpenApi(
                 pathPattern,
                 location,
                 pathXMcp,
+                upstreamBaseUrl,
               );
               operations.push(discovered);
             } catch (err) {
@@ -216,6 +248,7 @@ function discoverOperation(
   pathPattern: string,
   location: string | undefined,
   pathXMcp: XMcpExtension | undefined,
+  upstreamBaseUrl: string | undefined,
 ): DiscoveredOperation {
   // Validate that operation has responses (required by OpenAPI spec)
   if (!operation.responses || typeof operation.responses !== 'object') {
@@ -270,6 +303,17 @@ function discoverOperation(
       ...(location && { location: `${location}#/paths/${pathPattern}/${method}` }),
     },
     effects,
+    // Bind the operation to its HTTP shape. `hints` are dropped at
+    // freeze-and-hash, so method/path have to live in the executor config to
+    // survive into the registry snapshot the dispatcher reads.
+    executor: {
+      type: 'http',
+      config: {
+        method: method.toUpperCase(),
+        path: pathPattern,
+        ...(upstreamBaseUrl !== undefined && { baseUrl: upstreamBaseUrl }),
+      },
+    },
     annotations: xMcp.annotations,
     provenance,
     hints,

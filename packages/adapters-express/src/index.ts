@@ -76,12 +76,21 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   const enableExplorer =
     options.enableExplorer ?? (process.env['NODE_ENV'] !== 'production');
 
-  // Create simple console logger
+  // Create logger (no-op in tests to avoid "Cannot log after tests are done")
+  const isTest = process.env['NODE_ENV'] === 'test';
   const logger: Logger = {
-    debug: (msg: string, meta?: Record<string, unknown>) => console.debug(msg, meta),
-    info: (msg: string, meta?: Record<string, unknown>) => console.info(msg, meta),
-    warn: (msg: string, meta?: Record<string, unknown>) => console.warn(msg, meta),
-    error: (msg: string, meta?: Record<string, unknown>) => console.error(msg, meta),
+    debug: (msg: string, meta?: Record<string, unknown>) => {
+      if (!isTest) console.debug(msg, meta);
+    },
+    info: (msg: string, meta?: Record<string, unknown>) => {
+      if (!isTest) console.info(msg, meta);
+    },
+    warn: (msg: string, meta?: Record<string, unknown>) => {
+      if (!isTest) console.warn(msg, meta);
+    },
+    error: (msg: string, meta?: Record<string, unknown>) => {
+      if (!isTest) console.error(msg, meta);
+    },
   };
 
   // Create empty registry reference (will be populated async)
@@ -94,7 +103,8 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   const registry = new AtomicRegistryReference(emptySnapshot);
 
   // Async initialization - discover and compile in background
-  (async () => {
+  // Store promise on router for tests to await (prevents logging after teardown)
+  const initPromise = (async () => {
     try {
       // Discover operations from all sources
       const abortController = new AbortController();
@@ -158,6 +168,9 @@ export function expressMcp(options: ExpressMcpOptions): Router {
       throw error;
     }
   })();
+
+  // Attach init promise to router for tests to await
+  (router as any)._init = initPromise;
 
   // Create HTTP transport
   const transport = createHttpTransport({

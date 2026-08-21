@@ -78,7 +78,7 @@ export async function inspectCommand(args: string[]): Promise<void> {
     if (flags.json) {
       console.log(formatJson(result));
     } else {
-      console.log(formatHumanReadable(result, flags.diffSnapshot));
+      console.log(formatHumanReadable(result, result.diffSnapshot));
     }
 
     // Exit with non-zero if unhealthy
@@ -98,7 +98,6 @@ function parseArgs(args: string[]): {
   dryRun: boolean;
   json: boolean;
   diffAgainst?: string;
-  diffSnapshot?: DiffResult;
 } {
   const flags: {
     url?: string;
@@ -106,7 +105,6 @@ function parseArgs(args: string[]): {
     dryRun: boolean;
     json: boolean;
     diffAgainst?: string;
-    diffSnapshot?: DiffResult;
   } = {
     dryRun: false,
     json: false,
@@ -163,7 +161,7 @@ async function inspectServer(flags: {
     }
 
     const latency: LatencyStats = {
-      pingMs,
+      ...(pingMs !== undefined ? { pingMs } : {}),
       toolsListMs,
       handshakeMs,
     };
@@ -185,7 +183,8 @@ async function inspectServer(flags: {
       server: serverInfo,
       tools,
       latency,
-      dryRun,
+      ...(dryRun !== undefined ? { dryRun } : {}),
+      ...(diffSnapshot !== undefined ? { diffSnapshot } : {}),
       healthy: true,
     };
   } catch (err) {
@@ -253,7 +252,7 @@ async function performHandshake(url: string): Promise<ServerInfo> {
     name: result.serverInfo?.name ?? 'unknown',
     version: result.serverInfo?.version ?? 'unknown',
     protocolVersion: result.protocolVersion ?? 'unknown',
-    registryHash: result.serverInfo?.registryHash,
+    ...(result.serverInfo?.registryHash !== undefined ? { registryHash: result.serverInfo.registryHash } : {}),
   };
 }
 
@@ -295,12 +294,12 @@ async function getToolsList(url: string): Promise<ToolInfo[]> {
   const tools = data.result?.tools ?? [];
   return tools.map((t) => ({
     name: t.name,
-    description: t.description,
-    inputSchema: t.inputSchema,
-    outputSchema: t.outputSchema,
-    effects: t['x-mcp-effects'],
-    auth: t['x-mcp-auth'],
-    annotations: t.annotations,
+    ...(t.description !== undefined ? { description: t.description } : {}),
+    ...(t.inputSchema !== undefined ? { inputSchema: t.inputSchema } : {}),
+    ...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema } : {}),
+    ...(t['x-mcp-effects'] !== undefined ? { effects: t['x-mcp-effects'] } : {}),
+    ...(t['x-mcp-auth'] !== undefined ? { auth: t['x-mcp-auth'] } : {}),
+    ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
   }));
 }
 
@@ -453,7 +452,7 @@ function computeDiff(
     removed,
     modified,
     hashChanged: snapshot.server?.registryHash !== current.server?.registryHash,
-    previousHash: snapshot.server?.registryHash,
-    currentHash: current.server?.registryHash,
+    ...(snapshot.server?.registryHash !== undefined ? { previousHash: snapshot.server.registryHash } : {}),
+    ...(current.server?.registryHash !== undefined ? { currentHash: current.server.registryHash } : {}),
   };
 }

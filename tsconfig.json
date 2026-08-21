@@ -1,32 +1,6 @@
 {
+  "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "lib": ["ES2022"],
-    "outDir": "./dist",
-    "rootDir": "./packages",
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true,
-    "composite": true,
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "noUncheckedIndexedAccess": true,
-    "noImplicitOverride": true,
-    "allowUnusedLabels": false,
-    "allowUnreachableCode": false,
-    "exactOptionalPropertyTypes": true,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitReturns": true,
-    "noPropertyAccessFromIndexSignature": true,
-    "noUncheckedSideEffectImports": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
     "paths": {
       "@askturret/mcp-core": ["./packages/core/src"],
       "@askturret/mcp-transports": ["./packages/transports/src"],
@@ -37,6 +11,16 @@
       "@askturret/mcp-cli": ["./packages/cli/src"]
     }
   },
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/transports" },
+    { "path": "./packages/sources-openapi" },
+    { "path": "./packages/adapters-express" },
+    { "path": "./packages/observability" },
+    { "path": "./packages/explorer" },
+    { "path": "./packages/cli" }
+  ],
+  "files": [],
   "exclude": [
     "node_modules",
     "dist"

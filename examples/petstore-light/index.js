@@ -22,7 +22,7 @@ const specPath = join(__dirname, 'openapi.yaml');
 const mcpRouter = mcpFromOpenApi(specPath);
 
 // Mount the MCP router
-app.use(mcpRouter);
+app.use('/mcp', mcpRouter);
 
 // Health check endpoint
 app.get('/health', (_req, res) => {

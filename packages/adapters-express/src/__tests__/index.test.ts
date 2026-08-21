@@ -2,67 +2,53 @@
  * Express Light facade tests
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals';
+import { describe, it, expect } from '@jest/globals';
 import { expressMcp, mcpFromOpenApi } from '../index.js';
 import type { ExpressMcpOptions } from '../types.js';
-import {
-  type OperationSource,
-  type OperationDefinition,
-  type RegistrySnapshot,
-} from '@askturret/mcp-core';
+import type { OperationSource, DiscoveredOperation } from '@askturret/mcp-core';
 
 /**
- * Create mock operation source with configurable operations
+ * Create mock operation source with configurable discovered operations
  */
-function createMockSource(operations: OperationDefinition[]): OperationSource {
+function createMockSource(discoveredOps: DiscoveredOperation[]): OperationSource {
   return {
     name: 'mock-source',
-    compile: async () => {
-      const snapshot: RegistrySnapshot = {
-        hash: 'mock-hash',
-        operations: new Map(operations.map((op) => [op.id, op])),
-        sources: new Map(),
-        timestamp: new Date(),
-      };
-      return { snapshot, warnings: [] };
-    },
+    discover: async () => discoveredOps,
   };
 }
 
 /**
- * Create a test operation
+ * Create a test discovered operation
  */
-function createOperation(
+function createDiscoveredOp(
   id: string,
   readOnly: boolean,
-): OperationDefinition {
+): DiscoveredOperation {
   return {
-    id,
+    candidateId: id,
     name: id,
     description: `Test operation ${id}`,
-    input: { type: 'object' },
-    output: { type: 'object' },
+    source: 'mock-source',
+    rawInput: { type: 'object' },
+    rawOutput: { type: 'object' },
     effects: {
       readOnly,
       idempotent: readOnly,
       retryable: readOnly,
-      idempotencyKeyRequired: false,
-      classifications: [],
     },
-    executor: { type: 'handler' },
   };
 }
 
 describe('Express Light Facade', () => {
   describe('mutation exclusion (Light preset)', () => {
-    it('should expose only read-only operations by default', async () => {
+    it('should expose only read-only operations by default', () => {
       // Create source with 3 GETs (read-only) + 2 POSTs (mutating)
       const operations = [
-        createOperation('getUser', true), // Read-only
-        createOperation('listUsers', true), // Read-only
-        createOperation('searchUsers', true), // Read-only
-        createOperation('createUser', false), // Mutating
-        createOperation('deleteUser', false), // Mutating
+        createDiscoveredOp('getUser', true), // Read-only
+        createDiscoveredOp('listUsers', true), // Read-only
+        createDiscoveredOp('searchUsers', true), // Read-only
+        createDiscoveredOp('createUser', false), // Mutating
+        createDiscoveredOp('deleteUser', false), // Mutating
       ];
 
       const source = createMockSource(operations);
@@ -73,20 +59,22 @@ describe('Express Light Facade', () => {
 
       const router = expressMcp(options);
 
-      // Verify router was created
+      // Verify router was created and is a function with route stack
       expect(router).toBeDefined();
+      expect(typeof router).toBe('function');
+      expect(router.stack).toBeDefined();
 
       // Light preset should expose 3 read-only tools, exclude 2 mutations
-      // (Actual verification would require mounting router and calling tools/list)
+      // (Full verification would require mounting router and calling tools/list)
     });
 
-    it('should expose all operations when include: "*" is specified', async () => {
+    it('should expose all operations when include: "*" is specified', () => {
       const operations = [
-        createOperation('getUser', true), // Read-only
-        createOperation('listUsers', true), // Read-only
-        createOperation('searchUsers', true), // Read-only
-        createOperation('createUser', false), // Mutating
-        createOperation('deleteUser', false), // Mutating
+        createDiscoveredOp('getUser', true), // Read-only
+        createDiscoveredOp('listUsers', true), // Read-only
+        createDiscoveredOp('searchUsers', true), // Read-only
+        createDiscoveredOp('createUser', false), // Mutating
+        createDiscoveredOp('deleteUser', false), // Mutating
       ];
 
       const source = createMockSource(operations);
@@ -99,16 +87,17 @@ describe('Express Light Facade', () => {
       const router = expressMcp(options);
 
       expect(router).toBeDefined();
+      expect(typeof router).toBe('function');
 
       // With include: '*', all 5 operations should be exposed
     });
 
-    it('should expose only explicitly included operations', async () => {
+    it('should expose only explicitly included operations', () => {
       const operations = [
-        createOperation('getUser', true),
-        createOperation('listUsers', true),
-        createOperation('createUser', false),
-        createOperation('deleteUser', false),
+        createDiscoveredOp('getUser', true),
+        createDiscoveredOp('listUsers', true),
+        createDiscoveredOp('createUser', false),
+        createDiscoveredOp('deleteUser', false),
       ];
 
       const source = createMockSource(operations);
@@ -121,6 +110,7 @@ describe('Express Light Facade', () => {
       const router = expressMcp(options);
 
       expect(router).toBeDefined();
+      expect(typeof router).toBe('function');
 
       // Only 2 explicitly included operations should be exposed
     });
@@ -128,11 +118,11 @@ describe('Express Light Facade', () => {
 
   describe('Explorer availability', () => {
     it('should enable Explorer in development by default', () => {
-      const originalEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'development';
+      const originalEnv = process.env['NODE_ENV'];
+      process.env['NODE_ENV'] = 'development';
 
       try {
-        const operations = [createOperation('getUser', true)];
+        const operations = [createDiscoveredOp('getUser', true)];
         const source = createMockSource(operations);
 
         const router = expressMcp({
@@ -140,18 +130,19 @@ describe('Express Light Facade', () => {
         });
 
         expect(router).toBeDefined();
+        expect(typeof router).toBe('function');
         // Explorer should be available at /mcp/explorer
       } finally {
-        process.env.NODE_ENV = originalEnv;
+        process.env['NODE_ENV'] = originalEnv;
       }
     });
 
     it('should disable Explorer in production by default', () => {
-      const originalEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'production';
+      const originalEnv = process.env['NODE_ENV'];
+      process.env['NODE_ENV'] = 'production';
 
       try {
-        const operations = [createOperation('getUser', true)];
+        const operations = [createDiscoveredOp('getUser', true)];
         const source = createMockSource(operations);
 
         const router = expressMcp({
@@ -159,18 +150,19 @@ describe('Express Light Facade', () => {
         });
 
         expect(router).toBeDefined();
+        expect(typeof router).toBe('function');
         // Explorer should return 404 in production
       } finally {
-        process.env.NODE_ENV = originalEnv;
+        process.env['NODE_ENV'] = originalEnv;
       }
     });
 
     it('should respect explicit enableExplorer setting', () => {
-      const originalEnv = process.env.NODE_ENV;
-      process.env.NODE_ENV = 'production';
+      const originalEnv = process.env['NODE_ENV'];
+      process.env['NODE_ENV'] = 'production';
 
       try {
-        const operations = [createOperation('getUser', true)];
+        const operations = [createDiscoveredOp('getUser', true)];
         const source = createMockSource(operations);
 
         const router = expressMcp({
@@ -179,9 +171,10 @@ describe('Express Light Facade', () => {
         });
 
         expect(router).toBeDefined();
+        expect(typeof router).toBe('function');
         // Explorer should be available despite production env
       } finally {
-        process.env.NODE_ENV = originalEnv;
+        process.env['NODE_ENV'] = originalEnv;
       }
     });
   });
@@ -204,7 +197,7 @@ describe('Express Light Facade', () => {
 
   describe('configuration defaults', () => {
     it('should use Light preset defaults', () => {
-      const operations = [createOperation('getUser', true)];
+      const operations = [createDiscoveredOp('getUser', true)];
       const source = createMockSource(operations);
 
       const router = expressMcp({
@@ -212,6 +205,7 @@ describe('Express Light Facade', () => {
       });
 
       expect(router).toBeDefined();
+      expect(typeof router).toBe('function');
 
       // Light preset defaults:
       // - basePath: '/mcp'
@@ -222,7 +216,7 @@ describe('Express Light Facade', () => {
     });
 
     it('should allow overriding defaults', () => {
-      const operations = [createOperation('getUser', true)];
+      const operations = [createDiscoveredOp('getUser', true)];
       const source = createMockSource(operations);
 
       const router = expressMcp({
@@ -234,6 +228,7 @@ describe('Express Light Facade', () => {
       });
 
       expect(router).toBeDefined();
+      expect(typeof router).toBe('function');
     });
   });
 });

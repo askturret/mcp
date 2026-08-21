@@ -18,13 +18,15 @@ import type { Request, Response, NextFunction, Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   createCompiler,
-  createDispatcher,
   AtomicRegistryReference,
   type RegistrySnapshot,
   type OperationDefinition,
-  type Principal,
+  type Logger,
+  type DiscoveredOperation,
 } from '@askturret/mcp-core';
-import { fromOpenApi } from '@askturret/mcp-openapi';
+import type { DiscoveryContext, CompilerContext } from '@askturret/mcp-core';
+import type { PresetName } from '@askturret/mcp-core/compiler/types.js';
+import { fromOpenApi } from '@askturret/mcp-sources-openapi';
 import { createHttpTransport } from '@askturret/mcp-transports';
 import type { ExpressMcpOptions, McpFromOpenApiOptions, RequestContext } from './types.js';
 
@@ -48,10 +50,10 @@ export function mcpFromOpenApi(
   // Delegate to composable form
   return expressMcp({
     sources: [source],
-    basePath: options.basePath,
-    include: options.include,
-    enableExplorer: options.enableExplorer,
-    hooks: options.hooks,
+    ...(options.basePath !== undefined && { basePath: options.basePath }),
+    ...(options.include !== undefined && { include: options.include }),
+    ...(options.enableExplorer !== undefined && { enableExplorer: options.enableExplorer }),
+    ...(options.hooks !== undefined && { hooks: options.hooks }),
   });
 }
 
@@ -75,46 +77,90 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   const maxResponseSize = options.maxResponseSize ?? 1048576; // 1 MiB
   const deadlineMs = options.deadlineMs ?? 30000; // 30s
   const enableExplorer =
-    options.enableExplorer ?? process.env.NODE_ENV !== 'production';
+    options.enableExplorer ?? (process.env['NODE_ENV'] !== 'production');
 
-  // Compile sources into registry snapshot
-  const compiler = createCompiler();
-  const compileResult = compiler.compile(options.sources);
+  // Create simple console logger
+  const logger: Logger = {
+    debug: (msg: string, meta?: Record<string, unknown>) => console.debug(msg, meta),
+    info: (msg: string, meta?: Record<string, unknown>) => console.info(msg, meta),
+    warn: (msg: string, meta?: Record<string, unknown>) => console.warn(msg, meta),
+    error: (msg: string, meta?: Record<string, unknown>) => console.error(msg, meta),
+  };
 
-  // Apply Light preset mutation filter
-  let snapshot: RegistrySnapshot;
-  if (options.include === '*') {
-    // Include all (mutations explicitly allowed)
-    snapshot = compileResult.snapshot;
-  } else if (Array.isArray(options.include)) {
-    // Explicit inclusion list
-    const includedOps = new Map<string, OperationDefinition>();
-    for (const opId of options.include) {
-      const op = compileResult.snapshot.operations.get(opId);
-      if (op) {
-        includedOps.set(opId, op);
+  // Create empty registry reference (will be populated async)
+  const emptySnapshot: RegistrySnapshot = {
+    hash: '',
+    operations: new Map(),
+    version: 1,
+    createdAt: new Date(),
+  };
+  const registry = new AtomicRegistryReference(emptySnapshot);
+
+  // Async initialization - discover and compile in background
+  (async () => {
+    try {
+      // Discover operations from all sources
+      const abortController = new AbortController();
+      const discoveryContext: DiscoveryContext = {
+        logger,
+        abortSignal: abortController.signal,
+      };
+
+      const discovered: DiscoveredOperation[] = [];
+      for (const source of options.sources) {
+        const ops = await source.discover(discoveryContext);
+        discovered.push(...ops);
       }
-    }
-    snapshot = {
-      ...compileResult.snapshot,
-      operations: includedOps,
-    };
-  } else {
-    // Light preset: read-only only, mutations excluded
-    const readOnlyOps = new Map<string, OperationDefinition>();
-    for (const [id, op] of compileResult.snapshot.operations.entries()) {
-      if (op.effects.readOnly) {
-        readOnlyOps.set(id, op);
-      }
-    }
-    snapshot = {
-      ...compileResult.snapshot,
-      operations: readOnlyOps,
-    };
-  }
 
-  // Create registry reference
-  const registry = new AtomicRegistryReference(snapshot);
+      // Compile discovered operations into registry snapshot
+      const compiler = createCompiler();
+      const compilerContext: Omit<CompilerContext, 'warnings'> = {
+        logger,
+        preset: 'light' as const,
+        overlays: [],
+      };
+      const fullSnapshot = await compiler.compile(discovered, compilerContext);
+
+      // Apply Light preset mutation filter
+      let snapshot: RegistrySnapshot;
+      if (options.include === '*') {
+        // Include all (mutations explicitly allowed)
+        snapshot = fullSnapshot;
+      } else if (Array.isArray(options.include)) {
+        // Explicit inclusion list
+        const includedOps = new Map<string, OperationDefinition>();
+        for (const opId of options.include) {
+          const op = fullSnapshot.operations.get(opId);
+          if (op) {
+            includedOps.set(opId, op);
+          }
+        }
+        snapshot = {
+          ...fullSnapshot,
+          operations: includedOps,
+        };
+      } else {
+        // Light preset: read-only only, mutations excluded
+        const readOnlyOps = new Map<string, OperationDefinition>();
+        for (const [id, op] of fullSnapshot.operations.entries()) {
+          if (op.effects.readOnly) {
+            readOnlyOps.set(id, op);
+          }
+        }
+        snapshot = {
+          ...fullSnapshot,
+          operations: readOnlyOps,
+        };
+      }
+
+      // Update registry with compiled snapshot
+      registry.swap(snapshot);
+      logger.info('Registry initialized', { operationCount: snapshot.operations.size });
+    } catch (error) {
+      logger.error('Failed to initialize registry', { error });
+      throw error;
+    }
+  })();
 
   // Create dispatcher
   const dispatcher = createDispatcher(registry, options.hooks);
@@ -122,12 +168,12 @@ export function expressMcp(options: ExpressMcpOptions): Router {
   // Create HTTP transport
   const transport = createHttpTransport({
     registry,
-    hooks: options.hooks,
+    ...(options.hooks !== undefined && { hooks: options.hooks }),
     basePath,
     deadlineMs,
     maxRequestBodySize,
     maxResponseSize,
-    ...options.transport,
+    ...(options.transport !== undefined && options.transport),
   });
 
   // Mount HTTP transport handler
@@ -194,12 +240,12 @@ function extractUserContext(req: Request): RequestContext['user'] | undefined {
   }
 
   // Allowlist known fields only
-  return {
-    id: typeof user.id === 'string' ? user.id : undefined,
-    email: typeof user.email === 'string' ? user.email : undefined,
-    name: typeof user.name === 'string' ? user.name : undefined,
-    roles: Array.isArray(user.roles) ? user.roles : undefined,
-  };
+  const result: RequestContext['user'] = {};
+  if (typeof user.id === 'string') result.id = user.id;
+  if (typeof user.email === 'string') result.email = user.email;
+  if (typeof user.name === 'string') result.name = user.name;
+  if (Array.isArray(user.roles)) result.roles = user.roles;
+  return result;
 }
 
 /**

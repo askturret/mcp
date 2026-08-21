@@ -197,8 +197,7 @@ describe('HTTP Transport', () => {
       expect(response.result.tools[0].description).toBe('Echo the input');
     });
 
-    // Skipped: dispatcher doesn't invoke real executors until #83/PR #87 merges — echo-stub behavior expected until then
-    it.skip('should handle tools/call request', async () => {
+    it('should handle tools/call request', async () => {
       const req = new MockRequest();
       const res = new MockResponse();
 

@@ -17,6 +17,7 @@ import {
   AtomicRegistryReference,
   type RegistrySnapshot,
   type OperationDefinition,
+  viaHandler,
 } from '@askturret/mcp-core';
 
 /**
@@ -72,10 +73,18 @@ class MockResponse {
 }
 
 /**
+ * Echo handler for tests
+ */
+const echoHandler = async (input: any) => ({
+  echo: input.message || 'empty',
+});
+
+/**
  * Create a mock registry with test operations
  */
 function createMockRegistry(): AtomicRegistryReference {
   const echoOp: OperationDefinition = {
+    id: 'echo',
     name: 'echo',
     description: 'Echo the input',
     input: {
@@ -91,23 +100,19 @@ function createMockRegistry(): AtomicRegistryReference {
       },
     },
     effects: {
-      mutatesState: false,
-      requiresConfirmation: false,
-      idempotencyKeyRequired: false,
+      readOnly: true,
+      idempotent: true,
     },
     executor: {
-      strategy: 'handler',
-      handler: async (input: any) => ({
-        echo: input.message || 'empty',
-      }),
+      type: 'handler',
     },
   };
 
   const snapshot: RegistrySnapshot = {
     hash: 'test-hash-123',
     operations: new Map([['echo', echoOp]]),
-    sources: new Map(),
-    timestamp: new Date(),
+    version: 1,
+    createdAt: new Date(),
   };
 
   return new AtomicRegistryReference(snapshot);
@@ -116,12 +121,19 @@ function createMockRegistry(): AtomicRegistryReference {
 describe('HTTP Transport', () => {
   let transport: HttpTransport;
   let registry: AtomicRegistryReference;
+  let executors: Map<string, any>;
 
   beforeEach(() => {
     registry = createMockRegistry();
+
+    // Register handler executor for tests
+    executors = new Map();
+    executors.set('handler', viaHandler(echoHandler));
+
     transport = createHttpTransport({
       registry,
       basePath: '/mcp',
+      executors,
     });
   });
 
@@ -464,6 +476,7 @@ describe('HTTP Transport', () => {
     it('should reject request body exceeding size limit', async () => {
       const smallLimitTransport = createHttpTransport({
         registry,
+        executors,
         maxRequestBodySize: 100, // 100 bytes
       });
 
@@ -499,6 +512,7 @@ describe('HTTP Transport', () => {
     it('should reject response exceeding size limit with OUTPUT_TOO_LARGE', async () => {
       const smallResponseTransport = createHttpTransport({
         registry,
+        executors,
         maxResponseSize: 200, // 200 bytes
       });
 

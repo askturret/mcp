@@ -311,29 +311,72 @@ describe('CommandDispatcher', () => {
   });
 
   describe('envelope immutability', () => {
-    it('should enforce stage order via code structure (compile-time)', () => {
-      // This test documents that the 12-stage pipeline is sealed
-      // Users can extend hooks but cannot reorder stages
+    it('should run hooks in the documented pipeline order', async () => {
+      // The 12-stage pipeline is sealed and its order is part of the contract:
+      // resolve → authenticate → authorize → validate input → verify
+      // confirmation → bulkhead → deadline → execute → validate output →
+      // redact → audit → map to MCP result.
+      //
+      // This assertion used to be `expect(true).toBe(true)` with the order
+      // written out in comments — it asserted nothing and would not have
+      // noticed a reordering. The hooks are the observable stages, so record
+      // the order they actually run in and compare it against the contract.
+      const calls: string[] = [];
 
-      // The DefaultCommandDispatcher.dispatch() method has a fixed structure:
-      // 1. Resolve snapshot and operation
-      // 2. Authenticate
-      // 3. Authorize
-      // 4. Validate input
-      // 5. Verify confirmation
-      // 6. Acquire bulkhead
-      // 7. Apply deadline
-      // 8. Execute
-      // 9. Validate output
-      // 10. Redact
-      // 11. Audit
-      // 12. Map to MCP result
+      const snapshot = createTestSnapshot(1, 'hash1');
+      const registry = new AtomicRegistryReference(snapshot);
 
-      // No public API exists to reorder these stages
-      // Attempting to skip a stage (e.g., by not providing a hook) uses default behavior
-      // Attempting to inject code between stages requires editing the sealed class
+      // A working executor, so the happy path reaches the post-execute stages.
+      // Without one, execution fails and redact/audit never run.
+      const executors = new Map([
+        [
+          'stub',
+          {
+            execute: async () => {
+              calls.push('execute');
+              return { ok: true as const, value: { pets: [] } };
+            },
+          },
+        ],
+      ]);
 
-      expect(true).toBe(true); // Structural invariant, not runtime check
+      const dispatcher = createDispatcher(
+        registry,
+        {
+          authenticate: async () => {
+            calls.push('authenticate');
+            return undefined;
+          },
+          authorize: async () => {
+            calls.push('authorize');
+            return { continue: true as const };
+          },
+          verifyConfirmation: async () => {
+            calls.push('verifyConfirmation');
+            return { continue: true as const };
+          },
+          redact: <T>(value: T): T => {
+            calls.push('redact');
+            return value;
+          },
+          audit: async () => {
+            calls.push('audit');
+          },
+        },
+        executors,
+      );
+
+      const result = await dispatcher.dispatch(createTestCommand());
+
+      expect(result.isError).toBeFalsy();
+      expect(calls).toEqual([
+        'authenticate',
+        'authorize',
+        'verifyConfirmation',
+        'execute',
+        'redact',
+        'audit',
+      ]);
     });
   });
 

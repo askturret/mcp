@@ -316,3 +316,30 @@ jobs:
             echo "No workspace changes"
             exit 0
           fi
+
+  # #79: tests that never run, or that cannot fail, report coverage that does
+  # not exist. Eight instances were caught by hand in QA before this job; it
+  # runs on every PR regardless of which paths changed, because test integrity
+  # is not scoped to a package.
+  test-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+
+      # Guards first: if the checkers themselves are broken, the results below
+      # are meaningless.
+      - name: Self-test the guards
+        run: node .github/scripts/check-guards.test.mjs
+
+      - name: No placeholder or assertion-free tests
+        run: node .github/scripts/check-placeholder-tests.mjs
+
+      # Needs dist/ — packages resolve each other through their built entry points.
+      - run: npm run build
+
+      - name: Every package actually executes its tests
+        run: node .github/scripts/check-test-execution.mjs

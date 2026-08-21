@@ -112,7 +112,7 @@ async function loadSpec(
 /**
  * Analyze OpenAPI spec for MCP readiness
  */
-async function analyzeSpec(spec: OpenAPIDocument): Promise<AnalysisResult> {
+export async function analyzeSpec(spec: OpenAPIDocument): Promise<AnalysisResult> {
   const globalFindings: Finding[] = [];
   const operations: OperationAnalysis[] = [];
 

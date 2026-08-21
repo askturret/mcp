@@ -16,9 +16,11 @@ import { dirname } from 'path';
 import SwaggerParser from '@apidevtools/swagger-parser';
 import type { OpenAPIV3 } from 'openapi-types';
 
-// Import the internal analyze function by reading the module
-// In actual implementation, we'd export analyzeSpec for testing
-// For now, we'll create a test helper that mimics the analysis
+import { analyzeSpec } from '../commands/doctor.js';
+
+// analyzeSpec is the real analysis entry point doctorCommand uses. Tests below
+// call it directly rather than re-implementing its logic over the fixtures —
+// a test that mimics the code under test cannot detect that code being wrong.
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -55,27 +57,19 @@ describe('doctor command', () => {
 
     it('should have zero errors', async () => {
       const spec = await loadFixture('petstore');
-      const operations = extractOperations(spec);
 
-      // Check that all GET operations have output schemas
-      const getOps = operations.filter((op) => op.method === 'GET');
-      for (const op of getOps) {
-        const responses = op.operation.responses;
-        const successResponse = responses?.['200'];
-        expect(successResponse).toBeDefined();
+      // Ask the analyser, rather than re-deriving "zero errors" from the
+      // fixture's shape — the previous version of this test inspected the
+      // fixture and never invoked doctor at all, so it passed regardless of
+      // what the analyser did.
+      const result = await analyzeSpec(spec as never);
 
-        const content = (successResponse as any)?.content?.['application/json'];
-        expect(content?.schema).toBeDefined();
-      }
-
-      // Check that POST operations have input schemas
-      const postOps = operations.filter((op) => op.method === 'POST');
-      for (const op of postOps) {
-        const requestBody = (op.operation as any).requestBody;
-        expect(requestBody).toBeDefined();
-        const content = requestBody?.content?.['application/json'];
-        expect(content?.schema).toBeDefined();
-      }
+      expect(result.summary.errors).toBe(0);
+      const errorFindings = [
+        ...result.globalFindings,
+        ...result.operations.flatMap((op) => op.findings),
+      ].filter((f) => f.severity === 'error');
+      expect(errorFindings).toEqual([]);
     });
 
     it('should detect x-mcp-effects on mutations', async () => {
@@ -158,20 +152,22 @@ describe('doctor command', () => {
 
     it('should detect unsafe fields in request body', async () => {
       const spec = await loadFixture('broken');
-      const operations = extractOperations(spec);
 
-      const postUsersOp = operations.find((op) =>
-        op.path === '/users' && op.method === 'POST'
-      );
-      expect(postUsersOp).toBeDefined();
+      // The previous version asserted the FIXTURE contained password/apiKey —
+      // i.e. that the fixture is the fixture. What matters is that the analyser
+      // reports them.
+      const result = await analyzeSpec(spec as never);
 
-      const requestBody = (postUsersOp!.operation as any).requestBody;
-      const schema = requestBody?.content?.['application/json']?.schema;
-      expect(schema?.properties).toBeDefined();
+      const findings = [
+        ...result.globalFindings,
+        ...result.operations.flatMap((op) => op.findings),
+      ];
+      const unsafe = findings.filter((f) => f.code === 'UNSAFE_FIELDS_DETECTED');
 
-      // Should have password and apiKey fields
-      expect(schema.properties.password).toBeDefined();
-      expect(schema.properties.apiKey).toBeDefined();
+      expect(unsafe.length).toBeGreaterThan(0);
+      const reported = unsafe.map((f) => f.message).join(' ');
+      expect(reported).toMatch(/password/i);
+      expect(reported).toMatch(/apiKey/i);
     });
 
     it('should detect missing x-mcp-effects on mutations', async () => {
@@ -221,19 +217,27 @@ describe('doctor command', () => {
     it('should produce stable error codes across runs', async () => {
       const spec = await loadFixture('broken');
 
-      // Expected error codes for the broken spec
-      const expectedCodes = [
-        'MISSING_OPERATION_ID',
-        'UNFRIENDLY_OPERATION_ID',
-        'SHORT_DESCRIPTION',
-        'MISSING_OUTPUT_SCHEMA',
-        'MISSING_INPUT_SCHEMA',
-        'UNSAFE_FIELDS_DETECTED',
-        'MISSING_EFFECTS',
-      ];
+      // The previous version declared this array and asserted it was defined —
+      // it never ran the analyser, so it could not fail. Run it twice and
+      // compare, which is what "stable across runs" actually means.
+      const first = await analyzeSpec(spec as never);
+      const second = await analyzeSpec(spec as never);
 
-      // These codes should be deterministic
-      expect(expectedCodes).toBeDefined();
+      const codesOf = (r: Awaited<ReturnType<typeof analyzeSpec>>) =>
+        [...r.globalFindings, ...r.operations.flatMap((op) => op.findings)]
+          .map((f) => f.code)
+          .sort();
+
+      const codes = codesOf(first);
+      expect(codes).toEqual(codesOf(second));
+      expect(first.score).toBe(second.score);
+
+      // And the codes are the documented, stable identifiers — not an
+      // arbitrary set that silently drifts.
+      expect(codes.length).toBeGreaterThan(0);
+      for (const code of codes) {
+        expect(code).toMatch(/^[A-Z][A-Z0-9_]+$/);
+      }
     });
   });
 });

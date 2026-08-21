@@ -16,5 +16,8 @@
   },
   "devDependencies": {
     "typescript": "*"
+  },
+  "askturret": {
+    "testsNotRequired": "Aggregator package with no source of its own; the runnable example apps live in the top-level examples/ workspace."
   }
 }

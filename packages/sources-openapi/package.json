@@ -15,7 +15,7 @@
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "test:watch": "npm test -- --watch",
     "lint": "echo \"Linting not yet configured\""
   },

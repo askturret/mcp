@@ -216,6 +216,11 @@ function discoverOperation(
   location: string | undefined,
   pathXMcp: XMcpExtension | undefined,
 ): DiscoveredOperation {
+  // Validate that operation has responses (required by OpenAPI spec)
+  if (!operation.responses || typeof operation.responses !== 'object') {
+    throw new Error('Operation missing required responses field');
+  }
+
   // Extract operation-level x-mcp extension
   const operationXMcp = extractXMcpExtension(operation as Record<string, unknown>);
 

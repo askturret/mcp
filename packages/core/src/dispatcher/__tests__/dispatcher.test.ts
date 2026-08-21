@@ -10,6 +10,24 @@ import type { DispatcherHooks } from '../types.js';
 import { freezeMap } from '../../compiler/passes/freeze-and-hash.js';
 
 /**
+ * Create a stub executor that echoes input (for testing envelope stages)
+ */
+function createStubExecutor() {
+  return {
+    execute: async (
+      _operation: OperationDefinition,
+      input: unknown,
+      _context: any,
+    ) => {
+      return {
+        ok: true as const,
+        value: input,
+      };
+    },
+  };
+}
+
+/**
  * Create a minimal test snapshot
  */
 function createTestSnapshot(version: number, hash: string) {
@@ -95,7 +113,11 @@ describe('CommandDispatcher', () => {
 
       const snapshot = createTestSnapshot(1, 'hash1');
       const registry = new AtomicRegistryReference(snapshot);
-      const dispatcher = createDispatcher(registry, hooks);
+
+      // Register stub executor
+      const executors = new Map();
+      executors.set('stub', createStubExecutor());
+      const dispatcher = createDispatcher(registry, hooks, executors);
 
       const command = createTestCommand();
       const result = await dispatcher.dispatch(command);
@@ -133,7 +155,11 @@ describe('CommandDispatcher', () => {
       // by confirming output passes through when valid
       const snapshot = createTestSnapshot(1, 'hash1');
       const registry = new AtomicRegistryReference(snapshot);
-      const dispatcher = createDispatcher(registry);
+
+      // Register stub executor
+      const executors = new Map();
+      executors.set('stub', createStubExecutor());
+      const dispatcher = createDispatcher(registry, {}, executors);
 
       const command = createTestCommand({ input: { valid: true } });
       const result = await dispatcher.dispatch(command);
@@ -185,7 +211,10 @@ describe('CommandDispatcher', () => {
         },
       };
 
-      const dispatcherWithHooks = createDispatcher(registry, hooks);
+      // Register stub executor
+      const executors = new Map();
+      executors.set('stub', createStubExecutor());
+      const dispatcherWithHooks = createDispatcher(registry, hooks, executors);
 
       // Start dispatch against snapshot1
       const command = createTestCommand();
@@ -234,7 +263,11 @@ describe('CommandDispatcher', () => {
 
       const snapshot = createTestSnapshot(1, 'hash1');
       const registry = new AtomicRegistryReference(snapshot);
-      const dispatcher = createDispatcher(registry, hooks);
+
+      // Register stub executor
+      const executors = new Map();
+      executors.set('stub', createStubExecutor());
+      const dispatcher = createDispatcher(registry, hooks, executors);
 
       const command = createTestCommand();
       const result = await dispatcher.dispatch(command);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Pass 2: Resolve identity & duplicates
  *

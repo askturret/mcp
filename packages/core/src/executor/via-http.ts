@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * viaHttp executor - HTTP-proxy operation execution
  *

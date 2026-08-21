@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * viaHandler executor - direct in-process operation execution
  *

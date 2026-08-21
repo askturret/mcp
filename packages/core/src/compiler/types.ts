@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
  * Compiler types - pass interface, context, and compiled operation
  *

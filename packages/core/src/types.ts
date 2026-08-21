@@ -234,6 +234,20 @@ export interface OperationCommand {
   readonly requestId: string;
 
   /**
+   * Optional trace ID for distributed tracing correlation.
+   */
+  readonly traceId?: string;
+
+  /**
+   * Optional client information from MCP session initialization.
+   * Propagated from transport layer for context/audit.
+   */
+  readonly clientInfo?: {
+    readonly name?: string;
+    readonly version?: string;
+  };
+
+  /**
    * Operation to execute.
    */
   readonly operationId: OperationId;

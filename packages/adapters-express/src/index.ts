@@ -214,12 +214,12 @@ function createTransportMiddleware(
   const handler = transport.handler();
 
   return async (req: Request, res: Response, next: NextFunction) => {
-    // Check if request path matches basePath or its sub-routes
+    // Check if request path exactly matches basePath
     // Use req.originalUrl to see the full path before Express prefix-stripping
     const requestPath = req.originalUrl?.split('?')[0] || req.url?.split('?')[0] || '';
 
-    // If path doesn't start with basePath, pass to next middleware (allows sibling routes)
-    if (!requestPath.startsWith(basePath)) {
+    // If path doesn't exactly match basePath, pass to next middleware (allows /explorer, etc.)
+    if (requestPath !== basePath) {
       return next();
     }
 

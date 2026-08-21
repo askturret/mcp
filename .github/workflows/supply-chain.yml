@@ -16,10 +16,13 @@ permissions:
   contents: read
 
 jobs:
-  # Fails the build on GPL/AGPL/SSPL/LGPL/source-available/undeclared licences
-  # without an approved exception in LICENSE_EXCEPTIONS.md.
-  license-review:
-    name: Licence review
+  # Licence review and SBOM share a checkout and an `npm install`, so they run
+  # as one job rather than two. That is not only faster: this repository's Test
+  # workflow already schedules 17 jobs per PR, and jobs were being failed at
+  # "Set up job" with no runner assigned once the account ran out of concurrent
+  # capacity. Two runner slots for one npm install is a cost worth not paying.
+  supply-chain:
+    name: Licence review and SBOM
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -33,6 +36,8 @@ jobs:
       - name: Self-test the licence policy
         run: node .github/scripts/check-licenses.test.mjs
 
+      # Fails on GPL/AGPL/SSPL/LGPL/source-available/undeclared licences without
+      # an approved exception in LICENSE_EXCEPTIONS.md.
       - name: Review dependency licences
         run: node .github/scripts/check-licenses.mjs
 
@@ -41,17 +46,7 @@ jobs:
       - name: Check NOTICE is current
         run: node .github/scripts/generate-notice.mjs --check
 
-  # Proves SBOM generation works against main without needing a real release.
-  sbom:
-    name: SBOM
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm install
-
+      # Proves SBOM generation works without needing a release to exist.
       - name: Generate CycloneDX SBOM
         # pipefail matters here: GitHub Actions runs `bash -e` without it, so
         # piping into tee would take tee's exit code and a failed generation
@@ -97,7 +92,7 @@ jobs:
   publish:
     name: Publish with provenance
     if: github.event_name == 'release'
-    needs: [license-review, sbom]
+    needs: [supply-chain]
     runs-on: ubuntu-latest
     permissions:
       contents: read

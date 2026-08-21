@@ -3,13 +3,11 @@
  */
 
 import SwaggerParser from '@apidevtools/swagger-parser';
-import type { OpenAPI, OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
-import { readFile } from 'fs/promises';
+import type { OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
 import { resolve } from 'path';
 import { omitUndefined } from '@askturret/mcp-core';
 import type {
   Finding,
-  FindingSeverity,
   OperationAnalysis,
   AnalysisResult,
 } from './doctor-types.js';
@@ -58,14 +56,18 @@ function parseArgs(args: string[]): {
   url: boolean;
   json: boolean;
 } {
-  const flags = {
-    input: undefined as string | undefined,
+  const flags: {
+    input?: string;
+    url: boolean;
+    json: boolean;
+  } = {
     url: false,
     json: false,
   };
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
+    if (!arg) continue;
     if (arg === '--url') {
       flags.url = true;
       flags.input = args[++i];
@@ -293,12 +295,12 @@ function analyzeOperation(
   const { exposed, reason } = wouldBeExposedInLight(operation, method);
 
   return {
-    operationId,
+    ...(operationId !== undefined && { operationId }),
     path,
     method,
     findings,
     wouldBeExposedInLight: exposed,
-    wouldBeDroppedReason: reason,
+    ...(reason !== undefined && { wouldBeDroppedReason: reason }),
   };
 }
 
@@ -546,7 +548,7 @@ function levenshteinDistance(str1: string, str2: string): number {
   }
 
   for (let j = 0; j <= str1.length; j++) {
-    matrix[0][j] = j;
+    matrix[0]![j] = j;
   }
 
   for (let i = 1; i <= str2.length; i++) {

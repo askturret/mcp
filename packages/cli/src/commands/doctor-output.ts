@@ -128,11 +128,11 @@ function formatFinding(finding: Finding, indent: string): string {
 
   if (finding.context) {
     const ctx = finding.context as Record<string, unknown>;
-    if (typeof ctx.suggestion === 'string') {
-      line += `\n${indent}  Suggestion: ${ctx.suggestion}`;
+    if (typeof ctx['suggestion'] === 'string') {
+      line += `\n${indent}  Suggestion: ${ctx['suggestion']}`;
     }
-    if (ctx.unsafeFields && Array.isArray(ctx.unsafeFields)) {
-      line += `\n${indent}  Fields: ${(ctx.unsafeFields as string[]).join(', ')}`;
+    if (ctx['unsafeFields'] && Array.isArray(ctx['unsafeFields'])) {
+      line += `\n${indent}  Fields: ${(ctx['unsafeFields'] as string[]).join(', ')}`;
     }
   }
 

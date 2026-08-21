@@ -14,8 +14,6 @@ import type {
   OperationResult,
   OperationError,
   OperationErrorCode,
-  EffectMetadata,
-  ProvenanceEntry,
   RegistrySnapshot,
 } from '../types.js';
 
@@ -52,6 +50,7 @@ const fullDefinition: OperationDefinition = {
     { field: 'description', kind: 'openapi', location: 'openapi.yaml#/paths/users/post' },
   ],
 };
+void fullDefinition; // Type-level test - intentionally unused
 
 /**
  * Type test: OperationResult success case
@@ -61,6 +60,7 @@ const successResult: OperationResult<{ userId: string }> = {
   value: { userId: 'user-123' },
   metadata: { durationMs: 42 },
 };
+void successResult; // Type-level test - intentionally unused
 
 /**
  * Type test: OperationResult error case
@@ -73,6 +73,7 @@ const errorResult: OperationResult<never> = {
     details: { field: 'email' },
   },
 };
+void errorResult; // Type-level test - intentionally unused
 
 /**
  * Type test: OperationCommand with all fields
@@ -92,6 +93,7 @@ const command: OperationCommand = {
   signal: new AbortController().signal,
   registryHash: 'hash-001',
 };
+void command; // Type-level test - intentionally unused
 
 /**
  * Type test: RegistrySnapshot structure
@@ -102,6 +104,7 @@ const snapshot: RegistrySnapshot = {
   createdAt: new Date(),
   operations: new Map([['op-001', validDefinition]]),
 };
+void snapshot; // Type-level test - intentionally unused
 
 // =============================================================================
 // Runtime tests - all 12 error codes present
@@ -167,7 +170,7 @@ export function testOperationErrorWireShape(): void {
   if (parsed.message !== 'Operation exceeded deadline') {
     throw new Error('Message not preserved after serialization');
   }
-  if (!parsed.details || parsed.details.deadlineMs !== 5000) {
+  if (!parsed.details || parsed.details['deadlineMs'] !== 5000) {
     throw new Error('Details not preserved after serialization');
   }
 

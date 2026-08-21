@@ -22,7 +22,6 @@ jobs:
       observability: ${{ steps.filter.outputs.observability }}
       explorer: ${{ steps.filter.outputs.explorer }}
       cli: ${{ steps.filter.outputs.cli }}
-      examples: ${{ steps.filter.outputs.examples }}
       workspace: ${{ steps.filter.outputs.workspace }}
     steps:
       - uses: actions/checkout@v4
@@ -44,8 +43,6 @@ jobs:
               - 'packages/explorer/**'
             cli:
               - 'packages/cli/**'
-            examples:
-              - 'packages/examples/**'
             workspace:
               - 'package.json'
               - 'tsconfig.json'
@@ -62,7 +59,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspaces
+      - run: npm run build -w packages/core
       - run: npm test --workspace=packages/core
 
   # Test adapters-express package
@@ -76,7 +73,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspaces
+      - run: npm run build -w packages/core -w packages/adapters-express
       - run: npm test --workspace=packages/adapters-express
 
   # Test sources-openapi package
@@ -90,7 +87,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspaces
+      - run: npm run build -w packages/core -w packages/sources-openapi
       - run: npm test --workspace=packages/sources-openapi
 
   # Test transports package
@@ -104,7 +101,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspaces
+      - run: npm run build -w packages/core -w packages/transports
       - run: npm test --workspace=packages/transports
 
   # Test observability package
@@ -118,7 +115,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspaces
+      - run: npm run build -w packages/core -w packages/observability
       - run: npm test --workspace=packages/observability
 
   # Test explorer package
@@ -132,7 +129,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspaces
+      - run: npm run build -w packages/core -w packages/explorer
       - run: npm test --workspace=packages/explorer
 
   # Test CLI package
@@ -146,7 +143,7 @@ jobs:
         with:
           node-version: '20'
       - run: npm install
-      - run: npm run build --workspaces
+      - run: npm run build -w packages/core -w packages/cli
       - run: npm test --workspace=packages/cli
 
   # Status wrapper jobs for merge-coverage gate

@@ -2,7 +2,7 @@
  * Express adapter type definitions
  */
 
-import type { OperationSource, RegistryReference, DispatcherHooks } from '@askturret/mcp-core';
+import type { OperationSource, DispatcherHooks } from '@askturret/mcp-core';
 import type { HttpTransportOptions } from '@askturret/mcp-transports';
 
 /**

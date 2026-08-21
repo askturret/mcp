@@ -18,7 +18,6 @@ import type { Request, Response, NextFunction, Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
   createCompiler,
-  createDispatcher,
   AtomicRegistryReference,
   type RegistrySnapshot,
   type OperationDefinition,
@@ -46,7 +45,7 @@ export function mcpFromOpenApi(
     typeof specOrOptions === 'string' ? { spec: specOrOptions } : specOrOptions;
 
   // Create OpenAPI source
-  const source = fromOpenApi({ spec: options.spec });
+  const source = fromOpenApi(options.spec);
 
   // Delegate to composable form
   return expressMcp({
@@ -164,9 +163,6 @@ export function expressMcp(options: ExpressMcpOptions): Router {
       throw error;
     }
   })();
-
-  // Create dispatcher
-  const dispatcher = createDispatcher(registry, options.hooks);
 
   // Create HTTP transport
   const transport = createHttpTransport({

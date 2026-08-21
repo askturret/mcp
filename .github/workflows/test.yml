@@ -61,7 +61,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
       - run: npm ci
       - run: npm run build --workspace=packages/core
       - run: npm test --workspace=packages/core
@@ -76,7 +75,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
       - run: npm ci
       - run: npm run build --workspace=packages/adapters-express
       - run: npm test --workspace=packages/adapters-express
@@ -91,7 +89,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
       - run: npm ci
       - run: npm run build --workspace=packages/sources-openapi
       - run: npm test --workspace=packages/sources-openapi
@@ -106,7 +103,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
       - run: npm ci
       - run: npm run build --workspace=packages/transports
       - run: npm test --workspace=packages/transports
@@ -121,7 +117,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
       - run: npm ci
       - run: npm run build --workspace=packages/observability
       - run: npm test --workspace=packages/observability
@@ -136,7 +131,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
       - run: npm ci
       - run: npm run build --workspace=packages/explorer
       - run: npm test --workspace=packages/explorer
@@ -151,7 +145,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
       - run: npm ci
       - run: npm run build --workspace=packages/cli
       - run: npm test --workspace=packages/cli

@@ -69,7 +69,10 @@ export async function inspectCommand(args: string[]): Promise<void> {
     console.error('Error: Missing required --url argument');
     console.error('Usage: npx @askturret/mcp inspect --url <endpoint>');
     console.error('       npx @askturret/mcp inspect --url <endpoint> --tool <name> --dry-run');
-    process.exit(1);
+    // 2, not 1: a missing argument is a fatal usage error. Exit code 1 is
+    // reserved for a server that was reached but is unreachable/unhealthy,
+    // so callers can tell "you invoked me wrong" from "the server is down".
+    process.exit(2);
   }
 
   try {

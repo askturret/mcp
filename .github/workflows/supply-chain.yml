@@ -1,0 +1,101 @@
+name: Supply chain
+
+# Licence review runs on every PR (issue #24 acceptance criterion).
+# SBOM generation is dry-runnable on demand and on release, so it can be proven
+# to work before a release is ever cut.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fails the build on GPL/AGPL/SSPL/LGPL/source-available/undeclared licences
+  # without an approved exception in LICENSE_EXCEPTIONS.md.
+  license-review:
+    name: Licence review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+
+      # The policy evaluator decides what ships, so verify it before trusting
+      # its verdict on the real tree.
+      - name: Self-test the licence policy
+        run: node .github/scripts/check-licenses.test.mjs
+
+      - name: Review dependency licences
+        run: node .github/scripts/check-licenses.mjs
+
+      # Attribution is a licence obligation, so a stale NOTICE is a build
+      # failure rather than a tidiness warning.
+      - name: Check NOTICE is current
+        run: node .github/scripts/generate-notice.mjs --check
+
+  # Proves SBOM generation works against main without needing a real release.
+  sbom:
+    name: SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+
+      - name: Generate CycloneDX SBOM
+        run: node .github/scripts/generate-sbom.mjs --output sbom.cdx.json
+
+      # Retained on every run, so the inventory for any commit can be recovered
+      # even though no release has been cut yet.
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.cdx.json
+          if-no-files-found: error
+
+      # Attach to the GitHub release when this run was triggered by one.
+      - name: Attach SBOM to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" sbom.cdx.json --clobber
+
+  # Publishes with npm provenance, linking the tarball to this workflow run.
+  # Release-triggered only: it must never run on a PR.
+  publish:
+    name: Publish with provenance
+    if: github.event_name == 'release'
+    needs: [license-review, sbom]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required for npm provenance — it is what lets npm attest that this
+      # tarball came from this workflow.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+      - run: npm install
+      - run: npm run build
+
+      # --provenance requires id-token: write above and a registry that accepts
+      # attestations. Publishing is gated behind licence review and SBOM
+      # generation by `needs:`, so a release cannot skip them.
+      - name: Publish
+        run: npm publish --workspaces --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

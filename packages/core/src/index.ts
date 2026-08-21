@@ -29,3 +29,6 @@ export const VERSION = '0.1.0';
  */
 export * from './types.js';
 export * from './sources/index.js';
+export * from './compiler/index.js';
+export type { CompilerContext, CompilerPass, CompilerWarning } from './compiler/types.js';
+export { omitUndefined } from './utils.js';

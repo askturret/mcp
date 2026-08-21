@@ -1,0 +1,315 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  # Path filter job - detects which packages changed
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.filter.outputs.core }}
+      adapters-express: ${{ steps.filter.outputs.adapters-express }}
+      sources-openapi: ${{ steps.filter.outputs.sources-openapi }}
+      transports: ${{ steps.filter.outputs.transports }}
+      observability: ${{ steps.filter.outputs.observability }}
+      explorer: ${{ steps.filter.outputs.explorer }}
+      cli: ${{ steps.filter.outputs.cli }}
+      workspace: ${{ steps.filter.outputs.workspace }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            core:
+              - 'packages/core/**'
+            adapters-express:
+              - 'packages/adapters-express/**'
+            sources-openapi:
+              - 'packages/sources-openapi/**'
+            transports:
+              - 'packages/transports/**'
+            observability:
+              - 'packages/observability/**'
+            explorer:
+              - 'packages/explorer/**'
+            cli:
+              - 'packages/cli/**'
+            workspace:
+              - 'package.json'
+              - 'tsconfig.json'
+              - '.github/workflows/**'
+
+  # Test core package
+  test-core:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run build -w packages/core
+      - run: npm test --workspace=packages/core
+
+  # Test adapters-express package
+  test-adapters-express:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.adapters-express == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run build -w packages/core -w packages/adapters-express
+      - run: npm test --workspace=packages/adapters-express
+
+  # Test sources-openapi package
+  test-sources-openapi:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.sources-openapi == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run build -w packages/core -w packages/sources-openapi
+      - run: npm test --workspace=packages/sources-openapi
+
+  # Test transports package
+  test-transports:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.transports == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run build -w packages/core -w packages/transports
+      - run: npm test --workspace=packages/transports
+
+  # Test observability package
+  test-observability:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.observability == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run build -w packages/core -w packages/observability
+      - run: npm test --workspace=packages/observability
+
+  # Test explorer package
+  test-explorer:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.explorer == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run build -w packages/core -w packages/explorer
+      - run: npm test --workspace=packages/explorer
+
+  # Test CLI package
+  test-cli:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.cli == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run build -w packages/core -w packages/cli
+      - run: npm test --workspace=packages/cli
+
+  # Status wrapper jobs for merge-coverage gate
+  core-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-core]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.core }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-core.result }}" == "success" ]; then
+              echo "Core tests passed"
+              exit 0
+            else
+              echo "Core tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "Core tests skipped (no changes)"
+            exit 0
+          fi
+
+  adapters-express-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-adapters-express]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.adapters-express }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-adapters-express.result }}" == "success" ]; then
+              echo "Adapters-express tests passed"
+              exit 0
+            else
+              echo "Adapters-express tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "Adapters-express tests skipped (no changes)"
+            exit 0
+          fi
+
+  sources-openapi-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-sources-openapi]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.sources-openapi }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-sources-openapi.result }}" == "success" ]; then
+              echo "Sources-openapi tests passed"
+              exit 0
+            else
+              echo "Sources-openapi tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "Sources-openapi tests skipped (no changes)"
+            exit 0
+          fi
+
+  transports-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-transports]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.transports }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-transports.result }}" == "success" ]; then
+              echo "Transports tests passed"
+              exit 0
+            else
+              echo "Transports tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "Transports tests skipped (no changes)"
+            exit 0
+          fi
+
+  observability-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-observability]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.observability }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-observability.result }}" == "success" ]; then
+              echo "Observability tests passed"
+              exit 0
+            else
+              echo "Observability tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "Observability tests skipped (no changes)"
+            exit 0
+          fi
+
+  explorer-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-explorer]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.explorer }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-explorer.result }}" == "success" ]; then
+              echo "Explorer tests passed"
+              exit 0
+            else
+              echo "Explorer tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "Explorer tests skipped (no changes)"
+            exit 0
+          fi
+
+  cli-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-cli]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.cli }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-cli.result }}" == "success" ]; then
+              echo "CLI tests passed"
+              exit 0
+            else
+              echo "CLI tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "CLI tests skipped (no changes)"
+            exit 0
+          fi
+
+  workspace-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-core, test-adapters-express, test-sources-openapi, test-transports, test-observability, test-explorer, test-cli]
+    if: always()
+    steps:
+      - name: Check workspace changes
+        run: |
+          if [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            # Workspace changes require all tests to pass
+            if [ "${{ needs.test-core.result }}" == "success" ] && \
+               [ "${{ needs.test-adapters-express.result }}" == "success" ] && \
+               [ "${{ needs.test-sources-openapi.result }}" == "success" ] && \
+               [ "${{ needs.test-transports.result }}" == "success" ] && \
+               [ "${{ needs.test-observability.result }}" == "success" ] && \
+               [ "${{ needs.test-explorer.result }}" == "success" ] && \
+               [ "${{ needs.test-cli.result }}" == "success" ]; then
+              echo "All tests passed for workspace changes"
+              exit 0
+            else
+              echo "Some tests failed for workspace changes"
+              exit 1
+            fi
+          else
+            echo "No workspace changes"
+            exit 0
+          fi

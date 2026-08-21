@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "@askturret/mcp-core": ["./packages/core/src"],
+      "@askturret/mcp-transports": ["./packages/transports/src"],
+      "@askturret/mcp-sources-openapi": ["./packages/sources-openapi/src"],
+      "@askturret/mcp-adapters-express": ["./packages/adapters-express/src"],
+      "@askturret/mcp-observability": ["./packages/observability/src"],
+      "@askturret/mcp-explorer": ["./packages/explorer/src"],
+      "@askturret/mcp-cli": ["./packages/cli/src"]
+    }
+  },
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/transports" },
+    { "path": "./packages/sources-openapi" },
+    { "path": "./packages/adapters-express" },
+    { "path": "./packages/observability" },
+    { "path": "./packages/explorer" },
+    { "path": "./packages/cli" }
+  ],
+  "files": [],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

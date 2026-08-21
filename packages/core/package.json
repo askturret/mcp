@@ -1,0 +1,25 @@
+{
+  "name": "@askturret/mcp-core",
+  "version": "0.1.0",
+  "description": "Core runtime - canonical model, compiler, registry, policies, execution",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node dist/__tests__/types.test.js",
+    "lint": "echo \"Linting not yet configured\""
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

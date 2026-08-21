@@ -1,0 +1,30 @@
+{
+  "name": "@askturret/mcp-cli",
+  "version": "0.1.0",
+  "description": "CLI tools - doctor, inspect, diff",
+  "type": "module",
+  "private": true,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "turret": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "exit 0",
+    "lint": "echo \"Linting not yet configured\""
+  },
+  "dependencies": {
+    "@askturret/mcp-core": "*"
+  },
+  "devDependencies": {
+    "typescript": "*"
+  }
+}

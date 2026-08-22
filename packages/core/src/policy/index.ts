@@ -37,3 +37,13 @@ export {
   type PermissionPolicyOptions,
   type UnlistedOperationBehaviour,
 } from './builtins.js';
+
+export {
+  createVisibilityEngine,
+  DEFAULT_VISIBILITY_CACHE_MAX_ENTRIES,
+  DEFAULT_VISIBILITY_TTL_MS,
+  type PolicyMetrics,
+  type VisibilityEngine,
+  type VisibilityEngineOptions,
+  type VisibleOperationsRequest,
+} from './visibility.js';

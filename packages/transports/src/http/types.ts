@@ -3,7 +3,13 @@
  * HTTP transport types - MCP Streamable HTTP server configuration
  */
 
-import type { RegistryReference, DispatcherHooks, OperationExecutor } from '@askturret/mcp-core';
+import type {
+  RegistryReference,
+  DispatcherHooks,
+  OperationExecutor,
+  Policy,
+  PolicyMetrics,
+} from '@askturret/mcp-core';
 
 /**
  * Session store interface - pluggable session persistence
@@ -79,6 +85,37 @@ export interface HttpTransportOptions {
    * - SessionStore: custom session store
    */
   readonly session?: 'inMemory' | SessionStore;
+
+  /**
+   * Optional discovery-time visibility policy.
+   *
+   * When set, `tools/list` returns only the operations this policy does not
+   * deny. `confirmation_required` operations stay listed — the confirmation
+   * happens at call time.
+   *
+   * When unset, `tools/list` lists every operation in the snapshot, which is
+   * the behaviour before this option existed.
+   *
+   * **This is not the security boundary** (§5.5): it shrinks what an agent
+   * sees, not what it can invoke. Anything hidden here must also be denied at
+   * call time by the same policy.
+   */
+  readonly visibilityPolicy?: Policy;
+
+  /**
+   * Tuning for the visibility decision cache. Ignored without a
+   * `visibilityPolicy`.
+   */
+  readonly visibility?: {
+    /** Cache lifetime in ms. Defaults to 30s. `0` disables caching. */
+    readonly ttlMs?: number;
+    /** Maximum distinct identities cached. Defaults to 1000. */
+    readonly maxEntries?: number;
+    /** Fingerprint of policy configuration; see `VisibilityEngineOptions`. */
+    readonly policyVersion?: string;
+    /** Decision counter sink. Defaults to a no-op until observability (#39). */
+    readonly metrics?: PolicyMetrics;
+  };
 
   /**
    * Allowed Host header values (DNS rebinding mitigation)

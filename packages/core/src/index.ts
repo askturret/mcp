@@ -54,4 +54,11 @@ export {
   type PolicyEvidence,
   type PolicyPhase,
   type UnlistedOperationBehaviour,
+  createVisibilityEngine,
+  DEFAULT_VISIBILITY_CACHE_MAX_ENTRIES,
+  DEFAULT_VISIBILITY_TTL_MS,
+  type PolicyMetrics,
+  type VisibilityEngine,
+  type VisibilityEngineOptions,
+  type VisibleOperationsRequest,
 } from './policy/index.js';

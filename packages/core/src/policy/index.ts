@@ -50,12 +50,13 @@ export {
 
 export {
   createAuthorizationEngine,
-  inputHash,
+  fingerprintInput,
   type AuthorizationEngine,
   type AuthorizationEngineOptions,
   type AuthorizationOutcome,
   type AuthorizationRequest,
   type AuthorizationTimings,
+  type InputFingerprint,
 } from './authorization.js';
 
 export {

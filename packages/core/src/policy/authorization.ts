@@ -81,16 +81,46 @@ export interface AuthorizationEngine {
 }
 
 /**
- * Stable hash of the input a confirmation was issued against.
+ * The result of fingerprinting an input for confirmation binding.
+ *
+ * A result object rather than a sentinel string, per ADR-011 — and for a
+ * sharper reason here: a sentinel is a value, and values compare equal to
+ * themselves. See `fingerprintInput`.
+ */
+export type InputFingerprint =
+  | { readonly ok: true; readonly hash: string }
+  | { readonly ok: false };
+
+/**
+ * Stable fingerprint of the input a confirmation is bound to.
  *
  * Object key order is normalised so `{a,b}` and `{b,a}` bind identically — two
- * spellings of the same request must not produce different confirmations, or
- * a client library that reorders keys would break confirmation for no reason.
+ * spellings of the same request must not produce different confirmations, or a
+ * client library that reorders keys would break confirmation for no reason.
  *
- * Not reversible and never logged: the input is user data, and this hash is a
+ * Not reversible and never logged: the input is user data, and this is a
  * binding token, not a description of it.
+ *
+ * ## Why failure is signalled rather than substituted (QA on PR #122)
+ *
+ * The first version returned the literal string `'unhashable'` when
+ * `JSON.stringify` could not handle the input — cycles, BigInt — and the
+ * comment claimed it was "a value that can never match a previously-issued
+ * binding."
+ *
+ * That was exactly backwards, and the comment was the worse half of the bug:
+ * it vouched for an invariant the code did not provide. A constant matches
+ * every OTHER unhashable input. Two different unserialisable inputs
+ * fingerprinted equal, so a confirmation issued for one redeemed against the
+ * other — a £10 confirmation authorising a £10,000 call.
+ *
+ * Returning a random value would also close it, but it would keep the shape
+ * that caused the mistake: an unfingerprintable input silently taking part in
+ * binding as though it had been fingerprinted. Failing explicitly says what is
+ * actually true — we could not identify this input — and lets the caller deny
+ * for that reason. "I could not determine" is not "it passed".
  */
-export function inputHash(input: unknown): string {
+export function fingerprintInput(input: unknown): InputFingerprint {
   const canonical = (value: unknown): unknown => {
     if (value === null || typeof value !== 'object') return value;
     if (Array.isArray(value)) return value.map(canonical);
@@ -105,13 +135,12 @@ export function inputHash(input: unknown): string {
   try {
     serialised = JSON.stringify(canonical(input)) ?? 'undefined';
   } catch {
-    // Cyclic or otherwise unserialisable. Fall back to a value that can never
-    // match a previously-issued binding, so an input we cannot fingerprint
-    // fails confirmation rather than passing it.
-    return 'unhashable';
+    // Cyclic, BigInt, or a throwing toJSON. We cannot identify this input, so
+    // we say so rather than inventing a stand-in for it.
+    return { ok: false };
   }
 
-  return createHash('sha256').update(serialised).digest('hex').slice(0, 32);
+  return { ok: true, hash: createHash('sha256').update(serialised).digest('hex').slice(0, 32) };
 }
 
 const deny = (code: OperationError['code'], message: string): OperationError => ({ code, message });
@@ -189,11 +218,29 @@ export function createAuthorizationEngine(
       // ACTUAL input. Nothing is read back from the proof except its id — a
       // value the client supplies cannot attest to who the client is, and
       // trusting `confirmation.principal` would be exactly that mistake.
+      const fingerprint = fingerprintInput(request.input);
+      if (!fingerprint.ok) {
+        // An input we cannot identify cannot be bound to, so it can neither be
+        // issued a confirmation nor redeem one. Denying is the only answer that
+        // does not amount to confirming something we could not name.
+        //
+        // Note this denies only the CONFIRMATION path. An `allow` never reaches
+        // here, so an exotic input is not blanket-rejected — a policy that can
+        // read it is still free to permit it.
+        return finish({
+          kind: 'deny',
+          error: deny(
+            'FORBIDDEN',
+            'This operation requires confirmation, and its input could not be fingerprinted.',
+          ),
+        });
+      }
+
       const binding: ConfirmationBinding = {
         callerHash: callerHash(request.principal, request.clientInfo),
         operationId: request.operation.id,
         registryHash: request.registryHash,
-        inputHash: inputHash(request.input),
+        inputHash: fingerprint.hash,
       };
 
       if (request.confirmation !== undefined) {

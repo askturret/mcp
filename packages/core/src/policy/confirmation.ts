@@ -79,6 +79,23 @@ export interface ConfirmationRegistry {
   /**
    * Redeem a proof. Accepting CONSUMES the challenge — a second redemption of
    * the same proof is rejected as `already_used`.
+   *
+   * ## Known property: eviction is indistinguishable from forgery
+   *
+   * A forged id, a consumed one, and one evicted under `maxOutstanding`
+   * pressure all return `unknown`. For the first two that is deliberate — an
+   * attacker probing ids learns nothing from the difference.
+   *
+   * For the third it is a real, if narrow, availability cost: a caller who
+   * floods the registry can evict an honest user's outstanding challenge, and
+   * that user is then told `unknown` for a challenge they legitimately hold.
+   * They can retry and get a fresh one, so nothing is lost but a round trip.
+   *
+   * Fixing it properly means per-caller quotas rather than a global bound,
+   * which is bulkhead work (#43) and does not belong here. Documented rather
+   * than half-solved: the bound is what stops unbounded memory growth, and
+   * removing it to avoid this would trade a small availability cost for a
+   * memory-exhaustion primitive.
    */
   redeem(proof: ConfirmationProof, binding: ConfirmationBinding): ConfirmationOutcome;
 

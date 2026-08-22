@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
-import { createAuthorizationEngine, inputHash } from '../authorization.js';
+import { createAuthorizationEngine, fingerprintInput } from '../authorization.js';
 import { createConfirmationRegistry } from '../confirmation.js';
 import { createVisibilityEngine } from '../visibility.js';
 import { allOf } from '../combinators.js';
@@ -415,8 +415,76 @@ describe('confirmation', () => {
   it('key order in the input does not change the binding', async () => {
     // Two spellings of the same request must confirm identically, or a client
     // that reorders keys breaks confirmation for no reason.
-    expect(inputHash({ a: 1, b: 2 })).toBe(inputHash({ b: 2, a: 1 }));
-    expect(inputHash({ a: 1 })).not.toBe(inputHash({ a: 2 }));
+    const a = fingerprintInput({ a: 1, b: 2 });
+    const b = fingerprintInput({ b: 2, a: 1 });
+    const c = fingerprintInput({ a: 1 });
+
+    expect(a.ok && b.ok && a.hash === b.hash).toBe(true);
+    expect(a.ok && c.ok && a.hash === c.hash).toBe(false);
+  });
+
+  // An unfingerprintable input used to collapse to the constant 'unhashable',
+  // so every such input bound identically and a confirmation for one redeemed
+  // against another. Found in QA on PR #122.
+  //
+  // Note what would NOT have caught it: every existing binding test used
+  // ordinary JSON-shaped inputs, where fingerprinting always succeeds. The
+  // defect lived entirely in the branch none of them reached.
+  describe('an input that cannot be fingerprinted', () => {
+    function cyclic(amount: number): unknown {
+      const o: Record<string, unknown> = { amount };
+      o['self'] = o;
+      return o;
+    }
+
+    it('reports failure rather than substituting a value', () => {
+      expect(fingerprintInput(cyclic(10)).ok).toBe(false);
+      expect(fingerprintInput({ amount: BigInt(1) }).ok).toBe(false);
+    });
+
+    it('two DIFFERENT unfingerprintable inputs never share a binding', () => {
+      // The exact collision: a constant fallback made these equal. Now neither
+      // produces a hash at all, so there is nothing that can compare equal.
+      const a = fingerprintInput(cyclic(10));
+      const b = fingerprintInput(cyclic(10_000));
+
+      expect(a.ok).toBe(false);
+      expect(b.ok).toBe(false);
+      expect('hash' in a).toBe(false);
+      expect('hash' in b).toBe(false);
+    });
+
+    it('is denied on the confirmation path rather than silently bound', async () => {
+      const { engine } = engineWith();
+      const outcome = await engine.authorize(
+        request({ operation: financial, input: cyclic(10) }),
+      );
+
+      expect(outcome.kind).toBe('deny');
+      expect(outcome.kind === 'deny' && outcome.error.message).toContain(
+        'could not be fingerprinted',
+      );
+    });
+
+    it('cannot redeem a proof issued for a normal input', async () => {
+      const { engine } = engineWith();
+      const first = await engine.authorize(
+        request({ operation: financial, input: { amount: 10 } }),
+      );
+      const id = first.kind === 'confirmation_required' ? first.challenge.id : '';
+
+      const outcome = await engine.authorize(
+        request({ operation: financial, input: cyclic(10_000), confirmation: proofFor(id) }),
+      );
+      expect(outcome.kind).toBe('deny');
+    });
+
+    it('does NOT blanket-reject — an allow decision is unaffected', async () => {
+      // The denial is scoped to confirmation binding. A policy that can read an
+      // exotic input is still free to permit it.
+      const engine = createAuthorizationEngine({ policy: allowAll });
+      expect((await engine.authorize(request({ input: cyclic(10) }))).kind).toBe('allow');
+    });
   });
 });
 

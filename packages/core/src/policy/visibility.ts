@@ -104,24 +104,61 @@ interface CacheEntry {
 }
 
 /**
- * A stable, non-reversible identity key.
+ * A stable, non-reversible fingerprint of WHO is asking.
  *
- * §9.1 forbids raw identifiers as cache keys, so the principal's id never
- * appears in one. `type` is mixed in because a user and a service account can
- * legitimately share an id string and must not share a cache entry.
+ * ## The rule this encodes
  *
- * **Permissions are mixed in as well, which the issue's three-part key does not
- * require.** Without them, revoking a permission leaves the old visibility
- * cached until the TTL expires — the identity has not changed, so nothing
- * invalidates. Including them means an entitlement change takes effect on the
- * next call. Adding a component can only ever cause a miss, never a wrong hit,
- * so this is safe in the one direction that matters.
+ * **Every part of `PolicyContext` a policy can branch on, and that varies
+ * between callers, must be in the cache key.** For discovery those are exactly
+ * `principal` and `clientInfo` — `operation` is evaluated per-operation,
+ * `registryHash` is a separate key component, `phase` is constant, and `input`
+ * does not exist yet. Anything varying and absent from the key means two
+ * different callers share one entry.
+ *
+ * §9.1 forbids raw identifiers as cache keys, so nothing here appears in
+ * plaintext; the whole tuple is hashed. `type` is included because a user and a
+ * service account can legitimately share an id string.
+ *
+ * ## Why clientInfo is here (QA on PR #118)
+ *
+ * It was not, originally, and that was a cross-client cache-poisoning bug
+ * rather than a missed optimisation. `principal` is always `undefined` at
+ * discovery in v0.1, so this function returned the constant `'anon'` for every
+ * caller — one shared cache entry for the whole transport. A policy branching
+ * on `clientInfo.name` would serve an untrusted client the trusted client's
+ * full tool list, or vice versa, for up to the TTL.
+ *
+ * The failure is worth naming precisely: forwarding `clientInfo` into
+ * `PolicyContext` and not adding it to the key made the cache *wrong*, where
+ * before it had merely been *coarse*. Plumbing a new input into a cached
+ * computation is exactly when its key has to grow.
+ *
+ * ## Why adding components is always safe here
+ *
+ * A finer key can only ever cause a miss, never a wrong hit. That is why
+ * permissions are mixed in too, which the issue's three-part key did not ask
+ * for: without them, revoking a permission leaves visibility cached until the
+ * TTL expires, because the identity did not change.
+ *
+ * `clientInfo` is client-supplied and therefore attacker-controlled, so a
+ * caller can vary it to force misses and grow the cache. That is bounded by
+ * `maxEntries`, which now does double duty.
  */
-function identityHash(principal: Principal | undefined): string {
-  if (principal === undefined) return 'anon';
+export function callerHash(
+  principal: Principal | undefined,
+  clientInfo: ClientInfo | undefined,
+): string {
+  const principalPart =
+    principal === undefined
+      ? null
+      : [principal.type, principal.id, [...(principal.permissions ?? [])].sort()];
 
-  const permissions = [...(principal.permissions ?? [])].sort();
-  const canonical = JSON.stringify([principal.type, principal.id, permissions]);
+  const clientPart =
+    clientInfo === undefined ? null : [clientInfo.name ?? null, clientInfo.version ?? null];
+
+  // Hashed even when both parts are null, so the key format never varies by
+  // caller shape and no branch can accidentally emit something readable.
+  const canonical = JSON.stringify([principalPart, clientPart]);
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }
 
@@ -214,7 +251,11 @@ export function createVisibilityEngine(options: VisibilityEngineOptions): Visibi
 
       // The registry hash is part of the key, so a snapshot swap produces a
       // different key and the previous entry is simply never consulted again.
-      const key = JSON.stringify([identityHash(request.principal), request.snapshot.hash, policyVersion]);
+      const key = JSON.stringify([
+        callerHash(request.principal, request.clientInfo),
+        request.snapshot.hash,
+        policyVersion,
+      ]);
 
       const cached = readCache(key);
       if (cached !== undefined) {

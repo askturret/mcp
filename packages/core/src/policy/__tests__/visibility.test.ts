@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
-import { createVisibilityEngine, type PolicyMetrics } from '../visibility.js';
+import { callerHash, createVisibilityEngine, type PolicyMetrics } from '../visibility.js';
 import { allOf, not } from '../combinators.js';
 import { authenticated, readOnly } from '../builtins.js';
 import type { Policy, PolicyContext, PolicyDecision, PolicyPhase } from '../types.js';
@@ -276,6 +276,126 @@ describe('caching', () => {
     expect(engine.evaluationCount).toBe(10);
   });
 
+  // Cross-client cache poisoning, found in QA on PR #118.
+  //
+  // clientInfo was forwarded into PolicyContext but left out of the cache key.
+  // Because `principal` is always undefined at discovery in v0.1, the caller
+  // fingerprint was the constant 'anon' for everyone — one shared entry for the
+  // whole transport. A policy branching on clientInfo then served one client's
+  // tool list to another.
+  //
+  // Note what would NOT have caught it: every pre-existing cache test varied
+  // the principal, which is exactly the field that never varies on this path.
+  describe('clientInfo participates in the cache key', () => {
+    const byClient: Policy = {
+      id: 'byClient',
+      evaluate: (ctx) =>
+        Promise.resolve(
+          ctx.clientInfo?.name === 'trusted'
+            ? { effect: 'allow', evidence: [] }
+            : { effect: 'deny', code: 'FORBIDDEN', safeReason: 'untrusted client', evidence: [] },
+        ),
+    };
+
+    it('two different clientInfo values re-evaluate rather than sharing an entry', async () => {
+      const engine = createVisibilityEngine({ policy: allowAll });
+      const snap = snapshot(5, 'h1');
+
+      await engine.visibleOperations({ snapshot: snap, clientInfo: { name: 'a', version: '1' } });
+      expect(engine.evaluationCount).toBe(5);
+
+      await engine.visibleOperations({ snapshot: snap, clientInfo: { name: 'b', version: '1' } });
+      expect(engine.evaluationCount).toBe(10);
+    });
+
+    it('a differing version alone re-evaluates', async () => {
+      const engine = createVisibilityEngine({ policy: allowAll });
+      const snap = snapshot(5, 'h1');
+
+      await engine.visibleOperations({ snapshot: snap, clientInfo: { name: 'a', version: '1' } });
+      await engine.visibleOperations({ snapshot: snap, clientInfo: { name: 'a', version: '2' } });
+
+      expect(engine.evaluationCount).toBe(10);
+    });
+
+    it('an absent clientInfo does not share an entry with a present one', async () => {
+      const engine = createVisibilityEngine({ policy: allowAll });
+      const snap = snapshot(5, 'h1');
+
+      await engine.visibleOperations({ snapshot: snap });
+      await engine.visibleOperations({ snapshot: snap, clientInfo: { name: 'a' } });
+
+      expect(engine.evaluationCount).toBe(10);
+    });
+
+    it('an untrusted client does not inherit a trusted client\'s tools', async () => {
+      const engine = createVisibilityEngine({ policy: byClient });
+      const snap = snapshot(10, 'h1');
+
+      const trusted = await engine.visibleOperations({
+        snapshot: snap,
+        clientInfo: { name: 'trusted' },
+      });
+      const untrusted = await engine.visibleOperations({
+        snapshot: snap,
+        clientInfo: { name: 'untrusted' },
+      });
+
+      expect(trusted).toHaveLength(10);
+      expect(untrusted).toHaveLength(0);
+    });
+
+    it('a trusted client does not inherit an untrusted client\'s empty list', async () => {
+      // The other call order matters independently: this direction denies
+      // service rather than leaking it, and only one of the two shows up if
+      // you test a single ordering.
+      const engine = createVisibilityEngine({ policy: byClient });
+      const snap = snapshot(10, 'h1');
+
+      const untrusted = await engine.visibleOperations({
+        snapshot: snap,
+        clientInfo: { name: 'untrusted' },
+      });
+      const trusted = await engine.visibleOperations({
+        snapshot: snap,
+        clientInfo: { name: 'trusted' },
+      });
+
+      expect(untrusted).toHaveLength(0);
+      expect(trusted).toHaveLength(10);
+    });
+
+    it('control: with caching disabled the policy itself is correct', async () => {
+      // Isolates the cache as the cause. If this ever fails alongside the two
+      // above, the bug is in the policy, not the key.
+      const engine = createVisibilityEngine({ policy: byClient, ttlMs: 0 });
+      const snap = snapshot(10, 'h1');
+
+      const trusted = await engine.visibleOperations({
+        snapshot: snap,
+        clientInfo: { name: 'trusted' },
+      });
+      const untrusted = await engine.visibleOperations({
+        snapshot: snap,
+        clientInfo: { name: 'untrusted' },
+      });
+
+      expect(trusted).toHaveLength(10);
+      expect(untrusted).toHaveLength(0);
+    });
+
+    it('an identical clientInfo still hits the cache', async () => {
+      // The fix must not disable caching altogether.
+      const engine = createVisibilityEngine({ policy: allowAll });
+      const snap = snapshot(5, 'h1');
+
+      await engine.visibleOperations({ snapshot: snap, clientInfo: { name: 'a', version: '1' } });
+      await engine.visibleOperations({ snapshot: snap, clientInfo: { name: 'a', version: '1' } });
+
+      expect(engine.evaluationCount).toBe(5);
+    });
+  });
+
   it('a user and a service sharing an id do not share a cache entry', async () => {
     const clock = fakeClock();
     const engine = createVisibilityEngine({ policy: allowAll, now: clock.now });
@@ -354,6 +474,56 @@ describe('caching', () => {
     // ...while the most recent is still cached.
     await engine.visibleOperations({ snapshot: snap, principal: { id: 'u9', type: 'user' } });
     expect(engine.evaluationCount).toBe(11);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cache-key safety
+// ---------------------------------------------------------------------------
+
+describe('callerHash', () => {
+  // §9.1's "never a raw identifier in a cache key" held only because of a
+  // single createHash() call, with nothing asserting it. A refactor that
+  // shortcut the anonymous case, or interpolated a name for readability while
+  // debugging, would have regressed it silently.
+  const PRINCIPAL_ID = 'PRINCIPAL-SENTINEL-1a2b3c';
+  const CLIENT_NAME = 'CLIENT-SENTINEL-9z8y7x';
+  const PERMISSION = 'PERMISSION-SENTINEL-q1w2e3';
+
+  it('leaks no raw identifier from the principal or the client', () => {
+    const hash = callerHash(
+      { id: PRINCIPAL_ID, type: 'user', permissions: [PERMISSION] },
+      { name: CLIENT_NAME, version: '1.0.0' },
+    );
+
+    expect(hash).not.toContain(PRINCIPAL_ID);
+    expect(hash).not.toContain(CLIENT_NAME);
+    expect(hash).not.toContain(PERMISSION);
+    expect(hash).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('is hex for an anonymous caller too, with no readable sentinel value', () => {
+    // The absent case must not shortcut to a literal like 'anon': a key format
+    // that varies by caller shape is a key format with a branch that can emit
+    // something readable.
+    expect(callerHash(undefined, undefined)).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('is stable for equal inputs and distinct for differing ones', () => {
+    const a = callerHash({ id: 'u1', type: 'user' }, { name: 'c', version: '1' });
+    const b = callerHash({ id: 'u1', type: 'user' }, { name: 'c', version: '1' });
+    const c = callerHash({ id: 'u1', type: 'user' }, { name: 'c', version: '2' });
+    const d = callerHash({ id: 'u2', type: 'user' }, { name: 'c', version: '1' });
+
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+    expect(a).not.toBe(d);
+  });
+
+  it('does not confuse a principal-only caller with a client-only one', () => {
+    expect(callerHash({ id: 'x', type: 'user' }, undefined)).not.toBe(
+      callerHash(undefined, { name: 'x' }),
+    );
   });
 });
 

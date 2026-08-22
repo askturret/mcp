@@ -12,6 +12,7 @@ import { createHttpTransport } from './index.js';
 import type { HttpTransport } from './types.js';
 import {
   AtomicRegistryReference,
+  authenticated,
   readOnly,
   type OperationDefinition,
   type Policy,
@@ -243,6 +244,61 @@ describe('tools/list visibility policy', () => {
     await callToolsList(transport, 'sess-1');
 
     expect(seen[0]?.principal).toBeUndefined();
+  });
+
+  it('authenticated() consequently hides EVERY tool at discovery', async () => {
+    // The consequence, asserted directly rather than inferred from principal
+    // being undefined. This is the shape an adopter actually hits: a policy
+    // that reads correctly returns an empty tool list, because discovery has
+    // no principal to authenticate. Pinned so it is found here rather than in
+    // somebody's integration.
+    const transport = createHttpTransport({
+      registry: new AtomicRegistryReference(snapshotOfTen('h1')),
+      visibilityPolicy: authenticated(),
+      session: 'inMemory',
+    });
+
+    await initialize(transport, 'sess-1', { name: 'c', version: '1' });
+    expect(await callToolsList(transport, 'sess-1')).toHaveLength(0);
+  });
+
+  // Cross-client cache poisoning, end to end through the real tools/list path.
+  // Found in QA on PR #118.
+  describe('two clients do not share a cached tool list', () => {
+    const byClient: Policy = {
+      id: 'byClient',
+      evaluate: (ctx) =>
+        Promise.resolve(
+          ctx.clientInfo?.name === 'trusted'
+            ? { effect: 'allow', evidence: [] }
+            : { effect: 'deny', code: 'FORBIDDEN', safeReason: 'untrusted', evidence: [] },
+        ),
+    };
+
+    async function twoClientTransport(): Promise<HttpTransport> {
+      const transport = createHttpTransport({
+        registry: new AtomicRegistryReference(snapshotOfTen('h1')),
+        visibilityPolicy: byClient,
+        session: 'inMemory',
+      });
+      await initialize(transport, 'trusted-sess', { name: 'trusted', version: '1' });
+      await initialize(transport, 'untrusted-sess', { name: 'untrusted', version: '1' });
+      return transport;
+    }
+
+    it('untrusted does not inherit the trusted list', async () => {
+      const transport = await twoClientTransport();
+      expect(await callToolsList(transport, 'trusted-sess')).toHaveLength(10);
+      expect(await callToolsList(transport, 'untrusted-sess')).toHaveLength(0);
+    });
+
+    it('and trusted does not inherit the untrusted empty list', async () => {
+      // The reverse order denies service rather than leaking it, and only one
+      // of the two shows up if you test a single ordering.
+      const transport = await twoClientTransport();
+      expect(await callToolsList(transport, 'untrusted-sess')).toHaveLength(0);
+      expect(await callToolsList(transport, 'trusted-sess')).toHaveLength(10);
+    });
   });
 });
 

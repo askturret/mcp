@@ -17,8 +17,10 @@ import type {
   CommandDispatcher,
   OperationCommand,
   MCPResult,
+  ClientInfo,
+  VisibilityEngine,
 } from '@askturret/mcp-core';
-import { createDispatcher } from '@askturret/mcp-core';
+import { createDispatcher, createVisibilityEngine } from '@askturret/mcp-core';
 import type {
   HttpTransport,
   HttpTransportOptions,
@@ -53,10 +55,30 @@ class StreamableHttpTransport implements HttpTransport {
   private readonly deadlineMs: number;
   private readonly maxRequestBodySize: number;
   private readonly maxResponseSize: number;
+  private readonly visibility: VisibilityEngine | null;
 
   constructor(options: HttpTransportOptions) {
     this.registry = options.registry;
     this.dispatcher = createDispatcher(options.registry, options.hooks, options.executors);
+
+    // No policy configured means no filtering, which is the behaviour that
+    // existed before this option — adding the option must not change what an
+    // existing caller sees.
+    this.visibility = options.visibilityPolicy
+      ? createVisibilityEngine({
+          policy: options.visibilityPolicy,
+          ...(options.visibility?.ttlMs === undefined ? {} : { ttlMs: options.visibility.ttlMs }),
+          ...(options.visibility?.maxEntries === undefined
+            ? {}
+            : { maxEntries: options.visibility.maxEntries }),
+          ...(options.visibility?.policyVersion === undefined
+            ? {}
+            : { policyVersion: options.visibility.policyVersion }),
+          ...(options.visibility?.metrics === undefined
+            ? {}
+            : { metrics: options.visibility.metrics }),
+        })
+      : null;
     this.basePath = options.basePath ?? '/mcp';
     this.deadlineMs = options.deadlineMs ?? 30000;
     this.maxRequestBodySize = options.maxRequestBodySize ?? 1048576; // 1 MiB
@@ -255,7 +277,10 @@ class StreamableHttpTransport implements HttpTransport {
   }
 
   private async handleToolsList(id: any, sessionId: string | null): Promise<any> {
-    // Update session activity if sessions enabled
+    // Update session activity if sessions enabled, and capture clientInfo the
+    // same way handleToolsCall does — it was already fetched here and simply
+    // discarded before the visibility policy had a use for it.
+    let clientInfo: ClientInfo | undefined;
     if (this.sessionStore && sessionId) {
       const session = await this.sessionStore.get(sessionId);
       if (session) {
@@ -263,14 +288,29 @@ class StreamableHttpTransport implements HttpTransport {
           ...session,
           lastActivityAt: new Date(),
         });
+        clientInfo = session.clientInfo;
       }
     }
 
-    // Get current registry snapshot
+    // Get current registry snapshot. Read once per request: the registry
+    // reference has no swap notification, so the snapshot hash read here is
+    // what keys the visibility cache, and a swap simply produces a new key.
     const snapshot: RegistrySnapshot = this.registry.current();
 
+    // NOTE: no principal is available at discovery time in v0.1. The
+    // authenticate hook runs on the CALL path only (dispatcher), and nothing
+    // carries a Principal onto the session, so `principal` is necessarily
+    // undefined here. A policy built from `authenticated()` therefore hides
+    // EVERY tool at discovery. See the PR for #34.
+    const operations = this.visibility
+      ? await this.visibility.visibleOperations({
+          snapshot,
+          ...(clientInfo === undefined ? {} : { clientInfo }),
+        })
+      : Array.from(snapshot.operations.values());
+
     // Convert operations to MCP tools format
-    const tools = Array.from(snapshot.operations.values()).map((op) => ({
+    const tools = operations.map((op) => ({
       name: op.name,
       description: op.description,
       inputSchema: op.input,

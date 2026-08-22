@@ -22,6 +22,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const PLACEHOLDER = join(here, 'check-placeholder-tests.mjs');
 const EXECUTION = join(here, 'check-test-execution.mjs');
 const NETWORK = join(here, 'check-network-imports.mjs');
+const NUL = join(here, 'check-nul-bytes.mjs');
 
 let passed = 0;
 let failed = 0;
@@ -490,6 +491,94 @@ check(
   runGuard(NETWORK, scratchEmpty()).code,
   1,
 );
+
+// ---------------------------------------------------------------------------
+// check-nul-bytes.mjs (#119)
+//
+// The guard exists because nothing else in CI reads source at the byte level.
+// Its own tests therefore have to write real bytes, not strings that look like
+// them — asserting on '\\0' in a template literal would test the wrong thing.
+// ---------------------------------------------------------------------------
+
+/** A throwaway repo root holding one file written from explicit bytes. */
+function scratchBytes(relPath, buffer) {
+  const dir = mkdtempSync(join(tmpdir(), 'nulguard-'));
+  const full = join(dir, relPath);
+  mkdirSync(dirname(full), { recursive: true });
+  writeFileSync(full, buffer);
+  tmpDirs.push(dir);
+  return dir;
+}
+
+check(
+  'nul: flags a NUL byte in a TypeScript file',
+  runGuard(
+    NUL,
+    scratchBytes(
+      'packages/core/src/thing.ts',
+      Buffer.concat([Buffer.from("export const a = 'x"), Buffer.from([0x00]), Buffer.from("y';\n")]),
+    ),
+  ).code,
+  1,
+);
+
+check(
+  'nul: flags a NUL byte in JSON',
+  runGuard(
+    NUL,
+    scratchBytes(
+      'packages/core/config.json',
+      Buffer.concat([Buffer.from('{"a":"b'), Buffer.from([0x00]), Buffer.from('c"}\n')]),
+    ),
+  ).code,
+  1,
+);
+
+check(
+  'nul: accepts a clean file',
+  runGuard(NUL, scratchBytes('packages/core/src/thing.ts', Buffer.from("export const a = 'xy';\n")))
+    .code,
+  0,
+);
+
+// The literal two-character sequence backslash-zero is ordinary source and must
+// not be confused with the byte it denotes.
+check(
+  'nul: does NOT flag an escaped \\0 written as source text',
+  runGuard(
+    NUL,
+    scratchBytes('packages/core/src/thing.ts', Buffer.from("export const sep = '\\0';\n")),
+  ).code,
+  0,
+);
+
+// Multi-byte UTF-8 is not corruption; a guard that flagged it would be turned
+// off within a day.
+check(
+  'nul: does NOT flag non-ASCII UTF-8',
+  runGuard(
+    NUL,
+    scratchBytes('packages/core/src/thing.ts', Buffer.from("// §5.5 — em dash, ok\n", 'utf-8')),
+  ).code,
+  0,
+);
+
+check(
+  'nul: fails closed when the scan finds no files',
+  runGuard(NUL, mkdtempSync(join(tmpdir(), 'nulguard-empty-'))).code,
+  1,
+);
+
+{
+  const r = runGuard(
+    NUL,
+    scratchBytes(
+      'packages/core/src/thing.ts',
+      Buffer.concat([Buffer.from('const a = 1;\nconst b = '), Buffer.from([0x00]), Buffer.from('2;\n')]),
+    ),
+  );
+  check('nul: reports the offending line number', r.out.includes('thing.ts:2') ? 'located' : r.out, 'located');
+}
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 

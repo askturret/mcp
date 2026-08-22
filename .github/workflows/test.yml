@@ -343,6 +343,11 @@ jobs:
       - name: No network access outside the allowlist
         run: node .github/scripts/check-network-imports.mjs
 
+      # #119: nothing else in CI reads source at the byte level, so a NUL byte
+      # passes tsc, jest and every guard above it.
+      - name: No NUL bytes in source
+        run: node .github/scripts/check-nul-bytes.mjs
+
       # Needs dist/ — packages resolve each other through their built entry points.
       - run: npm run build
 

@@ -48,6 +48,22 @@ const confirmationRequired = (
  */
 function isRecognisedDecision(value: unknown): value is PolicyDecision {
   if (typeof value !== 'object' || value === null) return false;
+
+  // `evidence` is carried by EVERY effect, so it is checked before the
+  // effect-specific payload rather than three times after it.
+  //
+  // This line is load-bearing far out of proportion to its size. Without it,
+  // `{ effect: 'allow' }` was judged recognised and then threw
+  // "evidence is not iterable" when a combinator spread it. Nested, the
+  // parent's own evaluateSafely caught that and denied; at the ROOT of a tree
+  // there is no parent, so the TypeError escaped to the caller — a policy
+  // engine whose entire job is to contain untrusted policy code, failing open
+  // by one layer. Found in QA on PR #117.
+  if (!Array.isArray((value as { evidence?: unknown }).evidence)) return false;
+  if (!(value as { evidence: readonly unknown[] }).evidence.every(isRecognisedEvidence)) {
+    return false;
+  }
+
   const effect = (value as { effect?: unknown }).effect;
   if (effect === 'allow') return true;
   if (effect === 'deny') {
@@ -58,6 +74,22 @@ function isRecognisedDecision(value: unknown): value is PolicyDecision {
     return (value as { challenge?: unknown }).challenge != null;
   }
   return false;
+}
+
+/**
+ * Is this a usable evidence entry?
+ *
+ * The array being an array is not enough. `evidence: [null]` spreads happily
+ * and only fails later, in Explorer or the audit sink — relocating the crash
+ * out of the module that can still deny, into one that can only log. The same
+ * argument that requires the `Array.isArray` check above applies one level
+ * down, so it is applied there too.
+ */
+function isRecognisedEvidence(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const e = value as { policyId?: unknown; claim?: unknown; detail?: unknown };
+  if (typeof e.policyId !== 'string' || typeof e.claim !== 'string') return false;
+  return e.detail === undefined || typeof e.detail === 'string';
 }
 
 /** Evidence carrying no data of its own — safe by construction. */
@@ -236,11 +268,21 @@ export function anyOf(policies: readonly Policy[], options?: { readonly id?: str
         // permitted here" beats "every alternative denied"), and because
         // rewriting it would mean duplicating a policy silently changes the
         // answer callers see.
-        const codes = new Set(decisions.map((d) => (d.effect === 'deny' ? d.code : '')));
+        // Keyed on code AND safeReason, not code alone. Two denials sharing a
+        // code but differing in reason are not the same denial, and reporting
+        // one of them would silently drop the other — while the evidence note
+        // said "every policy denied", which a reader would take to mean they
+        // denied identically.
+        const reasons = new Set(
+          decisions.map((d) => (d.effect === 'deny' ? JSON.stringify([d.code, d.safeReason]) : '')),
+        );
         const first = decisions[0];
 
-        if (codes.size === 1 && first !== undefined && first.effect === 'deny') {
-          return deny(first.code, first.safeReason, [...evidence, note(id, 'every policy denied')]);
+        if (reasons.size === 1 && first !== undefined && first.effect === 'deny') {
+          return deny(first.code, first.safeReason, [
+            ...evidence,
+            note(id, 'every policy denied', 'identically, so their shared reason is reported'),
+          ]);
         }
 
         return deny('anyOf_all_denied', 'Every alternative policy denied this operation.', [

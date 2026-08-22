@@ -157,6 +157,38 @@ describe('anyOf decision table', () => {
     }
   }
 
+  describe('reporting an all-denied outcome', () => {
+    const denyWith = (id: string, code: string, safeReason: string): Policy => ({
+      id,
+      evaluate: () => Promise.resolve({ effect: 'deny', code, safeReason, evidence: [] }),
+    });
+
+    it('propagates the shared reason when every branch denied identically', async () => {
+      const decision = await anyOf([
+        denyWith('a', 'FORBIDDEN', 'Only read-only operations are permitted here.'),
+        denyWith('b', 'FORBIDDEN', 'Only read-only operations are permitted here.'),
+      ]).evaluate(context());
+
+      // "Only read-only operations are permitted here" is worth keeping;
+      // "every alternative denied" is not.
+      expect(decision.effect === 'deny' && decision.safeReason).toBe(
+        'Only read-only operations are permitted here.',
+      );
+    });
+
+    it('aggregates when branches share a code but deny for DIFFERENT reasons', async () => {
+      // Keying uniformity on code alone would report the first reason and
+      // silently drop the second, while claiming every policy denied — which
+      // a reader takes to mean they denied the same way.
+      const decision = await anyOf([
+        denyWith('a', 'FORBIDDEN', 'Only read-only operations are permitted here.'),
+        denyWith('b', 'FORBIDDEN', 'The caller lacks the permissions this operation requires.'),
+      ]).evaluate(context());
+
+      expect(decision.effect === 'deny' && decision.code).toBe('anyOf_all_denied');
+    });
+  });
+
   it('a single deny does NOT veto a disjunction', async () => {
     // If it did, anyOf would be indistinguishable from allOf and there would be
     // no way to express an alternative at all.
@@ -325,6 +357,57 @@ describe('failing closed', () => {
     // crashing policy into an open door. The failure must not round-trip.
     const decision = await not(thrower).evaluate(context());
     expect(decision.effect).toBe('deny');
+  });
+
+  // A decision missing its evidence array passed the shape check, and then
+  // threw "evidence is not iterable" when a combinator spread it. NESTED, the
+  // parent's own evaluateSafely caught that and denied — so a test that only
+  // exercised composed trees would have seen nothing wrong. At the ROOT there
+  // is no parent to catch it, and the TypeError escaped to the caller: a
+  // module whose whole job is containing untrusted policy code, failing open
+  // by exactly one layer.
+  //
+  // Every case below therefore evaluates the combinator AT THE ROOT. That
+  // position IS the defect; nested, all of these passed before the fix.
+  // Found in QA on PR #117.
+  describe('a malformed decision is rejected rather than spread', () => {
+    const malformed: readonly (readonly [string, unknown])[] = [
+      ['no evidence at all', { effect: 'allow' }],
+      ['evidence is not an array', { effect: 'allow', evidence: 'nope' }],
+      ['evidence is null', { effect: 'allow', evidence: null }],
+      ['evidence contains null', { effect: 'allow', evidence: [null] }],
+      ['an evidence entry is a bare string', { effect: 'allow', evidence: ['claim'] }],
+      ['an evidence entry lacks a claim', { effect: 'allow', evidence: [{ policyId: 'p' }] }],
+      ['deny without a code', { effect: 'deny', safeReason: 'r', evidence: [] }],
+      ['confirmation without a challenge', { effect: 'confirmation_required', evidence: [] }],
+    ];
+
+    for (const [label, value] of malformed) {
+      const policy = {
+        id: 'malformed',
+        evaluate: () => Promise.resolve(value),
+      } as unknown as Policy;
+
+      it(`allOf denies at the root — ${label}`, async () => {
+        await expect(allOf([policy]).evaluate(context())).resolves.toMatchObject({
+          effect: 'deny',
+        });
+      });
+
+      it(`anyOf denies at the root — ${label}`, async () => {
+        await expect(anyOf([policy]).evaluate(context())).resolves.toMatchObject({
+          effect: 'deny',
+        });
+      });
+
+      it(`negation denies at the root — ${label}`, async () => {
+        // Deny, not allow: the substituted denial is this module's own safety
+        // response to a failure, and is never inverted into an allowance.
+        await expect(not(policy).evaluate(context())).resolves.toMatchObject({
+          effect: 'deny',
+        });
+      });
+    }
   });
 });
 

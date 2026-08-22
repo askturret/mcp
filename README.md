@@ -5,8 +5,8 @@ Add a production-grade MCP layer to your existing API.
 Discover from OpenAPI, routes, schemas, or handlers. Shape agent-friendly tools. Govern access. Observe every call.
 
 [![npm version](https://img.shields.io/npm/v/@askturret/mcp.svg?style=flat-square)](https://www.npmjs.com/package/@askturret/mcp)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0%2B-blue?style=flat-square)](https://www.typescriptlang.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-18%2B-green?style=flat-square)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.5%2B-blue?style=flat-square)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-green?style=flat-square)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
 
 ---
@@ -126,7 +126,7 @@ mcp diff snapshot-v1.json snapshot-v2.json
 npm install @askturret/mcp
 ```
 
-**Requirements:** Node.js 18+, TypeScript 5.0+
+**Requirements:** Node.js 20+, TypeScript 5.5+ — see the [compatibility matrix](docs/compatibility.md) for the full supported-version contract.
 
 ---
 
@@ -160,7 +160,7 @@ Learn more: [Architecture documentation](docs/architecture-overview.md)
 | OpenAPI 3.0 / 3.1 | ✅ Stable | `fromOpenApi('./api.yaml')` |
 | Express routes | ✅ Stable | `fromExpress(app)` |
 | Explicit TypeScript | ✅ Stable | `fromDefinitions(ops)` |
-| Fastify routes | ✅ Stable | `fromFastify(app)` |
+| Fastify routes | 📋 Roadmap (v0.4) | — |
 | JSON Schema | ✅ Stable | `fromSchema(schema)` |
 | HTTP proxy | ✅ Stable | `viaHttp({baseUrl: '...'})` |
 | Koa routes | 📋 Roadmap (v0.4) | — |
@@ -309,6 +309,8 @@ const server = createMcpServer({
 - **[API Reference](docs/api.md)** — Detailed API documentation.
 - **[Policy Configuration](docs/policies.md)** — Write and compose policies.
 - **[Overlays and Customization](docs/overlays.md)** — Non-invasive modifications.
+- **[Compatibility Matrix](docs/compatibility.md)** — Supported Node, TypeScript, adapter, OpenAPI and MCP versions. A versioned contract.
+- **[Generated-Output Licensing](docs/generated-output-license.md)** — Who owns the output AskTurret produces. A versioned contract.
 - **[Roadmap](docs/roadmap.md)** — What's planned for future releases.
 - **[Why not just generate code?](docs/why-not-generate.md)** — Comparison with code-gen approaches.
 
@@ -327,6 +329,8 @@ const server = createMcpServer({
 ## License
 
 AskTurret MCP is licensed under the [Apache License 2.0](LICENSE). See [TRADEMARK.md](TRADEMARK.md) for trademark and branding guidelines.
+
+**Output you generate with AskTurret belongs to you** — see [Generated-Output Licensing](docs/generated-output-license.md) for the full statement.
 
 ---
 

@@ -13,7 +13,7 @@ permissions:
 jobs:
   # Path filter job - detects which packages changed
   changes:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     outputs:
       core: ${{ steps.filter.outputs.core }}
       adapters-express: ${{ steps.filter.outputs.adapters-express }}
@@ -53,7 +53,7 @@ jobs:
 
   # Test core package
   test-core:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -67,7 +67,7 @@ jobs:
 
   # Test adapters-express package
   test-adapters-express:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.adapters-express == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -81,7 +81,7 @@ jobs:
 
   # Test sources-openapi package
   test-sources-openapi:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.sources-openapi == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -95,7 +95,7 @@ jobs:
 
   # Test transports package
   test-transports:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.transports == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -109,7 +109,7 @@ jobs:
 
   # Test observability package
   test-observability:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.observability == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -123,7 +123,7 @@ jobs:
 
   # Test explorer package
   test-explorer:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.explorer == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -137,7 +137,7 @@ jobs:
 
   # Test CLI package
   test-cli:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.cli == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -151,7 +151,7 @@ jobs:
 
   # Status wrapper jobs for merge-coverage gate
   core-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: [changes, test-core]
     if: always()
     steps:
@@ -171,7 +171,7 @@ jobs:
           fi
 
   adapters-express-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: [changes, test-adapters-express]
     if: always()
     steps:
@@ -191,7 +191,7 @@ jobs:
           fi
 
   sources-openapi-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: [changes, test-sources-openapi]
     if: always()
     steps:
@@ -211,7 +211,7 @@ jobs:
           fi
 
   transports-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: [changes, test-transports]
     if: always()
     steps:
@@ -231,7 +231,7 @@ jobs:
           fi
 
   observability-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: [changes, test-observability]
     if: always()
     steps:
@@ -251,7 +251,7 @@ jobs:
           fi
 
   explorer-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: [changes, test-explorer]
     if: always()
     steps:
@@ -271,7 +271,7 @@ jobs:
           fi
 
   cli-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: [changes, test-cli]
     if: always()
     steps:
@@ -291,7 +291,7 @@ jobs:
           fi
 
   workspace-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: [changes, test-core, test-adapters-express, test-sources-openapi, test-transports, test-observability, test-explorer, test-cli]
     if: always()
     steps:
@@ -322,7 +322,7 @@ jobs:
   # runs on every PR regardless of which paths changed, because test integrity
   # is not scoped to a package.
   test-integrity:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

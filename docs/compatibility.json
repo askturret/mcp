@@ -1,0 +1,88 @@
+{
+  "matrixVersion": "1.0.0",
+  "appliesToRelease": "0.1.0",
+  "documentation": "https://github.com/askturret/mcp/blob/main/docs/compatibility.md",
+  "statusLegend": {
+    "supported": "Declared as supported and exercised by CI on every pull request.",
+    "declared-untested": "Declared in peerDependencies and expected to work, but NOT exercised by CI. Use at your own risk; report breakage as a bug.",
+    "planned": "Not implemented. Tracked by the linked issue. Do not depend on it.",
+    "deprecated": "Still supported, with a scheduled removal release.",
+    "unsupported": "Explicitly rejected. Not accepted as input and not planned."
+  },
+  "runtime": {
+    "node": {
+      "declared": ">=20.0.0",
+      "source": "package.json#engines.node",
+      "entries": [
+        { "version": "20.x", "track": "LTS", "status": "supported", "note": "The version CI runs on." },
+        { "version": "22.x", "track": "LTS", "status": "declared-untested", "note": "Satisfies engines.node but no CI job runs on it." },
+        { "version": "24.x", "track": "Current", "status": "declared-untested", "note": "Satisfies engines.node but no CI job runs on it." },
+        { "version": "18.x", "track": "Maintenance", "status": "unsupported", "note": "Below engines.node. Installation warns and behaviour is untested." }
+      ]
+    }
+  },
+  "language": {
+    "typescript": {
+      "declared": "^5.5.0",
+      "source": "package.json#devDependencies.typescript",
+      "entries": [
+        { "version": ">=5.5", "status": "supported", "note": "Build target ES2022, moduleResolution NodeNext." },
+        { "version": "5.0 - 5.4", "status": "unsupported", "note": "Not tested. Type definitions assume 5.5+." }
+      ]
+    }
+  },
+  "adapters": [
+    {
+      "framework": "express",
+      "package": "packages/adapters-express",
+      "entryPoint": "@askturret/mcp/express",
+      "entries": [
+        { "version": "4.18.x - 4.x", "status": "supported", "note": "CI installs and tests Express 4." },
+        { "version": "5.x", "status": "declared-untested", "note": "Accepted by peerDependencies, but no CI job installs Express 5 and @types/express is pinned to v4." }
+      ]
+    },
+    {
+      "framework": "fastify",
+      "package": null,
+      "entryPoint": null,
+      "entries": [
+        { "version": "4.x", "status": "planned", "trackedBy": 41 },
+        { "version": "5.x", "status": "planned", "trackedBy": 41 }
+      ],
+      "note": "No Fastify adapter ships today. An optional fastify peerDependency range exists in package.json, but no adapter package, no fromFastify export, and no implementation. Do not depend on Fastify support until #41 lands."
+    }
+  ],
+  "sources": [
+    {
+      "kind": "openapi",
+      "package": "packages/sources-openapi",
+      "entries": [
+        { "version": "3.0.x", "status": "supported" },
+        { "version": "3.1.x", "status": "supported" },
+        { "version": "2.0 (Swagger)", "status": "unsupported", "note": "Rejected. Convert to OpenAPI 3.x first." }
+      ],
+      "note": "Version detection matches the dotted prefixes '3.0.' and '3.1.' against the document's openapi field. A document declaring exactly \"3.0\" or \"3.1\" with no patch segment is rejected; write \"3.0.0\" or \"3.1.0\"."
+    }
+  ],
+  "protocol": {
+    "mcp": {
+      "protocolVersion": "2024-11-05",
+      "negotiated": false,
+      "negotiationNote": "This value is reported in the initialize result and is not negotiated against the version the client requests.",
+      "sdk": {
+        "package": "@modelcontextprotocol/sdk",
+        "declared": "^0.5.0",
+        "tested": "0.5.0",
+        "status": "supported",
+        "isolation": "The SDK is imported by packages/transports only; it is not part of any public API surface."
+      }
+    }
+  },
+  "deprecations": [],
+  "contract": {
+    "stability": "versioned",
+    "policy": "Changes to this matrix require a semver bump and a release-notes entry. Removing support for a listed version, or narrowing a supported range, is a breaking change and requires a major version bump. Adding a newly supported version is a minor release.",
+    "authority": "This file is the source of truth. docs/compatibility.md is the human-readable rendering of it; if the two disagree, this file governs.",
+    "enforcement": "This matrix is a published statement, not a CI-enforced guarantee. Running the suite against every cell is tracked separately by Epic #5."
+  }
+}

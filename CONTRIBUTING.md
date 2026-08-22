@@ -314,6 +314,7 @@ By contributing to this project, you agree that:
 - By submitting a contribution, you grant AskTurret a perpetual, worldwide, non-exclusive, royalty-free license to use, reproduce, modify, and distribute your contribution as part of this project
 - See [LICENSE](LICENSE) for the full license text
 - See [TRADEMARK.md](TRADEMARK.md) for trademark usage guidelines
+- See [Generated-Output Licensing](docs/generated-output-license.md) for what licence applies to output produced by AskTurret — generated scaffolding belongs to the user, bundled runtime code stays Apache-2.0
 
 ---
 

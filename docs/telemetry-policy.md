@@ -162,3 +162,5 @@ This page is a **versioned contract**:
 
 - [`SECURITY.md`](../SECURITY.md) — reporting a vulnerability, including any collection that violates this policy
 - [`.github/scripts/check-network-imports.mjs`](../.github/scripts/check-network-imports.mjs) — the guard that enforces §1
+- [Generated-output licensing](generated-output-license.md) — who owns what AskTurret produces, also a versioned contract
+- [Compatibility matrix](compatibility.md) — supported runtimes and versions, also a versioned contract

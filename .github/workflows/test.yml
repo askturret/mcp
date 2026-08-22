@@ -338,6 +338,11 @@ jobs:
       - name: No placeholder or assertion-free tests
         run: node .github/scripts/check-placeholder-tests.mjs
 
+      # #26: docs/telemetry-policy.md promises no outbound call unless the
+      # adopter configured one. Reads source only, so it runs before the build.
+      - name: No network access outside the allowlist
+        run: node .github/scripts/check-network-imports.mjs
+
       # Needs dist/ — packages resolve each other through their built entry points.
       - run: npm run build
 

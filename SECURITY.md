@@ -147,6 +147,27 @@ See our [Policy Configuration Guide](docs/policies.md) for more details.
 
 ---
 
+## Telemetry and Data Collection
+
+**AskTurret MCP collects nothing.** There is no telemetry, no analytics and no
+phone-home. The package makes no outbound network call unless you configure one
+yourself — an executor, an adapter, or an exporter pointed at your own collector.
+
+If usage telemetry is ever added it will be **opt-in only**, disabled by default,
+and it will **never** collect tool arguments or responses, principal identifiers,
+your API schemas, or response bodies — no opt-in enables those. A build that
+transmits any of them is a security bug; please report it through the process
+above.
+
+The default is enforced by CI, not just documented: a guard fails the build if
+any package source file imports a network-capable module outside the small
+allowlist of files that exist to make calls on your behalf.
+
+Full terms, including exactly what opt-in telemetry could ever collect and how to
+inspect the payload before it is sent: [Telemetry Policy](docs/telemetry-policy.md).
+
+---
+
 ## Contact
 
 For security-related questions that are **not** vulnerability reports:

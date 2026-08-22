@@ -309,6 +309,7 @@ const server = createMcpServer({
 - **[API Reference](docs/api.md)** — Detailed API documentation.
 - **[Policy Configuration](docs/policies.md)** — Write and compose policies.
 - **[Overlays and Customization](docs/overlays.md)** — Non-invasive modifications.
+- **[Telemetry Policy](docs/telemetry-policy.md)** — Zero telemetry by default; any future collection is opt-in only. A versioned contract.
 - **[Roadmap](docs/roadmap.md)** — What's planned for future releases.
 - **[Why not just generate code?](docs/why-not-generate.md)** — Comparison with code-gen approaches.
 
@@ -327,6 +328,14 @@ const server = createMcpServer({
 ## License
 
 AskTurret MCP is licensed under the [Apache License 2.0](LICENSE). See [TRADEMARK.md](TRADEMARK.md) for trademark and branding guidelines.
+
+---
+
+## Privacy
+
+**No telemetry. Nothing is collected.** AskTurret MCP makes no outbound network call unless you configure one yourself, and there is no AskTurret endpoint to call. If usage telemetry is ever added it will be **opt-in only** and disabled by default — and it will never collect your tool arguments, responses, principal identifiers or API schemas.
+
+See the [Telemetry Policy](docs/telemetry-policy.md) for the full versioned contract.
 
 ---
 

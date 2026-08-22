@@ -36,3 +36,22 @@ export { omitUndefined } from './utils.js';
 export { AtomicRegistryReference, type RegistryReference } from './registry-reference.js';
 export { createDispatcher, type CommandDispatcher, type DispatcherHooks, type DispatchContext, type MCPResult } from './dispatcher/index.js';
 export { viaHandler, viaHttp, type OperationExecutor, type OperationHandler, type HttpExecutorOptions, type HttpClient } from './executor/index.js';
+export {
+  allOf,
+  anyOf,
+  not,
+  authenticated,
+  confirmationForEffects,
+  permissionPolicy,
+  readOnly,
+  type ClientInfo,
+  type ConfirmationChallenge,
+  type ConfirmationForEffectsOptions,
+  type PermissionPolicyOptions,
+  type Policy,
+  type PolicyContext,
+  type PolicyDecision,
+  type PolicyEvidence,
+  type PolicyPhase,
+  type UnlistedOperationBehaviour,
+} from './policy/index.js';

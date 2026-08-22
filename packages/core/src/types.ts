@@ -196,6 +196,16 @@ export interface Principal {
   readonly type: string;
 
   /**
+   * Permissions this principal holds, consumed by `permissionPolicy`.
+   *
+   * Absent and empty mean the same thing to policy: no permissions. There is
+   * deliberately no "all permissions" sentinel — a wildcard here would be a
+   * value that silently satisfies every future permission check, including
+   * ones nobody has written yet.
+   */
+  readonly permissions?: readonly string[];
+
+  /**
    * Additional principal attributes for policy evaluation.
    */
   readonly attributes?: Readonly<Record<string, unknown>>;

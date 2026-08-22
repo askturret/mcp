@@ -10,6 +10,7 @@ Thank you for your interest in contributing to AskTurret MCP! We welcome contrib
 - [Making Changes](#making-changes)
 - [Coding Standards](#coding-standards)
 - [Commit Standards](#commit-standards)
+- [Dependency Licences](#dependency-licences)
 - [Submitting a Pull Request](#submitting-a-pull-request)
 - [Contributing Adapters and Plugins](#contributing-adapters-and-plugins)
 - [Contribution Statement](#contribution-statement)
@@ -224,6 +225,28 @@ You can run the same check locally before pushing:
 ```bash
 .github/scripts/dco-check.sh origin/main HEAD
 ```
+
+## Dependency Licences
+
+Every pull request runs a licence review
+([`.github/scripts/check-licenses.mjs`](.github/scripts/check-licenses.mjs)). It
+fails the build when a dependency is copyleft (GPL, AGPL, LGPL),
+source-available (SSPL, BUSL), or declares no licence at all.
+
+Prefer permissively licensed dependencies — MIT, BSD, ISC and Apache-2.0 are
+auto-approved. If a dependency genuinely requires an exception, record it in
+[`LICENSE_EXCEPTIONS.md`](LICENSE_EXCEPTIONS.md) with a reason and an approver;
+the gate rejects an exception missing either.
+
+Adding a runtime dependency also changes the attribution we ship, so regenerate
+the NOTICE file and commit the result:
+
+```bash
+node .github/scripts/generate-notice.mjs
+```
+
+CI fails if `NOTICE` is out of date — attribution is a licence obligation, not
+housekeeping.
 
 ## Submitting a Pull Request
 

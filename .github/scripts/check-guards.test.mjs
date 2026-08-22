@@ -423,21 +423,50 @@ check(
   0,
 );
 
-// A greedy cross-statement match reported a real import at an unrelated line
-// during development. The bug is invisible unless a file has an earlier
-// `export` keyword, so it gets a fixture of its own.
-check(
-  'network: does not mis-attribute an import to an earlier export statement',
-  runGuard(
+// A greedy cross-statement match (`[\s\S]*?` between `export` and `from`)
+// reported a real import TWICE during development: once correctly, and once
+// mis-attributed to an unrelated `export` line far above it.
+//
+// This fixture needs all three of its parts or it proves nothing:
+//   1. an `export` on line 1 for the greedy match to start from,
+//   2. a `;` before the import, which is what bounds the fixed regex,
+//   3. a REAL `from '...'` clause for the greedy match to run onto.
+//
+// The first version of this test omitted (3). With no import anywhere, both
+// the buggy and the fixed regex matched nothing and returned zero violations
+// identically — so the suite stayed green with the bug reinstated. That is the
+// #79 "test that cannot fail" class, caught in QA on PR #115.
+//
+// Exit code alone still cannot tell the two apart: both report at least one
+// violation and exit 1. The count and the line number are the discriminators,
+// so those are what get asserted.
+{
+  const r = runGuard(
     NETWORK,
     scratchPackage(
       'packages/core/src/compiler/pass.ts',
       `export interface Compiler { run(): void }
-       export const ok = true;`,
+export const ok = true;
+
+import { request } from 'undici';
+export const go = () => request('https://example.com');
+`,
     ),
-  ).code,
-  0,
-);
+  );
+  const undiciHits = (r.out.match(/imports 'undici'/g) ?? []).length;
+
+  check('network: still flags the undici import in this fixture', r.code, 1);
+
+  // Greedy regex: 2 (line 1 spurious + line 4 real). Bounded: 1.
+  check('network: reports the import once, not once per earlier export', undiciHits, 1);
+
+  // The spurious hit lands on line 1, the `export interface` line.
+  check(
+    'network: does not mis-attribute the import to an earlier export line',
+    /pass\.ts:1 — imports 'undici'/.test(r.out) ? 'mis-attributed to line 1' : 'attributed correctly',
+    'attributed correctly',
+  );
+}
 
 // Test files never ship to an adopter. Skipping them is deliberate; asserting
 // it here means the decision is recorded rather than assumed.

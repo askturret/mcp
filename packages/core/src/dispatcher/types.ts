@@ -11,6 +11,7 @@ import type {
   Principal,
   ConfirmationProof,
 } from '../types.js';
+import type { ClientInfo } from '../policy/types.js';
 
 /**
  * Dispatch context - threaded through all 12 stages.
@@ -37,6 +38,15 @@ export interface DispatchContext {
    * Authenticated principal (if any)
    */
   readonly principal?: Principal;
+
+  /**
+   * Client information volunteered at initialize, carried from the command.
+   *
+   * Previously dropped between OperationCommand and DispatchContext, which
+   * made it unreachable to everything downstream (noted in #33). Call-time
+   * authorization needs it, so it is threaded through (#35).
+   */
+  readonly clientInfo?: ClientInfo;
 
   /**
    * Confirmation proof (if provided)

@@ -47,3 +47,24 @@ export {
   type VisibilityEngineOptions,
   type VisibleOperationsRequest,
 } from './visibility.js';
+
+export {
+  createAuthorizationEngine,
+  inputHash,
+  type AuthorizationEngine,
+  type AuthorizationEngineOptions,
+  type AuthorizationOutcome,
+  type AuthorizationRequest,
+  type AuthorizationTimings,
+} from './authorization.js';
+
+export {
+  createConfirmationRegistry,
+  DEFAULT_CONFIRMATION_TTL_MS,
+  DEFAULT_MAX_OUTSTANDING_CONFIRMATIONS,
+  type ConfirmationBinding,
+  type ConfirmationOutcome,
+  type ConfirmationRegistry,
+  type ConfirmationRegistryOptions,
+  type ConfirmationRejection,
+} from './confirmation.js';

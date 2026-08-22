@@ -20,7 +20,11 @@ import type {
   ClientInfo,
   VisibilityEngine,
 } from '@askturret/mcp-core';
-import { createDispatcher, createVisibilityEngine } from '@askturret/mcp-core';
+import {
+  createAuthorizationEngine,
+  createDispatcher,
+  createVisibilityEngine,
+} from '@askturret/mcp-core';
 import type {
   HttpTransport,
   HttpTransportOptions,
@@ -59,7 +63,29 @@ class StreamableHttpTransport implements HttpTransport {
 
   constructor(options: HttpTransportOptions) {
     this.registry = options.registry;
-    this.dispatcher = createDispatcher(options.registry, options.hooks, options.executors);
+    // Call-time authorization (stage 3). Absent policy means unchanged
+    // behaviour: the dispatcher falls back to the authorize hook.
+    const authorization = options.authorizationPolicy
+      ? createAuthorizationEngine({
+          policy: options.authorizationPolicy,
+          ...(options.authorization?.confirmations === undefined
+            ? {}
+            : { confirmations: options.authorization.confirmations }),
+          ...(options.authorization?.metrics === undefined
+            ? {}
+            : { metrics: options.authorization.metrics }),
+          ...(options.authorization?.timings === undefined
+            ? {}
+            : { timings: options.authorization.timings }),
+        })
+      : undefined;
+
+    this.dispatcher = createDispatcher(
+      options.registry,
+      options.hooks,
+      options.executors,
+      authorization === undefined ? undefined : { authorization },
+    );
 
     // No policy configured means no filtering, which is the behaviour that
     // existed before this option — adding the option must not change what an
@@ -395,6 +421,12 @@ class StreamableHttpTransport implements HttpTransport {
         error: {
           code: result.error!.code,
           message: result.error!.message,
+          // `details` is the only channel a CONFIRMATION_REQUIRED challenge has
+          // to reach the caller, and it was being dropped here — so a client
+          // was told to confirm without being told what to confirm. The field
+          // is already documented as safe for transport (OperationError), and
+          // the dispatcher redacts before it gets here.
+          ...(result.error!.details === undefined ? {} : { data: result.error!.details }),
         },
       };
     }

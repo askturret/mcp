@@ -9,6 +9,8 @@ import type {
   OperationExecutor,
   Policy,
   PolicyMetrics,
+  ConfirmationRegistry,
+  AuthorizationTimings,
 } from '@askturret/mcp-core';
 
 /**
@@ -101,6 +103,32 @@ export interface HttpTransportOptions {
    * call time by the same policy.
    */
   readonly visibilityPolicy?: Policy;
+
+  /**
+   * Call-time authorization policy — dispatcher stage 3.
+   *
+   * **This is the security boundary** (§5.5). `visibilityPolicy` shrinks what
+   * an agent sees; this decides what it may actually do. Anything hidden at
+   * discovery should also be denied here — usually by passing the same policy
+   * to both, since one `Policy` serves both phases.
+   *
+   * When unset, stage 3 falls back to the `authorize` hook alone, which
+   * defaults to allow-all. Enabling enforcement is an explicit act.
+   */
+  readonly authorizationPolicy?: Policy;
+
+  /** Tuning for call-time authorization. Ignored without an `authorizationPolicy`. */
+  readonly authorization?: {
+    /**
+     * Confirmation registry. Supply one to control nonce/TTL behaviour, or to
+     * share issuance across transports; otherwise a default is created.
+     */
+    readonly confirmations?: ConfirmationRegistry;
+    /** Decision counter sink. Defaults to a no-op until observability (#39). */
+    readonly metrics?: PolicyMetrics;
+    /** Duration sink for `mcp_authorization_duration_seconds`. */
+    readonly timings?: AuthorizationTimings;
+  };
 
   /**
    * Tuning for the visibility decision cache. Ignored without a

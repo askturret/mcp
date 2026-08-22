@@ -24,6 +24,7 @@ import type {
   HookDecision,
 } from './types.js';
 import type { OperationExecutor } from '../executor/types.js';
+import type { AuthorizationEngine } from '../policy/authorization.js';
 import { omitUndefined } from '../utils.js';
 
 /**
@@ -51,19 +52,43 @@ export function createDispatcher(
   registry: RegistryReference,
   hooks?: DispatcherHooks,
   executors?: Map<string, OperationExecutor>,
+  options?: DispatcherOptions,
 ): CommandDispatcher {
-  return new DefaultCommandDispatcher(registry, hooks, executors);
+  return new DefaultCommandDispatcher(registry, hooks, executors, options);
+}
+
+/**
+ * Dispatcher options beyond the hook seams.
+ *
+ * A fourth positional parameter rather than a breaking signature change: every
+ * existing caller keeps working, and an absent policy means the dispatcher
+ * behaves exactly as it did before.
+ */
+export interface DispatcherOptions {
+  /**
+   * Call-time authorization policy — stage 3, the actual security boundary.
+   *
+   * When absent, stage 3 falls back to the `authorize` hook alone, which
+   * defaults to allow-all. That is the pre-existing behaviour and remains the
+   * default: turning on enforcement is an explicit act.
+   */
+  readonly authorization?: AuthorizationEngine;
 }
 
 /**
  * Default command dispatcher implementation
  */
 class DefaultCommandDispatcher implements CommandDispatcher {
+  private readonly authorization: AuthorizationEngine | undefined;
+
   constructor(
     private readonly registry: RegistryReference,
     private readonly hooks: DispatcherHooks = {},
     private readonly executors: Map<string, OperationExecutor> = new Map(),
-  ) {}
+    options?: DispatcherOptions,
+  ) {
+    this.authorization = options?.authorization;
+  }
 
   async dispatch(command: OperationCommand): Promise<MCPResult> {
     try {
@@ -80,11 +105,16 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       }
 
       // Build dispatch context (immutable for entire pipeline)
+      //
+      // clientInfo is carried across from the command. It used to be dropped
+      // here, which made it unreachable to anything downstream — noted during
+      // #33 and closed in #35, because call-time authorization needs it.
       const context: DispatchContext = omitUndefined({
         requestId: command.requestId,
         operationId: command.operationId,
         registryHash: snapshot.hash,
         principal: command.principal,
+        clientInfo: command.clientInfo,
         confirmation: command.confirmation,
         deadline: command.deadline,
         signal: command.signal,
@@ -97,9 +127,28 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         principal: principal ?? context.principal,
       });
 
-      // STAGE 3: Authorize
+      // STAGE 3: Authorize — the actual security boundary (§5.5).
+      //
+      // The policy engine runs BEFORE the user hook. A hook cannot be allowed
+      // to pre-empt a policy denial: if it could, configuring a permissive
+      // hook would silently disable the security boundary, which is the one
+      // thing a hook must never be able to do.
+      const policyOutcome = await this.authorizeByPolicy(
+        contextWithPrincipal,
+        operation,
+        command,
+      );
+      if (policyOutcome !== null) {
+        // Denials are audited. Stage 11 only ever ran on the success path, so
+        // without this a refusal left no trace — the one event an audit log
+        // most needs to contain.
+        await this.audit(contextWithPrincipal, policyOutcome);
+        return this.mapResult(policyOutcome);
+      }
+
       const authDecision = await this.authorize(contextWithPrincipal, command.input);
       if ('shortCircuit' in authDecision) {
+        await this.audit(contextWithPrincipal, authDecision.result);
         return this.mapResult(authDecision.result);
       }
 
@@ -172,6 +221,39 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     }
     // v0.1: default is unauthenticated
     return undefined;
+  }
+
+  /**
+   * Stage 3, policy half.
+   *
+   * Returns `null` to continue, or the failing `OperationResult` to return.
+   *
+   * Note this runs before stage 4 (validate input), which is deliberate per
+   * §5.6: a policy may refuse an operation without anyone spending cycles
+   * validating an input schema against untrusted content. The input reaching
+   * a policy here is the already-parsed JSON-RPC `params.arguments` — the
+   * transport parses the body once, and nothing between that parse and this
+   * point coerces it, so "safely decoded, no schema-driven coercion" holds by
+   * construction rather than by a decode step here.
+   */
+  private async authorizeByPolicy(
+    context: DispatchContext,
+    operation: OperationDefinition,
+    command: OperationCommand,
+  ): Promise<OperationResult | null> {
+    if (!this.authorization) return null;
+
+    const outcome = await this.authorization.authorize({
+      operation,
+      registryHash: context.registryHash,
+      input: command.input,
+      ...(context.principal === undefined ? {} : { principal: context.principal }),
+      ...(context.clientInfo === undefined ? {} : { clientInfo: context.clientInfo }),
+      ...(context.confirmation === undefined ? {} : { confirmation: context.confirmation }),
+    });
+
+    if (outcome.kind === 'allow') return null;
+    return { ok: false, error: outcome.error };
   }
 
   private async authorize(

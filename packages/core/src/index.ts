@@ -80,3 +80,4 @@ export {
 } from './policy/index.js';
 export type { DispatcherOptions } from './dispatcher/index.js';
 export * from './preset/index.js';
+export * from './reload/index.js';

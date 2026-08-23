@@ -66,17 +66,16 @@ app.use('/mcp', mcpFromOpenApi('./openapi.yaml'));
 
 ### 2. **Differentiation — Multiple sources, one model**
 
-Combine OpenAPI, framework routes, schemas, and direct handlers in a single server. Switch between execution strategies (direct handlers, HTTP proxy) without changing tool signatures.
+Combine OpenAPI specs and explicit TypeScript definitions in a single server. Switch between execution strategies (direct handlers, HTTP proxy) without changing tool signatures.
 
 ```ts
 // Mix multiple sources
-import { createMcpServer, fromOpenApi, fromDefinitions, fromExpress } from '@askturret/mcp';
+import { createMcpServer, fromOpenApi, fromDefinitions } from '@askturret/mcp';
 
 const server = createMcpServer({
   preset: 'production',
   sources: [
     fromOpenApi('./spec.yaml'),        // Discover from OpenAPI
-    fromExpress(app),                  // Discover from Express routes  
     fromDefinitions(customOps),        // Explicit TypeScript definitions
   ],
 });
@@ -158,10 +157,10 @@ Learn more: [Architecture documentation](docs/architecture-overview.md)
 | Source | Status | Example |
 |--------|--------|---------|
 | OpenAPI 3.0 / 3.1 | ✅ Stable | `fromOpenApi('./api.yaml')` |
-| Express routes | ✅ Stable | `fromExpress(app)` |
+| Express routes | 📋 Roadmap (v0.4) | — |
 | Explicit TypeScript | ✅ Stable | `fromDefinitions(ops)` |
 | Fastify routes | 📋 Roadmap (v0.4) | — |
-| JSON Schema | ✅ Stable | `fromSchema(schema)` |
+| JSON Schema | 📋 Roadmap (v0.4) | — |
 | HTTP proxy | ✅ Stable | `viaHttp({baseUrl: '...'})` |
 | Koa routes | 📋 Roadmap (v0.4) | — |
 | gRPC | 📋 Roadmap (future) | — |
@@ -281,7 +280,6 @@ app.use('/mcp', server.httpHandler());
 const server = createMcpServer({
   sources: [
     fromOpenApi('./public-api.yaml'),
-    fromExpress(app),
     fromDefinitions([
       {
         id: 'send-email',
@@ -304,11 +302,7 @@ const server = createMcpServer({
 
 ## Documentation
 
-- **[Quick Start](docs/quick-start.md)** — Get running in 5 minutes.
 - **[Architecture Overview](docs/architecture-overview.md)** — How AskTurret MCP works internally.
-- **[API Reference](docs/api.md)** — Detailed API documentation.
-- **[Policy Configuration](docs/policies.md)** — Write and compose policies.
-- **[Overlays and Customization](docs/overlays.md)** — Non-invasive modifications.
 - **[Compatibility Matrix](docs/compatibility.md)** — Supported Node, TypeScript, adapter, OpenAPI and MCP versions. A versioned contract.
 - **[Generated-Output Licensing](docs/generated-output-license.md)** — Who owns the output AskTurret produces. A versioned contract.
 - **[Telemetry Policy](docs/telemetry-policy.md)** — Zero telemetry by default; any future collection is opt-in only. A versioned contract.

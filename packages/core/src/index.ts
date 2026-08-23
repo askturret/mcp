@@ -87,6 +87,7 @@ export * from './diff/index.js';
 export * from './facade/index.js';
 export * from './bulkhead/index.js';
 export * from './retry/index.js';
+export * from './breaker/index.js';
 export {
   SNAPSHOT_FORMAT_VERSION,
   SnapshotFormatError,

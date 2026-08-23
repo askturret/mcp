@@ -86,6 +86,13 @@ const ALLOWLIST = [
   'packages/core/src/executor/via-http.ts',
   'packages/core/src/executor/http-request.ts',
 
+  // The HTTP audit sink (#48). POSTs to a collector URL the adopter supplied;
+  // the sink does not exist until they construct it with that URL, so it
+  // cannot produce traffic nobody asked for. Same category as via-http above.
+  // Listed as a single FILE rather than a directory so anything else added
+  // under src/audit/ still trips this guard.
+  'packages/core/src/audit/sinks/http.ts',
+
   // MCP transports: serve the adopter's own clients.
   'packages/transports/src/',
 

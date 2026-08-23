@@ -401,3 +401,79 @@ describe('readiness reads live runtime state (§8.7)', () => {
     expect(transport.readiness().httpStatus).toBe(200);
   });
 });
+
+describe('audit flush on shutdown (#48 x §8.6 phase 5)', () => {
+  it('flushes the configured audit sink without an explicit flushAudit hook', async () => {
+    // The join between #47 and #48. #47 built phase 5 around the promise that
+    // audit outlives telemetry on shutdown; before a sink was wired in, that
+    // phase had nothing to flush and the promise was aspirational.
+    let flushed = 0;
+    const written: unknown[] = [];
+
+    const { transport, release } = gatedTransport({
+      auditSink: {
+        id: 'test',
+        append: async (event: unknown) => {
+          written.push(event);
+        },
+        flush: async () => {
+          flushed += 1;
+        },
+      },
+    });
+    release();
+
+    const result = await transport.close();
+
+    expect(flushed).toBe(1);
+    expect(result.auditFlushed).toBe(true);
+  });
+
+  it('persists buffered events before close() returns', async () => {
+    // §48's shutdown test: events still in the buffer when shutdown starts
+    // must all be durable by the time close() comes back.
+    const written: string[] = [];
+    const { bufferedSink } = await import('@askturret/mcp-core');
+
+    const sink = bufferedSink(
+      {
+        id: 'slow-disk',
+        append: async (event: { eventId: string }) => {
+          await new Promise((resolve) => setTimeout(resolve, 1));
+          written.push(event.eventId);
+        },
+        flush: async () => undefined,
+      } as never,
+      { maxBufferSize: 500 },
+    );
+
+    const { transport, release } = gatedTransport({ auditSink: sink });
+    release();
+
+    const calls = Array.from({ length: 20 }, (_, i) => callTool(transport, `req-${i}`));
+    await Promise.all(calls.map((c) => c.done));
+
+    // Some writes are still queued at this point; close() must land them all.
+    await transport.close();
+
+    expect(written).toHaveLength(20);
+  });
+
+  it('an explicit flushAudit hook still wins over the sink', async () => {
+    let hookCalls = 0;
+    let sinkFlushes = 0;
+
+    const { transport, release } = gatedTransport({
+      flushAudit: async () => {
+        hookCalls += 1;
+      },
+      auditSink: { id: 't', append: async () => undefined, flush: async () => { sinkFlushes += 1; } },
+    });
+    release();
+
+    await transport.close();
+
+    expect(hookCalls).toBe(1);
+    expect(sinkFlushes).toBe(0);
+  });
+});

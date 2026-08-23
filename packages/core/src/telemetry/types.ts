@@ -142,6 +142,9 @@ export const METRIC = {
   bulkheadRejectedTotal: 'mcp_bulkhead_rejected_total',
   retryAttemptsTotal: 'mcp_retry_attempts_total',
   retryExhaustedTotal: 'mcp_retry_exhausted_total',
+  auditAppendsTotal: 'mcp_audit_appends_total',
+  auditBufferSize: 'mcp_audit_buffer_size',
+  auditDroppedTotal: 'mcp_audit_dropped_total',
 } as const;
 
 export type MetricName = (typeof METRIC)[keyof typeof METRIC];
@@ -273,6 +276,30 @@ export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
       'Calls that ran out of retry budget, labelled by the error finally returned (#45). ' +
       'Distinguishes "retried and still failed" from "failed once and was not eligible", ' +
       'which look identical in mcp_tool_errors_total.',
+  },
+  {
+    name: METRIC.auditAppendsTotal,
+    kind: 'counter',
+    labels: ['sink', 'outcome'],
+    description: 'Audit records written, by sink and whether the write succeeded (#48).',
+  },
+  {
+    name: METRIC.auditBufferSize,
+    kind: 'gauge',
+    labels: ['sink'],
+    description:
+      'Events buffered in memory per sink (#48). A gauge sitting near the configured bound ' +
+      'means dispatch is being back-pressured by audit — intended behaviour, but not a ' +
+      'state to leave running.',
+  },
+  {
+    name: METRIC.auditDroppedTotal,
+    kind: 'counter',
+    labels: ['sink'],
+    description:
+      'Audit records DISCARDED because the buffer overflowed in drop mode (#48). Any ' +
+      'non-zero value means the deployment is configured to violate the audit delivery ' +
+      'guarantee — §48 requires this to be alertable and its loudness un-suppressable.',
   },
 ];
 

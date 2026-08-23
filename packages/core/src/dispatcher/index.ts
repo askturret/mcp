@@ -37,6 +37,7 @@ import {
   type BulkheadRegistry,
   type BulkheadsConfig,
 } from '../bulkhead/index.js';
+import { buildAuditEvent, type AuditSink } from '../audit/index.js';
 import {
   createBreakerRegistry,
   type BreakerRegistry,
@@ -71,6 +72,21 @@ const MCP_PROTOCOL_VERSION = '2025-06-18';
 
 /** The single MCP method v0.2 instruments end-to-end. */
 const MCP_METHOD = 'tools/call';
+
+/**
+ * Mutable per-dispatch audit bookkeeping (#48).
+ *
+ * Threaded rather than stored on the instance: a dispatcher serves concurrent
+ * calls, and instance state here would let two requests overwrite each
+ * other's decision — producing an audit record that attributes one call's
+ * outcome to another's policy decision.
+ */
+interface AuditTrace {
+  audited: boolean;
+  decision: string;
+  registryHash?: string;
+  readonly startedAt: number;
+}
 
 /**
  * Command dispatcher interface
@@ -197,6 +213,16 @@ export interface DispatcherOptions {
    * for blast-radius containment is an operator's call, not an upgrade's.
    */
   readonly breakers?: BreakersConfig;
+
+  /**
+   * Audit sink with mandatory-delivery semantics (#48, §9.3).
+   *
+   * Absent means stage 11 keeps its pre-#48 behaviour: the `audit` hook runs
+   * and nothing else. The hook has no delivery guarantee and never claimed
+   * one; configuring a sink is what turns §8.6 phase 5's promise -- that
+   * audit outlives telemetry on shutdown -- into something real.
+   */
+  readonly auditSink?: AuditSink;
 }
 
 /**
@@ -231,6 +257,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   private readonly bulkheads: BulkheadRegistry;
   private readonly retry: RetryConfig | undefined;
   private readonly breakers: BreakerRegistry | undefined;
+  private readonly auditSink: AuditSink | undefined;
 
   /** In-flight count per tool, backing `mcp_tool_inflight` (§9.2). */
   private readonly inflight = new Map<string, number>();
@@ -243,6 +270,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   ) {
     this.authorization = options?.authorization;
     this.retry = options?.retry;
+    this.auditSink = options?.auditSink;
     this.logger = options?.logger ?? createLogger();
     this.tracer = options?.observability?.tracer ?? noopTracer;
     this.metrics = options?.observability?.metrics ?? noopMetricRecorder;
@@ -393,9 +421,51 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     this.metrics.set(METRIC.toolInflight, Math.max(0, next), { tool });
   }
 
+  /**
+   * Stage 11 must see EVERY outcome, not just the ones with an inline call.
+   *
+   * The denial paths audit inline, because only they know which decision was
+   * made. Everything else — invalid input, bulkhead overflow, an executor
+   * failure, the internal-error catch — used to return without producing any
+   * audit record at all, so the log contained successes and refusals but not
+   * failures. That is the shape of log an investigator finds least useful:
+   * the events worth investigating are exactly the ones missing.
+   *
+   * Handled with a single audited exit rather than an audit call at each of
+   * the eight-or-so early returns, so a NEW early return added later is
+   * covered by construction instead of by remembering.
+   */
   private async dispatchInstrumented(
     command: OperationCommand,
     toolSpan: Span,
+  ): Promise<MCPResult> {
+    const audit: AuditTrace = { audited: false, decision: 'not_evaluated', startedAt: Date.now() };
+
+    const result = await this.runEnvelope(command, toolSpan, audit);
+
+    if (!audit.audited && this.auditSink !== undefined) {
+      await this.auditSink.append(
+        buildAuditEvent({
+          requestId: command.requestId,
+          ...(command.traceId === undefined ? {} : { traceId: command.traceId }),
+          ...(command.principal === undefined ? {} : { principalId: command.principal.id }),
+          operationId: command.operationId,
+          registryHash: audit.registryHash ?? command.registryHash ?? 'unknown',
+          policyDecision: audit.decision,
+          input: command.input,
+          outcome: result.isError ? (result.error?.code ?? 'INTERNAL_ERROR') : 'success',
+          durationMs: Date.now() - audit.startedAt,
+        }),
+      );
+    }
+
+    return result;
+  }
+
+  private async runEnvelope(
+    command: OperationCommand,
+    toolSpan: Span,
+    auditTrace: AuditTrace,
   ): Promise<MCPResult> {
     // Declared out here so the `finally` can release it on EVERY exit path —
     // success, mapped error, and the internal-error catch alike. A slot leaked
@@ -431,6 +501,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         });
       }
 
+      auditTrace.registryHash = snapshot.hash;
       this.logStage(log, 1, { operationCount: snapshot.operations.size });
 
       // Short form (§9.1, Epic #1 #12): the full hash would be a high-
@@ -496,7 +567,20 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         // Denials are audited. Stage 11 only ever ran on the success path, so
         // without this a refusal left no trace — the one event an audit log
         // most needs to contain.
-        await this.audit(contextWithPrincipal, policyOutcome);
+        await this.audit(contextWithPrincipal, policyOutcome, {
+          // A confirmation challenge is NOT a denial. Recording both as
+          // 'deny' would make an audit log unable to distinguish "refused"
+          // from "asked the caller to confirm", which are different events
+          // with different follow-ups.
+          policyDecision:
+            !policyOutcome.ok && policyOutcome.error.code === 'CONFIRMATION_REQUIRED'
+              ? 'confirmation_required'
+              : 'deny',
+          input: command.input,
+          startedAt: auditTrace.startedAt,
+          trace: auditTrace,
+          traceId: command.traceId,
+        });
         this.logStage(log, 11, { outcome: 'policy-denied' });
         return this.mapResult(policyOutcome);
       }
@@ -511,7 +595,13 @@ class DefaultCommandDispatcher implements CommandDispatcher {
           decision: 'deny',
         });
         this.logStage(log, 3, { outcome: 'hook-short-circuit' });
-        await this.audit(contextWithPrincipal, authDecision.result);
+        await this.audit(contextWithPrincipal, authDecision.result, {
+          policyDecision: 'deny',
+          input: command.input,
+          startedAt: auditTrace.startedAt,
+          trace: auditTrace,
+          traceId: command.traceId,
+        });
         this.logStage(log, 11, { outcome: 'hook-short-circuit' });
         return this.mapResult(authDecision.result);
       }
@@ -523,6 +613,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         phase: 'invocation',
         decision: 'allow',
       });
+      auditTrace.decision = 'allow';
       this.logStage(log, 3, { outcome: 'allowed' });
 
       // STAGE 4: Validate input
@@ -658,7 +749,13 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       // must not change under existing queries when the behaviour lands.
       const finalResult: OperationResult = { ok: true, value: redacted };
       const auditSpan = toolSpan.startChild('audit.append');
-      await this.audit(contextWithPrincipal, finalResult);
+      await this.audit(contextWithPrincipal, finalResult, {
+        policyDecision: 'allow',
+        input: command.input,
+        startedAt: auditTrace.startedAt,
+          trace: auditTrace,
+        traceId: command.traceId,
+      });
       auditSpan.setOutcome('success');
       auditSpan.end();
       this.logStage(log, 11, { outcome: 'audited' });
@@ -1035,14 +1132,55 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     return value;
   }
 
+  /**
+   * Stage 11 — the ONLY audit channel (#48).
+   *
+   * Both the legacy hook and the sink run, in that order. The hook predates
+   * #48 and carries no delivery guarantee; the sink is the mandatory-delivery
+   * path. Keeping both means an adopter already using the hook is not broken
+   * by configuring a sink, and the two are not alternatives — the hook is a
+   * notification, the sink is the record.
+   *
+   * `append` is AWAITED, and that is the back-pressure §48 asks for: when the
+   * buffer is full in block mode this call does not resolve until a slot
+   * frees, so dispatch slows to the rate audit can be written. A fire-and-
+   * forget append here would make the bound decorative.
+   */
   private async audit(
     context: DispatchContext,
     result: OperationResult,
+    details: {
+      policyDecision: string;
+      input: unknown;
+      startedAt: number;
+      traceId?: string | undefined;
+      trace: AuditTrace;
+    },
   ): Promise<void> {
     if (this.hooks.audit) {
       await this.hooks.audit(context, result);
     }
-    // v0.1: no-op sink
+
+    details.trace.audited = true;
+
+    if (this.auditSink === undefined) return;
+
+    const event = buildAuditEvent({
+      requestId: context.requestId,
+      // Carried in `details` rather than read off the context: `traceId` lives
+      // on the COMMAND and was never threaded onto `DispatchContext`. Adding
+      // it there would be the tidier fix and a wider change than #48 needs.
+      ...(details.traceId === undefined ? {} : { traceId: details.traceId }),
+      ...(context.principal === undefined ? {} : { principalId: context.principal.id }),
+      operationId: context.operationId,
+      registryHash: context.registryHash,
+      policyDecision: details.policyDecision,
+      input: details.input,
+      outcome: result.ok ? 'success' : result.error.code,
+      durationMs: Date.now() - details.startedAt,
+    });
+
+    await this.auditSink.append(event);
   }
 
   // ============================================================================

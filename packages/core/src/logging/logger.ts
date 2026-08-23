@@ -19,6 +19,7 @@ import {
   type StructuredLogger,
 } from './types.js';
 import { redactWithGaps, type RedactionGap } from './redaction.js';
+import { redactLogFields } from '../redaction/surfaces.js';
 
 /**
  * Default sink: one JSON line on stdout.
@@ -121,9 +122,20 @@ class JsonLogger implements StructuredLogger {
       emitted = this.redact(merged);
     } else {
       const result = redactWithGaps(merged);
+      // #38's pass still runs, so its gap warnings keep firing: the signal
+      // that motivated #49 stays observable even now that #49 acts on it.
       emitted = result.fields;
       gaps = result.gaps;
     }
+
+    // Surface 1 of §9.4, applied to BOTH branches.
+    //
+    // A caller-supplied `redact` cannot opt out of the central pipeline. The
+    // point of §9.4 is that there is exactly one place data leaves the
+    // process, and a hook able to bypass it would make that claim false for
+    // precisely the deployments that customised logging. Running last means a
+    // custom function may redact MORE, never less.
+    emitted = redactLogFields(emitted);
 
     this.sink({
       level,

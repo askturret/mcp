@@ -145,6 +145,7 @@ export const METRIC = {
   auditAppendsTotal: 'mcp_audit_appends_total',
   auditBufferSize: 'mcp_audit_buffer_size',
   auditDroppedTotal: 'mcp_audit_dropped_total',
+  redactionHitsTotal: 'mcp_redaction_hits_total',
 } as const;
 
 export type MetricName = (typeof METRIC)[keyof typeof METRIC];
@@ -300,6 +301,15 @@ export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
       'Audit records DISCARDED because the buffer overflowed in drop mode (#48). Any ' +
       'non-zero value means the deployment is configured to violate the audit delivery ' +
       'guarantee — §48 requires this to be alertable and its loudness un-suppressable.',
+  },
+  {
+    name: METRIC.redactionHitsTotal,
+    kind: 'counter',
+    labels: ['rule', 'surface'],
+    description:
+      'Redactions applied, by rule and observable surface (#49). Lets an operator see ' +
+      'which rules are firing and where — a rule that never fires is either dead or ' +
+      'guarding something that stopped happening, and both are worth knowing.',
   },
 ];
 

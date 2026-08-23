@@ -4,6 +4,7 @@
  */
 
 import { assertLabelsAllowed } from './cardinality.js';
+import { redactMetricLabels } from '../redaction/surfaces.js';
 import {
   METRIC,
   type MetricLabels,
@@ -50,7 +51,10 @@ export function createRecordingMetricRecorder(): RecordingMetricRecorder {
   const push = (kind: RecordedSample['kind']) =>
     (name: MetricName, value: number, labels: MetricLabels): void => {
       assertLabelsAllowed(name, labels);
-      samples.push({ metric: name, kind, value, labels: { ...labels } });
+      // Surface 3 of §9.4. A leaked metric label is worse than a leaked log
+      // line: it becomes an indexed time series that outlives log rotation
+      // and is far harder to delete.
+      samples.push({ metric: name, kind, value, labels: redactMetricLabels(labels) });
     };
 
   return {

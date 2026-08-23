@@ -16,11 +16,11 @@ permissions:
   contents: read
 
 jobs:
-  # Licence review and SBOM share a checkout and an `npm install`, so they run
+  # Licence review and SBOM share a checkout and an `npm ci`, so they run
   # as one job rather than two. That is not only faster: this repository's Test
   # workflow already schedules 17 jobs per PR, and jobs were being failed at
   # "Set up job" with no runner assigned once the account ran out of concurrent
-  # capacity. Two runner slots for one npm install is a cost worth not paying.
+  # capacity. Two runner slots for one install is a cost worth not paying.
   supply-chain:
     name: Licence review and SBOM
     runs-on: ubuntu-latest
@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
 
       # The policy evaluator decides what ships, so verify it before trusting
       # its verdict on the real tree.
@@ -105,7 +105,7 @@ jobs:
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
-      - run: npm install
+      - run: npm ci
       - run: npm run build
 
       # --provenance requires id-token: write above and a registry that accepts

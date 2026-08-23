@@ -5,6 +5,7 @@
 
 import type {
   AuditSink,
+  BreakerStats,
   BreakersConfig,
   BulkheadsConfig,
   HealthReport,
@@ -292,4 +293,17 @@ export interface HttpTransport {
 
   /** Event-loop responsiveness for `/health/live` (§8.7). */
   liveness(): Promise<HealthReport>;
+
+  /**
+   * Current state of every configured circuit breaker (#46, §8.5).
+   *
+   * Forwarded from the dispatcher. #46 added this read seam for #56's
+   * Explorer work, but only on `CommandDispatcher` — which the transport
+   * constructs and keeps private, so no adopter could reach it. Same shape of
+   * gap as the `bulkheads` / `retry` / `breakers` options each needed closing
+   * for: a seam that exists only on an object nobody holds is configurable in
+   * theory. Surfaced while building #51, which needs it to observe breaker
+   * state during a load scenario.
+   */
+  breakerStats(): readonly BreakerStats[];
 }

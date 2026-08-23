@@ -1,0 +1,33 @@
+{
+  "name": "@askturret/mcp-reliability",
+  "version": "0.1.0",
+  "description": "Reliability tier - load, chaos and shutdown/reload scenarios over the resilience primitives",
+  "type": "module",
+  "private": true,
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "reliability": "node bin/run.mjs",
+    "lint": "echo \"Linting not yet configured\""
+  },
+  "dependencies": {
+    "@askturret/mcp-core": "*",
+    "@askturret/mcp-transports": "*"
+  },
+  "devDependencies": {
+    "@jest/globals": "^29.7.0",
+    "@types/node": "^20.14.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
+    "typescript": "*"
+  }
+}

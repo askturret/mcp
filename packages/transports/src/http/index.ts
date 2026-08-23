@@ -20,7 +20,12 @@ import type {
   ClientInfo,
   VisibilityEngine,
 } from '@askturret/mcp-core';
-import type { HealthReport, ReloadController, ShutdownResult } from '@askturret/mcp-core';
+import type {
+  BreakerStats,
+  HealthReport,
+  ReloadController,
+  ShutdownResult,
+} from '@askturret/mcp-core';
 import {
   DEFAULT_LIVENESS_BUDGET_MS,
   createAuthorizationEngine,
@@ -819,6 +824,11 @@ class StreamableHttpTransport implements HttpTransport {
   /** Event-loop responsiveness (§8.7). */
   async liveness(): Promise<HealthReport> {
     return evaluateLiveness(this.livenessBudgetMs);
+  }
+
+  /** Breaker state, forwarded from the dispatcher (#46). */
+  breakerStats(): readonly BreakerStats[] {
+    return this.dispatcher.breakerStats();
   }
 
   private hasRegistrySnapshot(): boolean {

@@ -24,6 +24,7 @@ jobs:
       observability: ${{ steps.filter.outputs.observability }}
       explorer: ${{ steps.filter.outputs.explorer }}
       cli: ${{ steps.filter.outputs.cli }}
+      reliability: ${{ steps.filter.outputs.reliability }}
       workspace: ${{ steps.filter.outputs.workspace }}
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +52,15 @@ jobs:
               - 'packages/adapter-conformance/**'
               - 'packages/adapters-express/**'
               - 'packages/adapters-fastify/**'
+              - 'packages/core/**'
+              - 'packages/transports/**'
+            reliability:
+              # The suite asserts on INTERACTIONS between the resilience
+              # primitives, so it must re-run when any of them changes — not
+              # merely when its own directory does. Narrowing this to
+              # packages/reliability/** would let a bulkhead or breaker change
+              # silently alter a seam the suite exists to guard.
+              - 'packages/reliability/**'
               - 'packages/core/**'
               - 'packages/transports/**'
             sources-openapi:
@@ -195,7 +205,46 @@ jobs:
       - run: npm run build -w packages/core -w packages/cli
       - run: npm test --workspace=packages/cli
 
+  # Reliability tier — load, chaos, shutdown/reload (#51)
+  #
+  # Runs at PR SCALE here. §51 asks for load and chaos on merge rather than on
+  # every PR because they are slow; the scaled run keeps the SHAPE of every
+  # scenario verified on each change, and the nightly workflow carries the
+  # load figures.
+  test-reliability:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.reliability == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run build -w packages/core -w packages/transports -w packages/reliability
+      - run: npm test --workspace=packages/reliability
+
   # Status wrapper jobs for merge-coverage gate
+  reliability-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-reliability]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.reliability }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-reliability.result }}" == "success" ]; then
+              echo "Reliability suite passed"
+              exit 0
+            else
+              echo "Reliability suite failed or was cancelled"
+              exit 1
+            fi
+          else
+            echo "Reliability suite skipped (no changes)"
+            exit 0
+          fi
+
   core-status:
     runs-on: ubuntu-latest
     needs: [changes, test-core]

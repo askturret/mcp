@@ -120,6 +120,16 @@ export interface HarnessOptions {
   readonly retry?: RetryConfig;
   readonly auditSink?: Parameters<typeof createHttpTransport>[0]['auditSink'];
   readonly flushAudit?: () => Promise<void>;
+
+  /**
+   * Per-call deadline (§44). The transport races dispatch against this and
+   * returns `TIMEOUT` when it wins.
+   *
+   * Exposed because the default is 30s, and a scenario that had to wait that
+   * long to observe a deadline would never be run per-PR — so "deadlines fire
+   * correctly" would stay an untested claim, which is exactly what it was.
+   */
+  readonly deadlineMs?: number;
 }
 
 export interface Harness {
@@ -196,6 +206,7 @@ export function createHarness(options: HarnessOptions): Harness {
     ...(options.retry === undefined ? {} : { retry: options.retry }),
     ...(options.auditSink === undefined ? {} : { auditSink: options.auditSink }),
     ...(options.flushAudit === undefined ? {} : { flushAudit: options.flushAudit }),
+    ...(options.deadlineMs === undefined ? {} : { deadlineMs: options.deadlineMs }),
   } as Parameters<typeof createHttpTransport>[0]);
 
   let sequence = 0;

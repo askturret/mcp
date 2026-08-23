@@ -148,6 +148,18 @@ describe('reload x drain — a swap lands mid-shutdown', () => {
     // one published while it was draining. The audit path composes its record
     // after the executor returns, so this is where a mid-flight re-read would
     // actually show up.
+    //
+    // VERIFIED GUARD — not merely a regression witness (QA round 1, item 4).
+    // The original PR labelled the whole scenario a "witness" because four
+    // mutations aimed at the CONTEXT path failed to go red. That much was
+    // correct, and for a good reason: that guarantee is structural, since the
+    // snapshot is captured once and threaded as immutable data, leaving no
+    // live reference to re-read.
+    //
+    // The AUDIT path is not structural, and it DOES go red. Replacing
+    // `registryHash: context.registryHash` with `this.registry.current().hash`
+    // in the dispatcher's audit-record builder fails exactly this assertion,
+    // and only this one. QA was right that the weaker label undersold it.
     expect(result.auditHashes.length).toBeGreaterThan(0);
     expect(new Set(result.auditHashes)).toEqual(new Set([result.hashAtEntry]));
   });

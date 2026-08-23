@@ -48,6 +48,22 @@ export {
 } from './scenarios/lifecycle.js';
 
 export {
+  deadlineFiresOnHungUpstream,
+  fastCallBeatsItsDeadline,
+  queuedCallsStillHitTheirDeadline,
+  type DeadlineResult,
+  type DeadlineUnderSaturationResult,
+} from './scenarios/deadlines.js';
+
+export {
+  loadPetstoreOperations,
+  petstoreLayers,
+  petstoreSpecPath,
+  type PetstoreLayerResult,
+  type PetstoreSuiteResult,
+} from './scenarios/petstore.js';
+
+export {
   buildGoldenDashboard,
   renderGoldenDashboard,
   type GrafanaDashboard,

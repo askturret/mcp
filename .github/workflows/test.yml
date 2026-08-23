@@ -63,6 +63,11 @@ jobs:
               - 'packages/reliability/**'
               - 'packages/core/**'
               - 'packages/transports/**'
+              # The reference-Petstore layer compiles this spec through the
+              # OpenAPI source, so a change to either can break the suite
+              # without touching anything above it.
+              - 'packages/sources-openapi/**'
+              - 'examples/petstore-light/**'
             sources-openapi:
               - 'packages/sources-openapi/**'
             transports:

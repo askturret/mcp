@@ -88,6 +88,8 @@ export * from './facade/index.js';
 export * from './bulkhead/index.js';
 export * from './retry/index.js';
 export * from './breaker/index.js';
+export * from './lifecycle/index.js';
+export * from './health/index.js';
 export {
   SNAPSHOT_FORMAT_VERSION,
   SnapshotFormatError,

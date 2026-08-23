@@ -214,6 +214,61 @@ describe('sanitizeErrorText', () => {
     expect(sanitizeErrorText('http://127.0.0.1:1/mcp')).toBe('http://127.0.0.1:1/mcp');
   });
 
+  // Tester's round-4 cases, verbatim. Each leaked before the matcher was
+  // rewritten; the first did worse than leak — it mangled
+  // `/srv/Acme Holdings/private/spec.yaml` into `Acme Holdingsspec.yaml`,
+  // exposing the directory name AND corrupting the filename.
+  it.each([
+    ["ENOENT: no such file or directory, open '/srv/Acme Holdings/private/spec.yaml'", 'Acme Holdings'],
+    ['Error opening file "/srv/Acme Holdings/private/spec.yaml"', 'Acme Holdings'],
+    ['cannot read /srv/Acme Holdings/private/spec.yaml', 'Acme Holdings'],
+    ["ENOENT: open 'C:\\Program Files\\Acme Corp\\spec.yaml'", 'Program Files'],
+    ['cannot read C:\\Program Files\\Acme Corp\\spec.yaml', 'Program Files'],
+    ['failed for file:///srv/customer-acme/private/spec.yaml', 'customer-acme'],
+  ])('strips the directory from %s', (message, leaked) => {
+    const out = sanitizeErrorText(message);
+
+    expect(out).not.toContain(leaked);
+    // …and the basename survives, so the failure stays diagnosable.
+    expect(out).toContain('spec.yaml');
+  });
+
+  it('never emits the literal "null" for a file: URL', () => {
+    // `url.origin` is the string "null" for file:, so building from it
+    // produced `null/srv/customer-acme/private/spec.yaml` — the full path,
+    // leaked, with a stray "null" in front.
+    expect(sanitizeErrorText('failed for file:///srv/customer-acme/x.log')).not.toContain('null');
+  });
+
+  it('handles a quoted path whose FILENAME contains spaces', () => {
+    // What the quoted pass is for, once the unquoted rules also allow spaces.
+    // The unquoted rules require the final segment to be space-free (so they
+    // do not eat trailing prose), which leaves a spaced FILENAME only
+    // partially reduced. Quotes delimit unambiguously, so this pass can take
+    // the whole thing.
+    const out = sanitizeErrorText("open '/srv/private-client/my spec file.yaml'");
+
+    expect(out).not.toContain('private-client');
+    expect(out).toBe("open 'my spec file.yaml'");
+  });
+
+  it('does not swallow the prose after a path', () => {
+    // Allowing spaces inside path runs risks over-consuming. Spaces are
+    // permitted only in segments FOLLOWED by a separator, so the run ends at
+    // the filename.
+    expect(sanitizeErrorText('/srv/x/spec.yaml is missing and the server is unhappy')).toBe(
+      'spec.yaml is missing and the server is unhappy',
+    );
+  });
+
+  it('reduces a Windows path regardless of the host OS', () => {
+    // node:path's basename is platform-bound; this must not depend on where
+    // the tool happens to run.
+    expect(sanitizeErrorText('open "C:\\Users\\First Last\\spec.yaml"')).toBe(
+      'open "spec.yaml"',
+    );
+  });
+
   it('reduces absolute POSIX paths to basenames', () => {
     expect(sanitizeErrorText("open '/tmp/private/a/b/spec.yaml'")).toBe("open 'spec.yaml'");
   });
@@ -550,8 +605,12 @@ describe('argument parsing', () => {
 });
 
 describe('bundle helpers', () => {
-  it('reduces paths to basenames', () => {
-    expect(pathBasenames(['/a/b/c.ts', 'd.ts'])).toEqual(['c.ts', 'd.ts']);
+  it('reduces paths to basenames, both separator styles', () => {
+    expect(pathBasenames(['/a/b/c.ts', 'd.ts', 'C:\\Program Files\\x\\e.ts'])).toEqual([
+      'c.ts',
+      'd.ts',
+      'e.ts',
+    ]);
   });
 
   it('writes a real file end to end', async () => {

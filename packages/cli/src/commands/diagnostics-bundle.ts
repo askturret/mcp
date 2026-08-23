@@ -9,7 +9,6 @@
  * precisely how that claim stops being true.
  */
 
-import { basename } from 'node:path';
 import { redactValue } from '@askturret/mcp-core';
 
 import type { TarEntry } from './diagnostics-tar.js';
@@ -111,8 +110,55 @@ export function scrubFreeText(line: string): string {
  * never chewed up by the path branch, which would otherwise reduce
  * `http://host/a/b/mcp` to `mcp`.
  */
-const SENSITIVE_IN_ERRORS =
-  /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s'"<>]+)|(\/(?:[^\s'"<>]+\/)+[^\s'"<>/]+)|([A-Za-z]:\\(?:[^\s'"<>]+\\)+[^\s'"<>\\]+)/g;
+const URL_RUN = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s'"<>]+/;
+
+/**
+ * An absolute path, ALLOWING SPACES in directory names.
+ *
+ * The previous character class stopped at any whitespace, so
+ * `/srv/Acme Holdings/private/spec.yaml` was not merely missed — it was
+ * mangled into `Acme Holdingsspec.yaml`, leaking the directory name while
+ * corrupting the filename. On Windows spaces are the NORMAL shape
+ * (`Program Files`), so the matcher essentially never fired there.
+ *
+ * Spaces are allowed only in INTERMEDIATE segments — those followed by a
+ * separator. The final segment must be space-free, which is what stops the
+ * run swallowing the prose after it: in `/srv/x/spec.yaml is missing`,
+ * nothing after `spec.yaml` reaches another separator, so the match ends
+ * there.
+ *
+ * A filename that itself contains spaces is therefore only partly consumed —
+ * `/srv/private/my spec.yaml` reduces to `my spec.yaml`. Every DIRECTORY is
+ * still stripped, which is what the guarantee is about; the residue is the
+ * filename the operator already knows.
+ */
+const POSIX_RUN = /\/(?:[^\s/'"<>]+(?: +[^\s/'"<>]+)*\/)+[^\s/'"<>]+/;
+const WINDOWS_RUN = /[A-Za-z]:\\(?:[^\s\\/'"<>]+(?: +[^\s\\/'"<>]+)*\\)+[^\s\\/'"<>]+/;
+
+const UNQUOTED = new RegExp(
+  `(${URL_RUN.source})|(${POSIX_RUN.source})|(${WINDOWS_RUN.source})`,
+  'g',
+);
+
+/**
+ * Last path segment, for BOTH separator styles.
+ *
+ * Not `node:path`'s `basename`, which is platform-bound: on POSIX it treats a
+ * backslash as an ordinary character, so a Windows-shaped path arrives back
+ * unchanged.
+ *
+ * To be accurate about how much this one buys: on a real Windows run
+ * `node:path` IS the win32 implementation, so separators would have been
+ * handled there anyway. The gap that actually bit was SPACES in the matcher
+ * above, not the separator. This helper is the cheaper-to-reason-about choice
+ * rather than a second bug fixed — it makes the result independent of which
+ * OS the tool happens to run on, which matters because a path string can
+ * reach us from a config file or an error message written elsewhere.
+ */
+function lastPathSegment(value: string): string {
+  const parts = value.split(/[/\\]/).filter((part) => part.length > 0);
+  return parts[parts.length - 1] ?? '[REDACTED:path]';
+}
 
 /**
  * Reduce a URL to scheme, host and path.
@@ -126,6 +172,13 @@ const SENSITIVE_IN_ERRORS =
 function sanitizeUrlText(raw: string): string {
   try {
     const url = new URL(raw);
+
+    // `file:` has NO origin — `url.origin` is the literal string "null" — so
+    // building from it produced `null/srv/customer-acme/private/spec.yaml`:
+    // the operator's full path, leaked, with a stray "null" in front. A file
+    // URL is a path wearing a scheme, so it gets the path treatment.
+    if (url.protocol === 'file:') return lastPathSegment(decodeURIComponent(url.pathname));
+
     const hadCredentials = url.username !== '' || url.password !== '';
     url.username = '';
     url.password = '';
@@ -138,13 +191,32 @@ function sanitizeUrlText(raw: string): string {
   }
 }
 
+/**
+ * ## There is deliberately no separate "quoted path" pass
+ *
+ * I wrote one — quotes delimit unambiguously, so it looked like the way to
+ * handle a path whose FILENAME contains spaces. Then I mutated it away and
+ * every test still passed, including the one written for that exact case.
+ *
+ * The reason is that quote characters are excluded from the path character
+ * classes, so a quoted path is matched by the unquoted rules anyway, and the
+ * directory segments are stripped either way. For `'/srv/private/my spec.yaml'`
+ * both routes produce `'my spec.yaml'` — the run simply stops at `my` and the
+ * remaining ` spec.yaml` is already-safe trailing text.
+ *
+ * So it added no security and no observable behaviour. Deleted rather than
+ * kept with a comment asserting it was load-bearing: an unfalsifiable branch
+ * in a security-relevant path is worse than none, because the next reader
+ * assumes it is doing something.
+ */
 export function sanitizeErrorText(text: string): string {
-  return text.replace(SENSITIVE_IN_ERRORS, (match, url: string, posix: string, win: string) => {
+  // URLs are matched FIRST in the alternation so a URL is consumed as a URL
+  // and never chewed up by the path branch, which would otherwise reduce
+  // `http://host/a/b/mcp` to `mcp`.
+  return text.replace(UNQUOTED, (match, url: string, posix: string, win: string) => {
     if (url !== undefined) return sanitizeUrlText(url);
-    // Same treatment the `paths` field already gets, applied to error text
-    // too — the README promises basenames, and that has to be true everywhere.
-    if (posix !== undefined) return basename(posix);
-    if (win !== undefined) return win.split('\\').pop() ?? '[REDACTED:path]';
+    if (posix !== undefined) return lastPathSegment(posix);
+    if (win !== undefined) return lastPathSegment(win);
     return match;
   });
 }
@@ -164,7 +236,9 @@ export function environmentNames(env: NodeJS.ProcessEnv = process.env): string[]
 
 /** Paths appear as basenames — directory layout is an information leak of its own. */
 export function pathBasenames(paths: readonly string[]): string[] {
-  return paths.map((path) => basename(path));
+  // Same helper as the error sanitiser, so the `paths` field and error text
+  // cannot disagree about what a basename is.
+  return paths.map((path) => lastPathSegment(path));
 }
 
 function truncateSchemas(tools: readonly unknown[], full: boolean): unknown[] {

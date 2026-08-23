@@ -17,11 +17,13 @@
 import type { EffectClassification } from '../types.js';
 import { allOf } from '../policy/combinators.js';
 import { authenticated, confirmationForEffects, permissionPolicy } from '../policy/builtins.js';
+import { regulatedPending, regulatedPreset } from './regulated.js';
 import type {
   PendingControl,
   PresetConfiguration,
   PresetDescription,
   ProductionPresetOptions,
+  RegulatedPresetOptions,
 } from './types.js';
 
 /** §10.2: confirmation applies to the write-risk classifications. */
@@ -133,9 +135,13 @@ export function productionPreset(options?: ProductionPresetOptions): PresetConfi
         confirmationForEffects(confirmFor),
       ]),
     },
-    audit: { enabled: true, sink: null },
+    audit: { enabled: true, sink: null, durability: 'optional' },
     outputValidation: 'strict',
-    redaction: 'required',
+    // `customReviewAcknowledged` is false here and that is not a refusal:
+    // §10.2 asks for the acknowledgement under Regulated only. Production
+    // carries the field so all three presets share one shape (ADR-007), with
+    // the value that is true of it — nobody has been asked to attest anything.
+    redaction: { mode: 'required', customReviewAcknowledged: false },
     reloadMode: 'degraded',
     transport: { session: 'stateless' },
     bounds: { ...PRODUCTION_BOUNDS },
@@ -152,8 +158,26 @@ export function productionPreset(options?: ProductionPresetOptions): PresetConfi
 export function describePreset(
   preset: 'production',
   options?: ProductionPresetOptions,
+): PresetDescription;
+export function describePreset(
+  preset: 'regulated',
+  options: RegulatedPresetOptions,
+): PresetDescription;
+export function describePreset(
+  preset: 'production' | 'regulated',
+  options?: ProductionPresetOptions | RegulatedPresetOptions,
 ): PresetDescription {
-  const { authorization, ...rest } = productionPreset(options);
+  // Regulated's options are REQUIRED — the overloads above enforce that at the
+  // type level, and this cast is where the two signatures meet. Passing them
+  // straight through means `describePreset('regulated', ...)` refuses exactly
+  // as `regulatedPreset(...)` does: describing a configuration that could never
+  // boot would be a strictly worse answer than the refusal.
+  const expanded =
+    preset === 'regulated'
+      ? regulatedPreset(options as RegulatedPresetOptions)
+      : productionPreset(options as ProductionPresetOptions | undefined);
+
+  const { authorization, ...rest } = expanded;
 
   return {
     preset,
@@ -161,7 +185,7 @@ export function describePreset(
       ...rest,
       authorization: { callTime: authorization.callTime, policy: authorization.policy.id },
     },
-    pending: PRODUCTION_PENDING,
+    pending: preset === 'regulated' ? regulatedPending() : PRODUCTION_PENDING,
   };
 }
 

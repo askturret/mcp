@@ -141,9 +141,14 @@ describe('the §10.2 expansion', () => {
         policy:
           'allOf(authenticated, permissionPolicy, confirmationForEffects(financial, destructive))',
       },
-      audit: { enabled: true, sink: null },
+      // `durability` and the redaction object arrived with the Regulated
+      // preset (#52). Production's meaning is unchanged — audit enabled with no
+      // durability requirement, redaction required — but all three presets must
+      // produce ONE shape, or ADR-007's "no divergent code paths" would hold
+      // only for the presets that happened to be scalars.
+      audit: { enabled: true, sink: null, durability: 'optional' },
       outputValidation: 'strict',
-      redaction: 'required',
+      redaction: { mode: 'required', customReviewAcknowledged: false },
       reloadMode: 'degraded',
       transport: { session: 'stateless' },
       bounds: { requestMaxBytes: 1048576, responseMaxBytes: 4194304, deadlineMs: 30000 },

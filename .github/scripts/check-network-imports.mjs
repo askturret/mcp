@@ -108,6 +108,13 @@ const ALLOWLIST = [
   // ONLY when the user passes an http(s) URL, and never for a file path, so
   // the address the user typed is itself the opt-in.
   'packages/cli/src/commands/diff.ts',
+  // `diagnostics --url …` snapshots a running server the user named (#50).
+  // Same category again, and if anything narrower: without `--url` the command
+  // makes no request at all, and the bundle it produces is written to disk for
+  // the operator to ship themselves. §13 is explicit that this tool does not
+  // call home, and the only address it ever contacts is the one typed on the
+  // command line.
+  'packages/cli/src/commands/diagnostics.ts',
 
   // The adapter conformance bank (#42). It starts a server on 127.0.0.1 and
   // then speaks JSON-RPC to it, which is the whole design: the suite proves

@@ -113,3 +113,27 @@ export function selectedAdapters(
   }
   return [requested];
 }
+
+/**
+ * A registered adapter, expressed as the public `AdapterUnderTest` shape the
+ * #54 kit consumes.
+ *
+ * A rename, not a reimplementation: `AdapterFactory` is already
+ * `(options) => Promise<{ url, close }>`, which is exactly
+ * `AdapterUnderTest.createServer`. So the kit drives the official adapters
+ * through the same public path a community adapter takes — no privileged
+ * route — while the framework-aware code that has to open a loopback socket
+ * stays in this package, which the network-import guard already allowlists for
+ * that reason.
+ *
+ * The kit is meant to be PUBLISHED, and the conformance package is not. Keeping
+ * `node:http` on this side of the boundary means a published package needs no
+ * network-guard exemption at all, which is a better answer than widening the
+ * allowlist to cover one.
+ */
+export function adapterUnderTest(name: string): {
+  readonly name: string;
+  createServer: AdapterFactory;
+} {
+  return { name, createServer: getAdapter(name) };
+}

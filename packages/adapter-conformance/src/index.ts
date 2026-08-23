@@ -9,6 +9,7 @@
 import './adapters.js';
 
 export {
+  adapterUnderTest,
   registerAdapter,
   registeredAdapters,
   getAdapter,

@@ -45,6 +45,14 @@ const FIXTURES: Record<RedactionSurface, unknown> = {
     tools: [{ id: 'createPet', description: 'Create', example: { password: SECRET } }],
   },
   error: { message: 'upstream rejected', details: { authorization: SECRET } },
+  // Added by #50, and ONLY because this table forced it: adding
+  // 'diagnostic-bundle' to the union produced a compile error naming the
+  // missing key before a single line of the CLI existed. That is the negative
+  // test §49 asked for, doing its job on its first real consumer.
+  'diagnostic-bundle': {
+    versions: { node: 'v20.11.0' },
+    env: { API_KEY: SECRET },
+  },
 };
 
 describe('every surface strips a known secret (§49 acceptance)', () => {
@@ -67,7 +75,7 @@ describe('every surface strips a known secret (§49 acceptance)', () => {
     // Between them, a new observable exit cannot be added without someone
     // being made to state how it redacts.
     expect(Object.keys(FIXTURES).sort()).toEqual([...REDACTION_SURFACES].sort());
-    expect(REDACTION_SURFACES).toHaveLength(6);
+    expect(REDACTION_SURFACES).toHaveLength(7);
   });
 });
 

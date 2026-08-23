@@ -7,6 +7,7 @@
 import { doctorCommand } from './commands/doctor.js';
 import { inspectCommand } from './commands/inspect.js';
 import { diffCommand } from './commands/diff.js';
+import { diagnosticsCommand } from './commands/diagnostics.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -29,6 +30,10 @@ async function main() {
 
     case 'diff':
       await diffCommand(args.slice(1));
+      break;
+
+    case 'diagnostics':
+      await diagnosticsCommand(args.slice(1));
       break;
 
     case 'help':
@@ -59,6 +64,7 @@ function printHelp() {
   console.log('  diff --before <a> --after <b>');
   console.log('                          Compare two registry snapshots and classify');
   console.log('                          changes as breaking or non-breaking');
+  console.log('  diagnostics --url <url> Produce a redacted support bundle');
   console.log('  help                    Show this help message');
   console.log('');
   console.log('Options:');
@@ -73,6 +79,7 @@ function printHelp() {
   console.log('  npx @askturret/mcp inspect --url ... --tool createOrder --dry-run');
   console.log('  npx @askturret/mcp diff --before before.json --after after.json');
   console.log('  npx @askturret/mcp diff --help    (classification rubric)');
+  console.log('  npx @askturret/mcp diagnostics --url http://localhost:7000/mcp --out ./bundle.tar.gz');
   console.log('');
 }
 

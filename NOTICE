@@ -58,7 +58,7 @@ Regenerate with: node .github/scripts/generate-notice.mjs
   etag@1.8.1                                  MIT
   express@4.22.2                              MIT
   fast-deep-equal@3.1.3                       MIT
-  fast-uri@3.1.5                              BSD-3-Clause
+  fast-uri@3.1.6                              BSD-3-Clause
   finalhandler@1.3.2                          MIT
   forwarded@0.2.0                             MIT
   fresh@0.5.2                                 MIT

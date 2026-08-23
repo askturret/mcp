@@ -61,7 +61,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
       - run: npm run build -w packages/core
       - run: npm test --workspace=packages/core
 
@@ -75,7 +75,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
       - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-express
       - run: npm test --workspace=packages/adapters-express
 
@@ -89,7 +89,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
       - run: npm run build -w packages/core -w packages/sources-openapi
       - run: npm test --workspace=packages/sources-openapi
 
@@ -103,7 +103,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
       - run: npm run build -w packages/core -w packages/transports
       - run: npm test --workspace=packages/transports
 
@@ -117,7 +117,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
       - run: npm run build -w packages/core -w packages/observability
       - run: npm test --workspace=packages/observability
 
@@ -131,7 +131,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
       - run: npm run build -w packages/core -w packages/explorer
       - run: npm test --workspace=packages/explorer
 
@@ -145,7 +145,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
       - run: npm run build -w packages/core -w packages/cli
       - run: npm test --workspace=packages/cli
 
@@ -328,7 +328,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+      - run: npm ci
 
       # Guards first: if the checkers themselves are broken, the results below
       # are meaningless.

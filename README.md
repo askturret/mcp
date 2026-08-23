@@ -292,7 +292,8 @@ Composable form, identical in shape to the Express one:
 
 ```ts
 import { fastifyMcp } from '@askturret/mcp/fastify';
-import { fromOpenApi, viaHttp } from '@askturret/mcp';
+import { fromOpenApi } from '@askturret/mcp/openapi';
+import { viaHttp } from '@askturret/mcp';
 
 await app.register(
   fastifyMcp({

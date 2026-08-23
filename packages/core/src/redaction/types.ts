@@ -24,7 +24,8 @@ export type RedactionSurface =
   | 'metric'
   | 'audit'
   | 'explorer'
-  | 'error';
+  | 'error'
+  | 'diagnostic-bundle';
 
 /** Every surface, for exhaustive iteration. Kept in sync by the type below. */
 export const REDACTION_SURFACES = [
@@ -34,6 +35,7 @@ export const REDACTION_SURFACES = [
   'audit',
   'explorer',
   'error',
+  'diagnostic-bundle',
 ] as const satisfies readonly RedactionSurface[];
 
 export interface RedactionContext {

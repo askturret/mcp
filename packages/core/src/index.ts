@@ -86,6 +86,7 @@ export * from './telemetry/index.js';
 export * from './diff/index.js';
 export * from './facade/index.js';
 export * from './bulkhead/index.js';
+export * from './retry/index.js';
 export {
   SNAPSHOT_FORMAT_VERSION,
   SnapshotFormatError,

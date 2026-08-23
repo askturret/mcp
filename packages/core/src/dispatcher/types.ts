@@ -54,6 +54,18 @@ export interface DispatchContext {
   readonly confirmation?: ConfirmationProof;
 
   /**
+   * Client-supplied idempotency key, carried from the command (§8.4, #45).
+   *
+   * The runtime does NOT persist or interpret these — deduplication is the
+   * upstream's job. This exists so the key can REACH the upstream: `viaHttp`
+   * sends it as an `Idempotency-Key` header, and `viaHandler` handlers read it
+   * off this context. Without it the key stopped at the command boundary and
+   * the enforcement in stage 4 would be demanding something that then went
+   * nowhere.
+   */
+  readonly idempotencyKey?: string;
+
+  /**
    * Execution deadline
    */
   readonly deadline: Date;

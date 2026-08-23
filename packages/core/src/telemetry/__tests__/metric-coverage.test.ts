@@ -102,6 +102,40 @@ async function overflowOneBulkhead(metrics: MetricRecorder): Promise<void> {
   (await queued).release();
 }
 
+/**
+ * Exhaust a retry budget against the REAL dispatcher (#45).
+ *
+ * The operation is read-only, idempotent and retryable, so the effects matrix
+ * permits retrying; the executor always fails transiently, so the budget runs
+ * out. That produces `mcp_retry_attempts_total` (on attempts 2 and 3) and
+ * `mcp_retry_exhausted_total` (when attempt 3 finds no budget left).
+ *
+ * Backoff is neutralised — `random: () => 0` and a no-op `sleep` — so the test
+ * measures the retry DECISIONS rather than spending real seconds proving that
+ * setTimeout works.
+ */
+async function exhaustRetries(metrics: MetricRecorder): Promise<void> {
+  const ref = new AtomicRegistryReference(createSnapshot([operation('listPets')], 1));
+  const executor: OperationExecutor = {
+    execute: async () => ({
+      ok: false,
+      error: { code: 'UPSTREAM_UNAVAILABLE', message: 'boom' },
+    }),
+  };
+
+  const dispatcher = createDispatcher(
+    ref,
+    { audit: async () => undefined },
+    new Map<string, OperationExecutor>([['test', executor]]),
+    {
+      observability: { tracer: createRecordingTracer(), metrics },
+      retry: { maxAttempts: 3, random: () => 0, sleep: async () => undefined },
+    },
+  );
+
+  await dispatcher.dispatch(command());
+}
+
 describe('§9.2 metric coverage', () => {
   it('emits every declared metric across a round-trip, a reload and an overflow', async () => {
     const metrics = createRecordingMetricRecorder();
@@ -133,6 +167,10 @@ describe('§9.2 metric coverage', () => {
     //    mcp_bulkhead_rejected_total (#43). Concurrency and queue are both 1
     //    and the executor never returns, so the third caller must be shed.
     await overflowOneBulkhead(metrics);
+
+    // 5. A call that retries and runs out of budget, which is the only thing
+    //    that produces the two retry series (#45).
+    await exhaustRetries(metrics);
 
     const emitted = new Set<MetricName>(metrics.samples().map((sample) => sample.metric));
     const missing = (Object.values(METRIC) as MetricName[]).filter((name) => !emitted.has(name));

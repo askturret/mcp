@@ -548,4 +548,93 @@ describe('viaHttp', () => {
       expect(capturedSignal?.aborted).toBe(true);
     });
   });
+
+  describe('retry support (#45, §8.4)', () => {
+    /** Capture the headers the executor actually put on the wire. */
+    function capturingClient(response: HttpResponse): {
+      client: HttpClient;
+      headers: () => Record<string, string>;
+    } {
+      let captured: Record<string, string> = {};
+      return {
+        client: {
+          async request(_url: string, options: HttpRequestOptions): Promise<HttpResponse> {
+            captured = { ...(options.headers ?? {}) };
+            return response;
+          },
+        },
+        headers: () => captured,
+      };
+    }
+
+    const ok: HttpResponse = { status: 200, headers: {}, body: '{"ok":true}' };
+
+    it('sends the idempotency key as a header so the upstream can deduplicate', async () => {
+      // The runtime deliberately does not persist keys — carrying it to the
+      // upstream is the entire mechanism, so a key that never left the process
+      // would make the stage-4 enforcement meaningless.
+      const { client, headers } = capturingClient(ok);
+      const executor = viaHttp({ baseUrl: 'https://api.example.com', client });
+
+      await executor.execute(
+        createTestOperation(),
+        {},
+        createTestContext({ idempotencyKey: 'key-42' }),
+      );
+
+      expect(headers()['Idempotency-Key']).toBe('key-42');
+    });
+
+    it('omits the header entirely when no key was supplied', async () => {
+      // Not an empty string: an empty Idempotency-Key is a value an upstream
+      // could try to deduplicate on, and every keyless request would collide.
+      const { client, headers } = capturingClient(ok);
+      const executor = viaHttp({ baseUrl: 'https://api.example.com', client });
+
+      await executor.execute(createTestOperation(), {}, createTestContext());
+
+      expect(Object.keys(headers())).not.toContain('Idempotency-Key');
+    });
+
+    it.each([502, 503, 504])(
+      'maps %i to UPSTREAM_UNAVAILABLE, so the retry policy can see it is transient',
+      async (status) => {
+        const mockClient = createMockClient(
+          new Map([
+            ['https://api.example.com/test', { status, headers: {}, body: '' }],
+          ]),
+        );
+        const executor = viaHttp({ baseUrl: 'https://api.example.com', client: mockClient });
+
+        const result = await executor.execute(
+          createTestOperation({ executor: { type: 'http', config: { path: '/test' } } }),
+          {},
+          createTestContext(),
+        );
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.code).toBe('UPSTREAM_UNAVAILABLE');
+      },
+    );
+
+    it('leaves 500 as INTERNAL_ERROR — "certain 5xx" excludes application faults', async () => {
+      // A 500 means the request REACHED the backend and the backend broke on
+      // it. Replaying it reproduces the same fault, so it must not become a
+      // transient code. This is the boundary of the mapping above, and it is
+      // asserted rather than assumed.
+      const mockClient = createMockClient(
+        new Map([['https://api.example.com/test', { status: 500, headers: {}, body: '' }]]),
+      );
+      const executor = viaHttp({ baseUrl: 'https://api.example.com', client: mockClient });
+
+      const result = await executor.execute(
+        createTestOperation({ executor: { type: 'http', config: { path: '/test' } } }),
+        {},
+        createTestContext(),
+      );
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe('INTERNAL_ERROR');
+    });
+  });
 });

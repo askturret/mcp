@@ -3,7 +3,7 @@
  * HTTP transport types - MCP Streamable HTTP server configuration
  */
 
-import type { BulkheadsConfig } from '@askturret/mcp-core';
+import type { BulkheadsConfig, RetryConfig } from '@askturret/mcp-core';
 import type {
   RegistryReference,
   DispatcherHooks,
@@ -73,6 +73,18 @@ export interface HttpTransportOptions {
    * both Express and Fastify without either adapter changing.
    */
   readonly bulkheads?: BulkheadsConfig;
+
+  /**
+   * Retry policy, forwarded to the dispatcher (#45, §8.4).
+   *
+   * Here for the same reason as `bulkheads` above: the transport is what
+   * constructs the dispatcher, so an option that exists only on
+   * `DispatcherOptions` is unreachable from any adapter. Because
+   * `McpFacadeOptions.transport` is spread into these options, `transport:
+   * { retry: { ... } }` works on both Express and Fastify without either
+   * adapter changing.
+   */
+  readonly retry?: RetryConfig;
 
   /**
    * Registry reference (snapshot provider)

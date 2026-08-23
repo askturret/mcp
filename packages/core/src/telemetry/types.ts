@@ -140,6 +140,8 @@ export const METRIC = {
   registryReloadTotal: 'mcp_registry_reload_total',
   registryOperations: 'mcp_registry_operations',
   bulkheadRejectedTotal: 'mcp_bulkhead_rejected_total',
+  retryAttemptsTotal: 'mcp_retry_attempts_total',
+  retryExhaustedTotal: 'mcp_retry_exhausted_total',
 } as const;
 
 export type MetricName = (typeof METRIC)[keyof typeof METRIC];
@@ -252,6 +254,25 @@ export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
       'Calls rejected because a bulkhead queue was full (#43). Counts QUEUE_FULL only — ' +
       'a caller that cancelled while queued is not load being shed, and folding the two ' +
       'together would invert the diagnosis during a burst of client disconnects.',
+  },
+  {
+    name: METRIC.retryAttemptsTotal,
+    kind: 'counter',
+    labels: ['tool', 'outcome'],
+    description:
+      'Retried attempts by tool and the outcome of that retry (#45). Counts RETRIES only, ' +
+      'not the initial attempt — every call already has an initial attempt in ' +
+      'mcp_tool_calls_total, so counting it again here would make the retry rate ' +
+      'unreadable against a baseline of 1.',
+  },
+  {
+    name: METRIC.retryExhaustedTotal,
+    kind: 'counter',
+    labels: ['tool', 'terminal_error'],
+    description:
+      'Calls that ran out of retry budget, labelled by the error finally returned (#45). ' +
+      'Distinguishes "retried and still failed" from "failed once and was not eligible", ' +
+      'which look identical in mcp_tool_errors_total.',
   },
 ];
 

@@ -38,6 +38,13 @@ import {
   type BulkheadsConfig,
 } from '../bulkhead/index.js';
 import {
+  computeBackoffMs,
+  decideRetry,
+  defaultSleep,
+  resolveRetryConfig,
+  type RetryConfig,
+} from '../retry/index.js';
+import {
   METRIC,
   SPAN_ATTR,
   type MetricRecorder,
@@ -142,6 +149,17 @@ export interface DispatcherOptions {
    * protection only protects people who already knew to ask.
    */
   readonly bulkheads?: BulkheadsConfig;
+
+  /**
+   * Retry policy (#45, §8.4, ADR-012).
+   *
+   * Absent means retries are DISABLED — not "enabled with defaults". Unlike
+   * bulkheads, where the absent-means-protected default makes a dispatcher
+   * safer, an absent retry policy that silently started replaying calls would
+   * make every existing dispatcher send MORE traffic to someone's upstream
+   * than it did yesterday. Turning that on is an explicit act.
+   */
+  readonly retry?: RetryConfig;
 }
 
 /**
@@ -174,6 +192,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   private readonly tracer: Tracer;
   private readonly metrics: MetricRecorder;
   private readonly bulkheads: BulkheadRegistry;
+  private readonly retry: RetryConfig | undefined;
 
   /** In-flight count per tool, backing `mcp_tool_inflight` (§9.2). */
   private readonly inflight = new Map<string, number>();
@@ -185,6 +204,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     options?: DispatcherOptions,
   ) {
     this.authorization = options?.authorization;
+    this.retry = options?.retry;
     this.logger = options?.logger ?? createLogger();
     this.tracer = options?.observability?.tracer ?? noopTracer;
     this.metrics = options?.observability?.metrics ?? noopMetricRecorder;
@@ -372,6 +392,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         principal: command.principal,
         clientInfo: command.clientInfo,
         confirmation: command.confirmation,
+        idempotencyKey: command.idempotencyKey,
         deadline: command.deadline,
         signal: command.signal,
       });
@@ -447,7 +468,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
       // STAGE 4: Validate input
       const inputSpan = toolSpan.startChild('schema.validate.input');
-      const inputValidation = this.validateInput(command.input, operation);
+      const inputValidation = this.validateInput(command, operation);
       if (!inputValidation.ok) {
         // The validation ERROR CODE, never the offending input - raw input is
         // on the §9.4 never-include list.
@@ -522,11 +543,15 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         attributes: { [SPAN_ATTR.executorType]: executorType },
       });
       const executorStartedAt = Date.now();
-      const executionResult = await this.execute(
+      const executionResult = await this.executeWithRetry(
         operation,
         command.input,
         contextWithPrincipal,
+        log,
       );
+      // Covers every attempt, deliberately: this is what stage 8 cost, and a
+      // measure that reported only the last attempt would show a retried call
+      // as fast while the caller waited through all of them.
       const upstreamSeconds = (Date.now() - executorStartedAt) / 1000;
 
       // If execution failed, skip output validation and go straight to mapping
@@ -650,12 +675,26 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     return { continue: true };
   }
 
+  /**
+   * Stage 4 — validate input, and enforce the idempotency-key requirement.
+   *
+   * The key check lives HERE, in stage 4, rather than beside the retry loop in
+   * stage 8, because §8.4 requires that a missing key produce `INVALID_INPUT`
+   * with "no attempt made". Checking it at execution time would mean the
+   * upstream had already been called before we noticed the key was missing —
+   * for a `idempotencyKeyRequired` operation, exactly the unreplayable call
+   * the requirement exists to prevent.
+   *
+   * A whitespace-only key is treated as missing. It satisfies a presence check
+   * while being useless to any upstream trying to deduplicate on it, and
+   * accepting it would turn the guarantee into a formality.
+   */
   private validateInput(
-    input: unknown,
-    _operation: OperationDefinition,
+    command: OperationCommand,
+    operation: OperationDefinition,
   ): OperationResult {
     // v0.1: basic type check (full JSON Schema validation deferred)
-    if (input === null || input === undefined) {
+    if (command.input === null || command.input === undefined) {
       return {
         ok: false,
         error: {
@@ -664,7 +703,22 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         },
       };
     }
-    return { ok: true, value: input };
+
+    if (
+      operation.effects.idempotencyKeyRequired &&
+      (command.idempotencyKey === undefined || command.idempotencyKey.trim() === '')
+    ) {
+      return {
+        ok: false,
+        error: {
+          code: 'INVALID_INPUT',
+          // Names the requirement, never echoes a supplied value.
+          message: `Operation '${operation.id}' requires an idempotency key`,
+        },
+      };
+    }
+
+    return { ok: true, value: command.input };
   }
 
   private async verifyConfirmation(
@@ -676,6 +730,118 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     }
     // v0.1: no-op (pass-through)
     return { continue: true };
+  }
+
+  /**
+   * Stage 8 with the §8.4 retry loop wrapped around it.
+   *
+   * ## Why this is inside stage 8 rather than a stage of its own
+   *
+   * ADR-010 seals the envelope at twelve stages. A retry is not a new step in
+   * the pipeline — it is stage 8 being performed again — so the loop lives
+   * here and the stage sequence is untouched. Every other stage still runs
+   * exactly once per request: a retried call is NOT re-authorized, and it must
+   * not be, because re-running authorization mid-flight would let a policy
+   * change between attempts decide half a request.
+   *
+   * With no retry policy configured this is a single call, byte-for-byte the
+   * behaviour that existed before #45.
+   */
+  private async executeWithRetry(
+    operation: OperationDefinition,
+    input: unknown,
+    context: DispatchContext,
+    log: StructuredLogger,
+  ): Promise<OperationResult> {
+    const config = this.retry;
+    if (config === undefined) {
+      return this.execute(operation, input, context);
+    }
+
+    const tool = operation.id;
+    const resolved = resolveRetryConfig(config, operation.id);
+    const random = config.random ?? Math.random;
+    const sleep = config.sleep ?? defaultSleep;
+
+    let attempt = 0;
+
+    for (;;) {
+      attempt += 1;
+      const result = await this.execute(operation, input, context);
+
+      // Retries only — the initial attempt is already counted by
+      // `mcp_tool_calls_total`, and counting it twice would put a floor of 1
+      // under every tool's retry rate.
+      if (attempt > 1) {
+        this.metrics.add(METRIC.retryAttemptsTotal, 1, {
+          tool,
+          outcome: result.ok ? 'success' : 'error',
+        });
+      }
+
+      if (result.ok) return result;
+
+      const decision = decideRetry({
+        errorCode: result.error.code,
+        effects: operation.effects,
+        attempt,
+        maxAttempts: resolved.maxAttempts,
+      });
+
+      if (!decision.retry) {
+        this.recordRetryOutcome(tool, attempt, decision.reason, result.error.code, log);
+        return result;
+      }
+
+      // §8.4: "Total time budget capped by the operation's absolute deadline —
+      // retries never extend the deadline." Checked BEFORE sleeping: a backoff
+      // that would itself outlast the deadline buys nothing but latency, since
+      // the attempt after it could only return TIMEOUT.
+      const backoffMs = computeBackoffMs(attempt, resolved, random);
+      if (backoffMs >= context.deadline.getTime() - Date.now()) {
+        this.recordRetryOutcome(tool, attempt, 'deadline-budget', result.error.code, log);
+        return result;
+      }
+
+      await sleep(backoffMs, context.signal);
+
+      // A client that hung up during the backoff must not be charged for
+      // another upstream call on its behalf.
+      if (context.signal.aborted) {
+        return {
+          ok: false,
+          error: { code: 'CANCELLED', message: 'Request cancelled' },
+        };
+      }
+    }
+  }
+
+  /**
+   * Record why retrying stopped.
+   *
+   * `mcp_retry_exhausted_total` fires only when at least one retry actually
+   * happened. A call that was never eligible did not run out of budget — it
+   * never had one — and counting it here would make the metric a synonym for
+   * `mcp_tool_errors_total`, which is precisely the confusion it exists to
+   * resolve.
+   */
+  private recordRetryOutcome(
+    tool: string,
+    attempt: number,
+    reason: string,
+    terminalError: string,
+    log: StructuredLogger,
+  ): void {
+    const exhausted = reason === 'attempts-exhausted' || reason === 'deadline-budget';
+
+    if (exhausted && attempt > 1) {
+      this.metrics.add(METRIC.retryExhaustedTotal, 1, {
+        tool,
+        terminal_error: terminalError,
+      });
+    }
+
+    log.debug('retry stopped', { attempt, reason, errorCode: terminalError });
   }
 
   private async execute(

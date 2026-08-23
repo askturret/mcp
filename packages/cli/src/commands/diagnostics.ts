@@ -13,6 +13,7 @@ import { createTarGz } from './diagnostics-tar.js';
 import {
   buildBundleEntries,
   environmentNames,
+  sanitizeErrorText,
   type BundleInputs,
 } from './diagnostics-bundle.js';
 
@@ -240,9 +241,36 @@ export async function collectBundleInputs(
   };
 }
 
-/** Never surface a stack or a type name into an artefact meant for sharing. */
+/**
+ * Never surface a stack, a type name, a credential or a filesystem layout
+ * into an artefact meant for sharing.
+ *
+ * Returning `error.message` verbatim was the leak QA found: Node embeds the
+ * operator's own input in its error strings, so a credentialed `--url` and a
+ * typo'd `--spec` both ended up written into the bundle. Sanitised at THIS
+ * seam because it is the single point every collector's failure passes
+ * through — the alternative is remembering at each of the five call sites.
+ */
 function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : 'unknown error';
+  // Duck-typed on `message` rather than `instanceof Error`.
+  //
+  // Not a style choice: a rejection that crosses a realm boundary — a VM
+  // context, a worker, jest's module registry — is a genuine Error whose
+  // prototype comes from a DIFFERENT realm, so `instanceof` is false and the
+  // real message was being discarded as 'unknown error'.
+  //
+  // That mattered twice over. It threw away the diagnostic an operator needs,
+  // and it made this leak untestable: under jest the credentialed-URL
+  // rejection reported 'unknown error', so an end-to-end test would have
+  // passed with the sanitiser reverted. Found while writing exactly that test.
+  const message =
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { message?: unknown }).message === 'string'
+      ? (error as { message: string }).message
+      : 'unknown error';
+
+  return sanitizeErrorText(message);
 }
 
 export async function diagnosticsCommand(args: string[]): Promise<void> {

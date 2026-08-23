@@ -90,6 +90,66 @@ export function scrubFreeText(line: string): string {
 }
 
 /**
+ * Strip operator secrets out of text THIS TOOL constructed.
+ *
+ * ## Why this is ours to fix and not #49's
+ *
+ * Node embeds the raw input in its own error strings: a credentialed URL
+ * comes back as `Request cannot be constructed from a URL that includes
+ * credentials: http://user:sk_live_...@host/mcp`, and a bad path comes back
+ * as an ENOENT naming the operator's full absolute path, OS username and all.
+ * Both then travelled into `unavailable`, and from there into metadata.json
+ * and README.md.
+ *
+ * #49 matches whole VALUES, and a credential in the middle of a sentence is
+ * the documented limitation it cannot generically catch. But this prose is
+ * built by US out of input the operator typed, so the sensitive part is
+ * knowable at the source — which makes it our job to sanitise here rather
+ * than a gap to report upstream.
+ *
+ * URLs are matched FIRST in the alternation so a URL is consumed as a URL and
+ * never chewed up by the path branch, which would otherwise reduce
+ * `http://host/a/b/mcp` to `mcp`.
+ */
+const SENSITIVE_IN_ERRORS =
+  /([a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s'"<>]+)|(\/(?:[^\s'"<>]+\/)+[^\s'"<>/]+)|([A-Za-z]:\\(?:[^\s'"<>]+\\)+[^\s'"<>\\]+)/g;
+
+/**
+ * Reduce a URL to scheme, host and path.
+ *
+ * Userinfo is replaced with a marker rather than dropped silently: "there
+ * were credentials here and we removed them" is useful to whoever reads the
+ * bundle, whereas a URL that quietly lost its userinfo looks like the
+ * operator never supplied any. The query string goes too — tokens live there
+ * at least as often as in userinfo.
+ */
+function sanitizeUrlText(raw: string): string {
+  try {
+    const url = new URL(raw);
+    const hadCredentials = url.username !== '' || url.password !== '';
+    url.username = '';
+    url.password = '';
+    const clean = `${url.origin}${url.pathname}`;
+    return hadCredentials ? clean.replace('://', '://[REDACTED]@') : clean;
+  } catch {
+    // Unparseable but URL-shaped: refuse to emit it at all rather than guess
+    // which part was the secret.
+    return '[REDACTED:url]';
+  }
+}
+
+export function sanitizeErrorText(text: string): string {
+  return text.replace(SENSITIVE_IN_ERRORS, (match, url: string, posix: string, win: string) => {
+    if (url !== undefined) return sanitizeUrlText(url);
+    // Same treatment the `paths` field already gets, applied to error text
+    // too — the README promises basenames, and that has to be true everywhere.
+    if (posix !== undefined) return basename(posix);
+    if (win !== undefined) return win.split('\\').pop() ?? '[REDACTED:path]';
+    return match;
+  });
+}
+
+/**
  * Environment variables, by NAME only.
  *
  * The values are never read — not read-then-redacted, never read. §13 asks
@@ -241,8 +301,29 @@ export function bundleReadme(inputs: BundleInputs, filenames: readonly string[] 
  * The redaction pass is applied HERE, once, to each section's finished value
  * — not at each collector. One place to audit, and no collector can forget.
  */
-export function buildBundleEntries(inputs: BundleInputs): TarEntry[] {
+export function buildBundleEntries(rawInputs: BundleInputs): TarEntry[] {
   const entries: TarEntry[] = [];
+
+  // `unavailable` reasons are FREE TEXT — collector messages, built around
+  // whatever the operator typed — and they land in metadata.json AND the
+  // README. Scrubbed once, here, so both files get the same treatment.
+  //
+  // Without this the two disagreed: the README got substring scrubbing while
+  // metadata.json got value-level redaction only, so a credential in the
+  // MIDDLE of a reason survived in the JSON and not the markdown. A guarantee
+  // that holds in one bundle file and not another is not a guarantee.
+  const inputs: BundleInputs =
+    rawInputs.unavailable === undefined
+      ? rawInputs
+      : {
+          ...rawInputs,
+          unavailable: Object.fromEntries(
+            Object.entries(rawInputs.unavailable).map(([section, reason]) => [
+              section,
+              scrubFreeText(reason),
+            ]),
+          ),
+        };
 
   const json = (name: string, value: unknown): void => {
     entries.push({ name, content: `${JSON.stringify(redactForBundle(value), null, 2)}\n` });
@@ -298,7 +379,17 @@ export function buildBundleEntries(inputs: BundleInputs): TarEntry[] {
   // Files list it prints is the archive's actual contents by construction,
   // not a parallel enumeration that can drift from them.
   const filenames = [...entries.map((entry) => entry.name), 'README.md'];
-  entries.push({ name: 'README.md', content: `${bundleReadme(inputs, filenames)}\n` });
+
+  // README.md goes through the pipeline too.
+  //
+  // It was the ONE bundle file that did not: `json()` applied
+  // `redactForBundle`, while this entry was pushed straight to the archive.
+  // That made the README's own guarantee — "every string in every file below
+  // was passed through the central redaction pipeline" — false about the
+  // README, which is itself listed under Files. Both passes, same as the log
+  // tail, since a README is free text.
+  const readme = scrubFreeText(redactForBundle({ text: bundleReadme(inputs, filenames) }).text);
+  entries.push({ name: 'README.md', content: `${readme}\n` });
 
   return entries;
 }

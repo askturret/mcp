@@ -21,6 +21,7 @@ import {
   bundleReadme,
   environmentNames,
   pathBasenames,
+  sanitizeErrorText,
 } from '../commands/diagnostics-bundle.js';
 import { createTarGz, TarNameTooLongError } from '../commands/diagnostics-tar.js';
 import { collectBundleInputs, parseDiagnosticsArgs } from '../commands/diagnostics.js';
@@ -108,6 +109,131 @@ describe('secret-leak grep (§50 acceptance)', () => {
     expect(text).toContain('askturret.config.ts');
     expect(text).not.toContain('/home/alice');
     expect(text).not.toContain('secret-client');
+  });
+});
+
+describe('operator secrets never reach the bundle via error text (QA #162 r3)', () => {
+  const URL_SECRET = 'sk_live_urlsecret_9999';
+  const CREDENTIALED_URL = `http://qa_user:${URL_SECRET}@127.0.0.1:1/mcp`;
+  const PRIVATE_PATH = '/tmp/operator-private-fixture/typo-spec.yaml';
+
+  /**
+   * Drives the REAL collectors against a credentialed URL and a bad path.
+   *
+   * Not a hand-written `unavailable` map: the leak was that Node embeds the
+   * operator's own input in its error strings, so a test that supplied its
+   * own reasons would never see the text that actually leaked. This makes
+   * every collector fail for real and inspects the finished archive.
+   */
+  async function bundleFromFailingRun(): Promise<string> {
+    const collected = await collectBundleInputs(
+      parseDiagnosticsArgs([
+        '--url', CREDENTIALED_URL,
+        '--spec', PRIVATE_PATH,
+        '--log-file', PRIVATE_PATH,
+      ]),
+    );
+    return archiveText(buildBundleEntries(collected));
+  }
+
+  it('never writes URL userinfo into any bundle file', async () => {
+    const text = await bundleFromFailingRun();
+
+    expect(text).not.toContain(URL_SECRET);
+    expect(text).not.toContain('qa_user');
+    // No `scheme://…@` userinfo form survives anywhere.
+    expect(text).not.toMatch(/:\/\/[^/\s"']*:[^/\s"']*@/);
+  });
+
+  it('never writes an absolute filesystem path into any bundle file', async () => {
+    // The README promises basenames; that has to hold for error text too, or
+    // the operator's directory layout and OS username ship with the bundle.
+    const text = await bundleFromFailingRun();
+
+    expect(text).not.toContain('operator-private-fixture');
+    expect(text).not.toContain(PRIVATE_PATH);
+  });
+
+  it('keeps the failure diagnosable — host and basename survive', async () => {
+    // Redaction that removed the whole message would make the bundle useless
+    // for the thing it exists to explain.
+    const text = await bundleFromFailingRun();
+
+    expect(text).toContain('127.0.0.1');
+    expect(text).toContain('typo-spec.yaml');
+    expect(text).toContain('[REDACTED]@');
+  });
+
+  it('README.md itself goes through the pipeline, not just the JSON files', () => {
+    // README.md was the ONE file that bypassed redaction, which made its own
+    // guarantee sentence false about itself.
+    //
+    // The reason bypasses `describeError` deliberately. With the source fix
+    // in place nothing unsanitised reaches the README any more, so a test
+    // driven through the collectors passes either way — I checked, and it
+    // did. Injecting a credential-shaped value directly into `unavailable`
+    // simulates a FUTURE field reaching the README without passing the
+    // source seam, which is what the routing actually defends against.
+    const jwt =
+      'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk';
+
+    const entries = buildBundleEntries(
+      inputs({ unavailable: { health: `collector rejected token ${jwt}` } }),
+    );
+    const readme = entries.find((e) => e.name === 'README.md');
+
+    expect(readme?.content).not.toContain(jwt);
+    // …and the JSON side was already covered, so both halves hold.
+    expect(entries.find((e) => e.name === 'metadata.json')?.content).not.toContain(jwt);
+  });
+
+  it('README.md carries no secret on the real credentialed-URL run either', async () => {
+    const collected = await collectBundleInputs(
+      parseDiagnosticsArgs(['--url', CREDENTIALED_URL]),
+    );
+    const readme = buildBundleEntries(collected).find((e) => e.name === 'README.md');
+
+    expect(readme?.content).not.toContain(URL_SECRET);
+  });
+});
+
+describe('sanitizeErrorText', () => {
+  it('blanks userinfo but keeps scheme, host and path', () => {
+    expect(sanitizeErrorText('failed: http://u:p@example.com:8080/mcp/x')).toBe(
+      'failed: http://[REDACTED]@example.com:8080/mcp/x',
+    );
+  });
+
+  it('drops the query string, where tokens live at least as often', () => {
+    expect(sanitizeErrorText('GET https://example.com/a?token=sk_live_zzz')).toBe(
+      'GET https://example.com/a',
+    );
+  });
+
+  it('leaves a credential-free URL intact apart from the query', () => {
+    expect(sanitizeErrorText('http://127.0.0.1:1/mcp')).toBe('http://127.0.0.1:1/mcp');
+  });
+
+  it('reduces absolute POSIX paths to basenames', () => {
+    expect(sanitizeErrorText("open '/tmp/private/a/b/spec.yaml'")).toBe("open 'spec.yaml'");
+  });
+
+  it('reduces Windows paths to basenames', () => {
+    expect(sanitizeErrorText('open "C:\\Users\\alice\\spec.yaml"')).toBe('open "spec.yaml"');
+  });
+
+  it('does not chew a URL up with the path branch', () => {
+    // Alternation order is load-bearing: without URLs matching first,
+    // http://host/a/b/mcp is reduced to `mcp`.
+    expect(sanitizeErrorText('http://host/a/b/mcp')).toContain('http://host');
+  });
+
+  it('refuses to emit a URL-shaped string it cannot parse', () => {
+    expect(sanitizeErrorText('see http://[not a url')).toContain('[REDACTED:url]');
+  });
+
+  it('leaves ordinary prose alone', () => {
+    expect(sanitizeErrorText('connection refused')).toBe('connection refused');
   });
 });
 

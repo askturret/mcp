@@ -612,7 +612,22 @@ class StreamableHttpTransport implements HttpTransport {
     const dispatchPromise = this.dispatcher.dispatch(command);
     const timeoutPromise = new Promise<MCPResult>((resolve) => {
       timeoutId = setTimeout(() => {
-        abortController.abort(); // Signal cancellation
+        // Settle the race BEFORE aborting, not after.
+        //
+        // `abort()` dispatches its event SYNCHRONOUSLY, so the cancel branch
+        // below resolves inside this call — and if that happened first, the
+        // race settled as CANCELLED and this TIMEOUT was dead code on every
+        // deadline expiry. The client then could not tell "you ran out of
+        // time" from "someone cancelled you": one is a property of their own
+        // request that they may retry, the other is a decision the server
+        // made about it. Same class as the UNAUTHENTICATED/FORBIDDEN
+        // collapse in #124.
+        //
+        // Ordering is the whole fix. `Promise.race` keeps the FIRST
+        // settlement, so resolving here makes the deadline win its own race,
+        // while an abort from anywhere else (shutdown drain §8.6,
+        // notifications/cancelled) still resolves as CANCELLED because this
+        // timer never fired. Both causes stay distinguishable.
         resolve({
           isError: true,
           error: {
@@ -620,6 +635,7 @@ class StreamableHttpTransport implements HttpTransport {
             message: 'Request exceeded deadline',
           },
         });
+        abortController.abort(); // Still signal the executor to stop working.
       }, deadlineMs);
     });
 

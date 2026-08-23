@@ -226,7 +226,12 @@ jobs:
         with:
           node-version: '20'
       - run: npm ci
-      - run: npm run build -w packages/core -w packages/transports -w packages/reliability
+      # sources-openapi is built here because the reference-Petstore layer
+      # compiles a real spec through it. Order matters: it depends on core, and
+      # `npm run build -w` runs these in the order given, not in dependency
+      # order. A local `tsc -b` builds the whole project graph and so cannot
+      # catch a missing entry here — this job is the only thing that can.
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/reliability
       - run: npm test --workspace=packages/reliability
 
   # Status wrapper jobs for merge-coverage gate

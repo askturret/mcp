@@ -38,7 +38,10 @@ jobs:
         with:
           node-version: '20'
       - run: npm ci
-      - run: npm run build -w packages/core -w packages/transports -w packages/reliability
+      # sources-openapi is required by the reference-Petstore layer, and must
+      # come after core, which it depends on: `npm run build -w` builds in the
+      # order given rather than in dependency order.
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/reliability
 
       # --expose-gc is what makes the heap assertion real. Without it the
       # suite REPORTS heap growth and declines to assert on it, because

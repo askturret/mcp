@@ -10,3 +10,4 @@
 {"ts":"2026-08-23T17:26:46Z","branch":"feat/issue-47-graceful-shutdown","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-23T17:52:51Z","branch":"feat/issue-48-audit-sink","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-23T18:16:32Z","branch":"feat/issue-49-redaction-pipeline","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-23T19:39:31Z","branch":"chore/issue-50-qa-concealment-capture","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

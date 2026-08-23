@@ -18,15 +18,12 @@
 import express, { type Request, Response, NextFunction, Router } from 'express';
 import { randomUUID } from 'crypto';
 import {
-  createCompiler,
   viaHttp,
-  AtomicRegistryReference,
-  type RegistrySnapshot,
-  type OperationDefinition,
-  type Logger,
-  type DiscoveredOperation,
-  type DiscoveryContext,
-  type CompilerContext,
+  bootstrapRegistry,
+  createFacadeLogger,
+  explorerProductionWarning,
+  extractUserContext,
+  resolveFacadeDefaults,
   type OperationExecutor,
 } from '@askturret/mcp-core';
 import { fromOpenApi } from '@askturret/mcp-sources-openapi';
@@ -78,106 +75,21 @@ export function mcpFromOpenApi(
 export function expressMcp(options: ExpressMcpOptions): Router {
   const router: Router = express.Router();
 
-  // Apply Light preset defaults
-  const basePath = options.basePath ?? '/mcp';
-  const maxRequestBodySize = options.maxRequestBodySize ?? 1048576; // 1 MiB
-  const maxResponseSize = options.maxResponseSize ?? 1048576; // 1 MiB
-  const deadlineMs = options.deadlineMs ?? 30000; // 30s
-  const enableExplorer =
-    options.enableExplorer ?? (process.env['NODE_ENV'] !== 'production');
+  // Light preset defaults, the logger, and the discover/compile/filter
+  // bootstrap all come from core's framework-neutral facade module. Express and
+  // Fastify share them so a default cannot drift between the two adapters —
+  // see `@askturret/mcp-core`'s `facade/` for why that is structural rather
+  // than a convention (#41).
+  const { basePath, maxRequestBodySize, maxResponseSize, deadlineMs, enableExplorer } =
+    resolveFacadeDefaults(options);
 
-  // Create logger (no-op in tests to avoid "Cannot log after tests are done")
-  const isTest = process.env['NODE_ENV'] === 'test';
-  const logger: Logger = {
-    debug: (msg: string, meta?: Record<string, unknown>) => {
-      if (!isTest) console.debug(msg, meta);
-    },
-    info: (msg: string, meta?: Record<string, unknown>) => {
-      if (!isTest) console.info(msg, meta);
-    },
-    warn: (msg: string, meta?: Record<string, unknown>) => {
-      if (!isTest) console.warn(msg, meta);
-    },
-    error: (msg: string, meta?: Record<string, unknown>) => {
-      if (!isTest) console.error(msg, meta);
-    },
-  };
+  const logger = createFacadeLogger();
 
-  // Create empty registry reference (will be populated async)
-  const emptySnapshot: RegistrySnapshot = {
-    hash: '',
-    operations: new Map(),
-    version: 1,
-    createdAt: new Date(),
-  };
-  const registry = new AtomicRegistryReference(emptySnapshot);
-
-  // Async initialization - discover and compile in background
-  // Store promise on router for tests to await (prevents logging after teardown)
-  const initPromise = (async () => {
-    try {
-      // Discover operations from all sources
-      const abortController = new AbortController();
-      const discoveryContext: DiscoveryContext = {
-        logger,
-        abortSignal: abortController.signal,
-      };
-
-      const discovered: DiscoveredOperation[] = [];
-      for (const source of options.sources) {
-        const ops = await source.discover(discoveryContext);
-        discovered.push(...ops);
-      }
-
-      // Compile discovered operations into registry snapshot
-      const compiler = createCompiler();
-      const compilerContext: Omit<CompilerContext, 'warnings'> = {
-        logger,
-        preset: 'light' as const,
-        overlays: [],
-      };
-      const fullSnapshot = await compiler.compile(discovered, compilerContext);
-
-      // Apply Light preset mutation filter
-      let snapshot: RegistrySnapshot;
-      if (options.include === '*') {
-        // Include all (mutations explicitly allowed)
-        snapshot = fullSnapshot;
-      } else if (Array.isArray(options.include)) {
-        // Explicit inclusion list
-        const includedOps = new Map<string, OperationDefinition>();
-        for (const opId of options.include) {
-          const op = fullSnapshot.operations.get(opId);
-          if (op) {
-            includedOps.set(opId, op);
-          }
-        }
-        snapshot = {
-          ...fullSnapshot,
-          operations: includedOps,
-        };
-      } else {
-        // Light preset: read-only only, mutations excluded
-        const readOnlyOps = new Map<string, OperationDefinition>();
-        for (const [id, op] of fullSnapshot.operations.entries()) {
-          if (op.effects.readOnly) {
-            readOnlyOps.set(id, op);
-          }
-        }
-        snapshot = {
-          ...fullSnapshot,
-          operations: readOnlyOps,
-        };
-      }
-
-      // Update registry with compiled snapshot
-      registry.swap(snapshot);
-      logger.info('Registry initialized', { operationCount: snapshot.operations.size });
-    } catch (error) {
-      logger.error('Failed to initialize registry', { error });
-      throw error;
-    }
-  })();
+  const { registry, ready: initPromise } = bootstrapRegistry(
+    options.sources,
+    options.include,
+    logger,
+  );
 
   // Attach init promise to router for tests to await
   (router as any)._init = initPromise;
@@ -218,13 +130,11 @@ export function expressMcp(options: ExpressMcpOptions): Router {
     // here with NODE_ENV=production means the operator opted in explicitly, so
     // name the setting that did it — the risk is not blocked, but it is loud.
     if (process.env['NODE_ENV'] === 'production' && options.enableExplorer === true) {
-      logger.warn(
-        'Explorer is ENABLED in production by an explicit enableExplorer: true setting. ' +
-          'It publishes the full tool surface and can invoke tools. Explorer has no ' +
-          'authentication of its own — it inherits only whatever protects ' +
-          `${basePath}/explorer in the host app.`,
-        { setting: 'enableExplorer: true', nodeEnv: 'production', path: `${basePath}/explorer` },
-      );
+      logger.warn(explorerProductionWarning(basePath), {
+        setting: 'enableExplorer: true',
+        nodeEnv: 'production',
+        path: `${basePath}/explorer`,
+      });
     }
 
     router.get('/explorer', async (_req: Request, res: Response) => {
@@ -288,8 +198,10 @@ function createTransportMiddleware(
       // ahead of initialization and see an empty tools list.
       await ready;
 
-      // Extract request context from Express req
-      const user = extractUserContext(req);
+      // Extract request context from Express req. The allowlist itself lives in
+      // core so Express and Fastify cannot disagree about which user fields are
+      // safe to forward into hooks, logs and spans.
+      const user = extractUserContext((req as any).user);
       const context: RequestContext = {
         requestId: (req.headers['x-request-id'] as string) || randomUUID(),
         ...(user !== undefined && { user }),
@@ -310,25 +222,6 @@ function createTransportMiddleware(
       next(error);
     }
   };
-}
-
-/**
- * Extract user context from Express req.user
- * Small allowlist - no broad reflection
- */
-function extractUserContext(req: Request): RequestContext['user'] | undefined {
-  const user = (req as any).user;
-  if (!user || typeof user !== 'object') {
-    return undefined;
-  }
-
-  // Allowlist known fields only
-  const result: RequestContext['user'] = {};
-  if (typeof user.id === 'string') result.id = user.id;
-  if (typeof user.email === 'string') result.email = user.email;
-  if (typeof user.name === 'string') result.name = user.name;
-  if (Array.isArray(user.roles)) result.roles = user.roles;
-  return result;
 }
 
 /**

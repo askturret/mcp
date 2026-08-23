@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
-import { createLogger, asLegacyLogger, silentSink } from '../logger.js';
+import { createLogger, asLegacyLogger, silentSink, jsonStdoutSink } from '../logger.js';
 import { REDACTED } from '../redaction.js';
 import type { LogRecord } from '../types.js';
 
@@ -65,10 +65,56 @@ describe('createLogger', () => {
 
   it('defaults to a SILENT sink so importing core never writes to stdout', () => {
     // Not cosmetic: a library that logs by default corrupts an adopter's own
-    // structured stream the moment they install it.
-    const log = createLogger();
-    expect(() => log.error('should not appear')).not.toThrow();
-    expect(createLogger({ sink: silentSink })).toBeDefined();
+    // structured stream the moment they install it. Asserted against the real
+    // stdout rather than via `toBeDefined`, because "the logger exists" is not
+    // the claim being made here - "nothing was written" is.
+    const written: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      const log = createLogger({ level: 'trace' });
+      log.error('should not appear');
+      log.info('nor this', { requestId: 'r-1' });
+      createLogger({ sink: silentSink }).error('nor this either');
+    } finally {
+      process.stdout.write = original;
+    }
+
+    expect(written).toEqual([]);
+  });
+
+  it('writes exactly one JSON line per record when given the stdout sink', () => {
+    // The other half of the claim: opting IN produces parseable output, one
+    // line per event, not pretty-printed or multi-line.
+    const written: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array): boolean => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      createLogger({ sink: jsonStdoutSink, now: () => new Date('2026-08-23T01:00:00.000Z') }).info(
+        'served',
+        { requestId: 'r-1' },
+      );
+    } finally {
+      process.stdout.write = original;
+    }
+
+    expect(written).toHaveLength(1);
+    expect(written[0]?.endsWith('\n')).toBe(true);
+    expect(written[0]?.trimEnd().includes('\n')).toBe(false);
+    expect(JSON.parse(written[0] ?? '{}')).toEqual({
+      requestId: 'r-1',
+      level: 'info',
+      time: '2026-08-23T01:00:00.000Z',
+      msg: 'served',
+    });
   });
 
   it('redacts through the default placeholder before emit', () => {

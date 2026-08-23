@@ -54,7 +54,8 @@ describe('forbidden log fields', () => {
   });
 
   it('rejects forbidden names on every level and on child bindings', () => {
-    const log = createLogger();
+    const records: LogRecord[] = [];
+    const log = createLogger({ sink: (r) => records.push(r), level: 'trace' });
 
     // @ts-expect-error - trace is guarded too.
     log.trace('nope', { input: 'x' });
@@ -66,9 +67,17 @@ describe('forbidden log fields', () => {
     log.error('nope', { input: 'x' });
     // @ts-expect-error - and bindings, which would otherwise leak the field
     // onto EVERY subsequent record rather than just one.
-    log.child({ principal: 'user-42' });
+    const scoped = log.child({ principal: 'user-42' });
 
-    expect(true).toBe(true);
+    // The compile-time guard is asserted by the directives above; these
+    // assertions cover the RUNTIME half, which the directives say nothing
+    // about - that every level is really wired to the sink, and that `child`
+    // returns a working logger rather than the same instance.
+    expect(records.map((r) => r.level)).toEqual(['trace', 'debug', 'warn', 'error']);
+    expect(scoped).not.toBe(log);
+
+    scoped.info('from child');
+    expect(records[records.length - 1]?.message).toBe('from child');
   });
 
   it('accepts ordinary field names', () => {

@@ -136,6 +136,65 @@ async function exhaustRetries(metrics: MetricRecorder): Promise<void> {
   await dispatcher.dispatch(command());
 }
 
+/**
+ * Drive the audit path for real (#48).
+ *
+ * Two sinks: one that accepts writes (producing an append and a buffer-size
+ * sample through a real dispatch), and one whose delegate never completes,
+ * behind a one-slot buffer in drop mode — the only way to genuinely overflow
+ * and produce `mcp_audit_dropped_total`.
+ *
+ * The drop is provoked by real back-pressure rather than by calling the
+ * counter directly: a hand-written sample would satisfy the assertion while
+ * proving nothing about the buffer.
+ */
+async function driveAuditSinks(metrics: MetricRecorder): Promise<void> {
+  const { bufferedSink } = await import('../../audit/index.js');
+
+  const ok = bufferedSink(
+    { id: 'coverage-ok', append: async () => undefined, flush: async () => undefined },
+    { metrics },
+  );
+
+  const dispatcher = createDispatcher(
+    new AtomicRegistryReference(createSnapshot([operation('listPets')], 1)),
+    { audit: async () => undefined },
+    new Map<string, OperationExecutor>([
+      ['test', { execute: async () => ({ ok: true, value: {} }) } as OperationExecutor],
+    ]),
+    { observability: { tracer: createRecordingTracer(), metrics }, auditSink: ok },
+  );
+
+  await dispatcher.dispatch(command());
+  await ok.flush();
+
+  const stuck = bufferedSink(
+    {
+      id: 'coverage-drop',
+      append: () => new Promise<void>(() => undefined),
+      flush: async () => undefined,
+    },
+    { metrics, maxBufferSize: 1, overflow: 'drop' },
+  );
+
+  const event = {
+    eventId: 'e1',
+    timestamp: new Date(0).toISOString(),
+    requestId: 'r1',
+    operationId: 'listPets',
+    registryHash: 'h',
+    policyDecision: 'allow',
+    outcome: 'success',
+    durationMs: 1,
+  };
+
+  await stuck.append(event); // handed straight to the stuck delegate
+  await stuck.append(event); // fills the single slot
+  await stuck.append(event); // dropped
+
+  void metrics;
+}
+
 describe('§9.2 metric coverage', () => {
   it('emits every declared metric across a round-trip, a reload and an overflow', async () => {
     const metrics = createRecordingMetricRecorder();
@@ -171,6 +230,10 @@ describe('§9.2 metric coverage', () => {
     // 5. A call that retries and runs out of budget, which is the only thing
     //    that produces the two retry series (#45).
     await exhaustRetries(metrics);
+
+    // 6. The audit path, which is the only thing that produces the three
+    //    audit series (#48).
+    await driveAuditSinks(metrics);
 
     const emitted = new Set<MetricName>(metrics.samples().map((sample) => sample.metric));
     const missing = (Object.values(METRIC) as MetricName[]).filter((name) => !emitted.has(name));

@@ -4,6 +4,7 @@
  */
 
 import type {
+  AuditSink,
   BreakersConfig,
   BulkheadsConfig,
   HealthReport,
@@ -102,6 +103,16 @@ export interface HttpTransportOptions {
    * both Express and Fastify without either adapter changing.
    */
   readonly breakers?: BreakersConfig;
+
+  /**
+   * Audit sink with mandatory-delivery semantics (#48, §9.3).
+   *
+   * Forwarded to the dispatcher AND wired into §8.6 phase 5: when this is set
+   * and no explicit `flushAudit` is supplied, shutdown flushes this sink.
+   * That is what turns phase 5's promise -- audit outlives telemetry on
+   * shutdown -- into behaviour rather than an aspiration.
+   */
+  readonly auditSink?: AuditSink;
 
   /**
    * Reload controller, so `/health/ready` can report a degraded reload (§8.7).

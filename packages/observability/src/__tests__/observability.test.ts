@@ -164,14 +164,18 @@ describe('openTelemetry', () => {
     openTelemetry({ meter });
 
     // The thirteen from §9.2, plus mcp_bulkhead_rejected_total (#43), plus the
-    // two retry series (#45), so a dashboard can reference any of them.
-    expect(created).toHaveLength(16);
+    // two retry series (#45), plus the three audit series (#48), so a
+    // dashboard can reference any of them.
+    expect(created).toHaveLength(19);
     expect(created).toContain('mcp_requests_total');
     expect(created).toContain('mcp_registry_operations');
     expect(created).toContain('mcp_tool_queue_depth');
     expect(created).toContain('mcp_bulkhead_rejected_total');
     expect(created).toContain('mcp_retry_attempts_total');
     expect(created).toContain('mcp_retry_exhausted_total');
+    expect(created).toContain('mcp_audit_appends_total');
+    expect(created).toContain('mcp_audit_buffer_size');
+    expect(created).toContain('mcp_audit_dropped_total');
   });
 
   it('forwards counter and histogram samples with their labels', () => {

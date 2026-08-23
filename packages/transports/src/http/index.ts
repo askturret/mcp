@@ -127,6 +127,7 @@ class StreamableHttpTransport implements HttpTransport {
         ...(options.bulkheads === undefined ? {} : { bulkheads: options.bulkheads }),
         ...(options.retry === undefined ? {} : { retry: options.retry }),
         ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
+        ...(options.auditSink === undefined ? {} : { auditSink: options.auditSink }),
       },
     );
 
@@ -193,7 +194,12 @@ class StreamableHttpTransport implements HttpTransport {
       // queue must fill this in. See #156.
       drainInFlight: () => this.waitForDrain(),
       cancelInFlight: () => this.abortAllInFlight('drain-deadline'),
-      flushAudit: () => options.flushAudit?.() ?? Promise.resolve(),
+      // An explicit hook wins; otherwise the configured sink IS the flush.
+      // Without this default, an adopter could configure a sink, reach
+      // shutdown, and have phase 5 flush nothing — the exact gap #48 exists
+      // to close.
+      flushAudit: () =>
+        options.flushAudit?.() ?? options.auditSink?.flush() ?? Promise.resolve(),
       flushTelemetry: () => options.flushTelemetry?.() ?? Promise.resolve(),
       closeResources: () => options.closeResources?.() ?? Promise.resolve(),
     });

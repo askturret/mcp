@@ -6,6 +6,7 @@
 
 import { doctorCommand } from './commands/doctor.js';
 import { inspectCommand } from './commands/inspect.js';
+import { diffCommand } from './commands/diff.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -24,6 +25,10 @@ async function main() {
 
     case 'inspect':
       await inspectCommand(args.slice(1));
+      break;
+
+    case 'diff':
+      await diffCommand(args.slice(1));
       break;
 
     case 'help':
@@ -51,6 +56,9 @@ function printHelp() {
   console.log('  doctor <spec>           Analyze OpenAPI spec for MCP readiness (offline)');
   console.log('  doctor --url <url>      Analyze remote MCP server readiness');
   console.log('  inspect --url <url>     Inspect a running MCP server (live)');
+  console.log('  diff --before <a> --after <b>');
+  console.log('                          Compare two registry snapshots and classify');
+  console.log('                          changes as breaking or non-breaking');
   console.log('  help                    Show this help message');
   console.log('');
   console.log('Options:');
@@ -63,6 +71,8 @@ function printHelp() {
   console.log('  npx @askturret/mcp doctor --url http://localhost:7000/mcp');
   console.log('  npx @askturret/mcp inspect --url http://localhost:7000/mcp');
   console.log('  npx @askturret/mcp inspect --url ... --tool createOrder --dry-run');
+  console.log('  npx @askturret/mcp diff --before before.json --after after.json');
+  console.log('  npx @askturret/mcp diff --help    (classification rubric)');
   console.log('');
 }
 

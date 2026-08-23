@@ -96,6 +96,11 @@ const ALLOWLIST = [
   // supplying the address IS the opt-in.
   'packages/cli/src/commands/doctor.ts',
   'packages/cli/src/commands/inspect.ts',
+  // `diff --before https://…` fetches a published snapshot to compare against
+  // (#40). Same category as the two above, for the same reason: the fetch runs
+  // ONLY when the user passes an http(s) URL, and never for a file path, so
+  // the address the user typed is itself the opt-in.
+  'packages/cli/src/commands/diff.ts',
 ];
 
 const isAllowlisted = (relPosix) => ALLOWLIST.some((frag) => relPosix.includes(frag));

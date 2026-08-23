@@ -1,0 +1,100 @@
+{
+  "formatVersion": 1,
+  "version": 2,
+  "hash": "hash-array-items",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "operations": [
+    {
+      "id": "createPet",
+      "name": "createPet",
+      "description": "Create a pet.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "cat",
+                "dog"
+              ]
+            }
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "effects": {
+        "readOnly": false,
+        "idempotent": false,
+        "retryable": false,
+        "idempotencyKeyRequired": false,
+        "classifications": [
+          "state-change"
+        ]
+      },
+      "executor": {
+        "type": "http"
+      }
+    },
+    {
+      "id": "listPets",
+      "name": "listPets",
+      "description": "List pets.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "maximum": 100
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "pets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "effects": {
+        "readOnly": true,
+        "idempotent": true,
+        "retryable": true,
+        "idempotencyKeyRequired": false,
+        "classifications": []
+      },
+      "executor": {
+        "type": "http"
+      }
+    }
+  ]
+}

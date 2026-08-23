@@ -26,6 +26,8 @@ import type {
 import type { OperationExecutor } from '../executor/types.js';
 import type { AuthorizationEngine } from '../policy/authorization.js';
 import { omitUndefined } from '../utils.js';
+import { createLogger } from '../logging/logger.js';
+import type { StructuredLogger } from '../logging/types.js';
 
 /**
  * Command dispatcher interface
@@ -73,13 +75,46 @@ export interface DispatcherOptions {
    * default: turning on enforcement is an explicit act.
    */
   readonly authorization?: AuthorizationEngine;
+
+  /**
+   * Structured logger for stage-level operational logs (#38, §9.3).
+   *
+   * Absent means SILENT: importing core must never write to an adopter's
+   * stdout uninvited, and every pre-#38 caller keeps its exact behaviour.
+   *
+   * These are operational logs, not audit records. Stage 11 remains the only
+   * audit channel; nothing logged here carries a delivery guarantee.
+   */
+  readonly logger?: StructuredLogger;
 }
+
+/**
+ * The 12 stages of the sealed execution envelope (ADR-010), for log labelling.
+ *
+ * Named in one place so a stage cannot be logged under two different names in
+ * two different branches - which is exactly how log-based dashboards rot.
+ */
+const STAGE_NAMES: Readonly<Record<number, string>> = {
+  1: 'resolve-snapshot',
+  2: 'authenticate',
+  3: 'authorize',
+  4: 'validate-input',
+  5: 'verify-confirmation',
+  6: 'acquire-bulkhead',
+  7: 'apply-deadline',
+  8: 'execute',
+  9: 'validate-output',
+  10: 'redact',
+  11: 'audit',
+  12: 'map-result',
+};
 
 /**
  * Default command dispatcher implementation
  */
 class DefaultCommandDispatcher implements CommandDispatcher {
   private readonly authorization: AuthorizationEngine | undefined;
+  private readonly logger: StructuredLogger;
 
   constructor(
     private readonly registry: RegistryReference,
@@ -88,6 +123,35 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     options?: DispatcherOptions,
   ) {
     this.authorization = options?.authorization;
+    this.logger = options?.logger ?? createLogger();
+  }
+
+  /**
+   * Emit the per-stage operational log.
+   *
+   * ## Level: info, as specified - with a reservation flagged for QA (#38)
+   *
+   * The issue's test section requires "every dispatcher stage emits at least
+   * one INFO-level log", so info is what ships. It is worth saying plainly
+   * that this means TWELVE info lines per request, which is a lot of volume
+   * for a level most deployments ship to long-term storage, and it sits
+   * awkwardly beside §9.3's framing of logs as "why is the service
+   * unhealthy?" - stage-by-stage progress is debug-shaped information.
+   *
+   * The conventional split is debug per stage plus one info per outcome. That
+   * is a one-line change here if QA agrees, but it would fail the issue's
+   * stated acceptance test, so it is raised rather than taken unilaterally.
+   */
+  private logStage(
+    log: StructuredLogger,
+    stage: number,
+    extra?: Readonly<Record<string, string | number | boolean | null>>,
+  ): void {
+    log.info('dispatch stage', {
+      stage,
+      stageName: STAGE_NAMES[stage] ?? 'unknown',
+      ...(extra ?? {}),
+    });
   }
 
   async dispatch(command: OperationCommand): Promise<MCPResult> {
@@ -97,12 +161,28 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       const snapshot = this.registry.current();
       const operation = snapshot.operations.get(command.operationId);
 
+      // Request-scoped bindings, so every subsequent line carries the
+      // canonical field set (§ Output format) without each call site
+      // repeating it. `traceId` is bound only when the caller supplied one -
+      // absent means "unknown", which is not the same claim as null.
+      const log = this.logger.child(
+        omitUndefined({
+          requestId: command.requestId,
+          operationId: command.operationId,
+          registryHash: snapshot.hash,
+          traceId: command.traceId,
+        }) as Readonly<Record<string, string>>,
+      );
+
       if (!operation) {
+        this.logStage(log, 1, { outcome: 'operation-not-found' });
         return this.mapError({
           code: 'INVALID_INPUT',
           message: `Operation '${command.operationId}' not found`,
         });
       }
+
+      this.logStage(log, 1, { operationCount: snapshot.operations.size });
 
       // Build dispatch context (immutable for entire pipeline)
       //
@@ -127,6 +207,13 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         principal: principal ?? context.principal,
       });
 
+      // Whether a principal was resolved, NEVER which one. The principal
+      // identifier is on the §9.4 never-include list, and `principal` is a
+      // compile-time forbidden field name, so this records presence only.
+      this.logStage(log, 2, {
+        authenticated: (principal ?? context.principal) !== undefined,
+      });
+
       // STAGE 3: Authorize — the actual security boundary (§5.5).
       //
       // The policy engine runs BEFORE the user hook. A hook cannot be allowed
@@ -139,24 +226,35 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         command,
       );
       if (policyOutcome !== null) {
+        this.logStage(log, 3, { outcome: 'policy-denied' });
         // Denials are audited. Stage 11 only ever ran on the success path, so
         // without this a refusal left no trace — the one event an audit log
         // most needs to contain.
         await this.audit(contextWithPrincipal, policyOutcome);
+        this.logStage(log, 11, { outcome: 'policy-denied' });
         return this.mapResult(policyOutcome);
       }
 
       const authDecision = await this.authorize(contextWithPrincipal, command.input);
       if ('shortCircuit' in authDecision) {
+        this.logStage(log, 3, { outcome: 'hook-short-circuit' });
         await this.audit(contextWithPrincipal, authDecision.result);
+        this.logStage(log, 11, { outcome: 'hook-short-circuit' });
         return this.mapResult(authDecision.result);
       }
+
+      this.logStage(log, 3, { outcome: 'allowed' });
 
       // STAGE 4: Validate input
       const inputValidation = this.validateInput(command.input, operation);
       if (!inputValidation.ok) {
+        // The validation ERROR CODE, never the offending input - raw input is
+        // on the §9.4 never-include list.
+        this.logStage(log, 4, { outcome: 'invalid-input' });
         return this.mapError(inputValidation.error);
       }
+
+      this.logStage(log, 4, { outcome: 'valid' });
 
       // STAGE 5: Verify confirmation
       const confirmDecision = await this.verifyConfirmation(
@@ -164,15 +262,24 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         command.input,
       );
       if ('shortCircuit' in confirmDecision) {
+        this.logStage(log, 5, { outcome: 'confirmation-required' });
         return this.mapResult(confirmDecision.result);
       }
+
+      this.logStage(log, 5, { outcome: 'satisfied' });
 
       // STAGE 6: Acquire bulkhead permit
       // v0.1: no-op (real bulkheads in Epic #3)
       await this.acquireBulkhead(contextWithPrincipal);
+      this.logStage(log, 6, { outcome: 'acquired' });
 
       // STAGE 7: Apply deadline + AbortSignal to executor
       // (Already present in command, passed to executor)
+      //
+      // Logged despite being a no-op stage: the envelope is sealed at 12
+      // stages, and a gap in the sequence reads as a dropped stage rather
+      // than as one that had nothing to do.
+      this.logStage(log, 7, { deadline: command.deadline.toISOString() });
 
       // STAGE 8: Execute
       const executionResult = await this.execute(
@@ -183,23 +290,32 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
       // If execution failed, skip output validation and go straight to mapping
       if (!executionResult.ok) {
+        this.logStage(log, 8, { outcome: 'execution-failed' });
         return this.mapResult(executionResult);
       }
+
+      this.logStage(log, 8, { outcome: 'executed' });
 
       // STAGE 9: Validate output
       const outputValidation = this.validateOutput(executionResult.value, operation);
       if (!outputValidation.ok) {
+        this.logStage(log, 9, { outcome: 'invalid-output' });
         return this.mapError(outputValidation.error);
       }
 
+      this.logStage(log, 9, { outcome: 'valid' });
+
       // STAGE 10: Redact observable data
       const redacted = this.redact(executionResult.value);
+      this.logStage(log, 10, { outcome: 'redacted' });
 
       // STAGE 11: Audit
       const finalResult: OperationResult = { ok: true, value: redacted };
       await this.audit(contextWithPrincipal, finalResult);
+      this.logStage(log, 11, { outcome: 'audited' });
 
       // STAGE 12: Map to MCP result
+      this.logStage(log, 12, { outcome: 'success' });
       return this.mapResult(finalResult);
     } catch (error) {
       // Catch any internal exception and map to INTERNAL_ERROR

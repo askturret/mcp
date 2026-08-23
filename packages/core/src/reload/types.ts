@@ -26,6 +26,7 @@ import type { RegistrySnapshot } from '../types.js';
 import type { Logger } from '../sources/types.js';
 import type { RegistryReference } from '../registry-reference.js';
 import type { ReloadMode } from '../preset/types.js';
+import type { MetricRecorder } from '../telemetry/types.js';
 
 /**
  * Outcome of a single reload attempt.
@@ -235,7 +236,29 @@ export interface ReloadControllerOptions {
   readonly retain?: number;
 
   readonly logger?: Logger;
+
+  /**
+   * Reload metrics sink. Defaults to a no-op.
+   *
+   * Supply this to report into something that is not the §9.2 metric
+   * contract. To report into that contract — the usual case — supply
+   * `metricRecorder` instead and skip the adapter boilerplate.
+   */
   readonly metrics?: ReloadMetrics;
+
+  /**
+   * The §9.2 recorder to emit `mcp_registry_reload_total` and
+   * `mcp_registry_operations` into (#39).
+   *
+   * Bridged to `ReloadMetrics` via `reloadMetricsFromRecorder`. Ignored when
+   * `metrics` is supplied explicitly, which stays the escape hatch for an
+   * adopter with their own sink.
+   *
+   * This exists because the bridge alone does not make the two metrics flow —
+   * something has to CALL it. Leaving that entirely to adopters is what left
+   * both series permanently empty despite being declared.
+   */
+  readonly metricRecorder?: MetricRecorder;
 }
 
 /**

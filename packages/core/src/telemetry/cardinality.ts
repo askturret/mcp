@@ -60,9 +60,17 @@ export interface CardinalityViolation {
 /**
  * Is this label denied?
  *
- * Matches on WHOLE normalized segments, not substrings. A substring rule
- * would reject `outcome` (contains "sub") and `input_schema_id`, which is the
- * obvious way to make an enforced guard so annoying that someone disables it.
+ * Matches on WHOLE normalized segments, not substrings. A substring rule would
+ * reject `target` (contains "arg"), `subject` and `subsystem` (contain "sub"),
+ * and `arguments_count` — none of which carry unbounded values. That is the
+ * obvious way to make an enforced guard annoying enough that someone disables
+ * it, which costs more than the rule buys.
+ *
+ * No CURRENTLY declared label is affected either way; the examples above are
+ * plausible future ones. An earlier version of this comment cited `outcome` as
+ * "containing sub" — it does not, and no declared label collides with the
+ * denylist by substring at all (#39 QA). The reasoning stands; the example was
+ * simply wrong, which is worse than no example, because it reads as evidence.
  */
 export function isDeniedLabel(label: string): string | null {
   const normalized = normalizeLabel(label);

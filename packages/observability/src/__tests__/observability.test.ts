@@ -211,4 +211,99 @@ describe('openTelemetry', () => {
   it('returns a fresh Observability per call', () => {
     expect(openTelemetry()).not.toBe(openTelemetry());
   });
+
+  // ── Gauge semantics (#39 QA) ───────────────────────────────────────────
+  //
+  // These drive the REAL adapter, and that is the entire point of where they
+  // live. Core's `RecordingMetricRecorder` stores the absolute value handed to
+  // `set` and replays it verbatim, so an assertion made against it agrees with
+  // ANY implementation of `set` — including one that accumulates. That is why
+  // golden-trace's "returns the in-flight gauge to zero" test passed while the
+  // shipped adapter was reading 4 after four non-overlapping calls.
+  //
+  // A gauge assertion is only worth anything at the boundary where the SDK
+  // sees the value.
+
+  const netLevel = (samples: RecordedSample[], instrument: string): number =>
+    samples.filter((s) => s.instrument === instrument).reduce((total, s) => total + s.value, 0);
+
+  it('tracks an absolute gauge level rather than accumulating it', () => {
+    const { meter, samples } = fakeMeter();
+    const { metrics } = openTelemetry({ meter });
+
+    // Four sequential, NON-OVERLAPPING calls: in-flight goes 0 -> 1 -> 0 each
+    // time. Nothing is ever concurrent, so the level must end at zero.
+    for (let i = 0; i < 4; i += 1) {
+      metrics.set('mcp_tool_inflight', 1, { tool: 'listPets' });
+      metrics.set('mcp_tool_inflight', 0, { tool: 'listPets' });
+    }
+
+    // Passing absolute levels straight to an UpDownCounter's `add` sums them
+    // and reads 4 here — the reported bug, reproduced at the boundary.
+    expect(netLevel(samples, 'mcp_tool_inflight')).toBe(0);
+  });
+
+  it('reports the true level while calls overlap', () => {
+    // The complement of the test above: ending at zero would also be satisfied
+    // by an adapter that emitted nothing at all.
+    const { meter, samples } = fakeMeter();
+    const { metrics } = openTelemetry({ meter });
+    const level = (n: number): void => metrics.set('mcp_tool_inflight', n, { tool: 'listPets' });
+
+    level(1);
+    expect(netLevel(samples, 'mcp_tool_inflight')).toBe(1);
+    level(2);
+    expect(netLevel(samples, 'mcp_tool_inflight')).toBe(2);
+    level(1);
+    expect(netLevel(samples, 'mcp_tool_inflight')).toBe(1);
+    level(0);
+    expect(netLevel(samples, 'mcp_tool_inflight')).toBe(0);
+  });
+
+  it('keeps gauge levels independent per label set', () => {
+    // Sharing one level across series would let a busy tool mask an idle one.
+    const { meter, samples } = fakeMeter();
+    const { metrics } = openTelemetry({ meter });
+
+    metrics.set('mcp_tool_inflight', 3, { tool: 'listPets' });
+    metrics.set('mcp_tool_inflight', 0, { tool: 'createPet' });
+    metrics.set('mcp_tool_inflight', 1, { tool: 'listPets' });
+
+    const byTool = (tool: string): number =>
+      samples
+        .filter((s) => s.instrument === 'mcp_tool_inflight' && s.attributes.tool === tool)
+        .reduce((total, s) => total + s.value, 0);
+
+    expect(byTool('listPets')).toBe(1);
+    expect(byTool('createPet')).toBe(0);
+  });
+
+  it('still emits a zero delta, so a flat placeholder series exists', () => {
+    // `mcp_tool_queue_depth` and `mcp_circuit_breaker_state` are set to 0 and
+    // never move until Epic #3. Suppressing a zero delta as "nothing changed"
+    // would keep them out of the backend entirely, which defeats the reason
+    // they are emitted — a dashboard you can build before the feature lands.
+    const { meter, samples } = fakeMeter();
+    const { metrics } = openTelemetry({ meter });
+
+    metrics.set('mcp_tool_queue_depth', 0, { bulkhead: 'default' });
+
+    expect(samples.filter((s) => s.instrument === 'mcp_tool_queue_depth')).toHaveLength(1);
+  });
+
+  it('enforces the cardinality rule on set(), including on an unmoved gauge', () => {
+    // The denied-label check must not sit behind the delta bookkeeping: a
+    // repeated set with an unchanged value produces a zero delta, and a guard
+    // that only runs when the value moves is a guard with a hole in it.
+    const { meter, samples } = fakeMeter();
+    const { metrics } = openTelemetry({ meter });
+
+    expect(() => metrics.set('mcp_tool_inflight', 0, { user: 'alice' })).toThrow(
+      /cardinality rule/,
+    );
+    expect(() => metrics.set('mcp_tool_inflight', 0, { user: 'alice' })).toThrow(
+      /cardinality rule/,
+    );
+    expect(samples).toEqual([]);
+  });
 });

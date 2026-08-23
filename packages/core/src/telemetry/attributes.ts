@@ -31,6 +31,15 @@ export const DENIED_ATTRIBUTE_KEYS: readonly string[] = [
   'output',
   'rawoutput',
   'authorization',
+  // `auth` and `bearer` are segments in their own right, not just prefixes of
+  // `authorization`. Without them, segment matching still lets `auth_header`
+  // and `auth.value` through — `auth` is not `authorization`, so neither the
+  // whole-key nor the per-segment comparison fires (#39 QA). §9.1 names
+  // "Authorization headers" outright, so the segment is denied outright.
+  'auth',
+  'bearer',
+  'credential',
+  'credentials',
   'cookie',
   'cookies',
   'token',
@@ -58,10 +67,50 @@ const NORMALIZED_DENIED = new Set(DENIED_ATTRIBUTE_KEYS.map(normalize));
  */
 const ALLOWED_PRINCIPAL_ATTR = normalize('principal.identityHash');
 
+/**
+ * Split a key into its parts, on separators AND camelCase boundaries.
+ *
+ * Same shape as `splitLabelParts` in `cardinality.ts`, and deliberately so —
+ * these are two denylists doing the same job on two egress paths, and having
+ * them disagree about what "matches" means is how one of them ends up weaker
+ * than the other without anyone deciding that it should be.
+ */
+function splitKeyParts(key: string): readonly string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .split(/[_\-.\s]+/)
+    .filter((part) => part.length > 0);
+}
+
+/**
+ * Is this attribute key denied?
+ *
+ * Matched on WHOLE NORMALIZED SEGMENTS, not on the whole key alone. Exact-match
+ * on the full key was the original rule and it let compound names straight
+ * through: `auth_header`, `bearer_token` and `cookie_jar` all normalize to
+ * something that is not literally in the list, so none of them were redacted
+ * (#39 QA).
+ *
+ * Nothing was leaking in practice — the dispatcher only ever sets the stable
+ * `SPAN_ATTR` constants, none of which contain a denied segment. But this
+ * function is exported and is the enforcement point for any attribute an
+ * adopter or a future call site sets, so "no current caller passes a bad key"
+ * is a property of today's callers, not of the guard.
+ *
+ * Whole SEGMENTS rather than substrings, for the reason the label guard gives:
+ * a substring rule rejects innocuous keys and gets disabled.
+ */
 export function isDeniedAttributeKey(key: string): boolean {
   const normalized = normalize(key);
+
+  // Checked first: `principal.identityHash` is the §9.1-RECOMMENDED attribute,
+  // and it contains the denied segment `principal`. Segment matching makes this
+  // ordering load-bearing rather than merely defensive.
   if (normalized === ALLOWED_PRINCIPAL_ATTR) return false;
-  return NORMALIZED_DENIED.has(normalized);
+
+  if (NORMALIZED_DENIED.has(normalized)) return true;
+
+  return splitKeyParts(key).some((part) => NORMALIZED_DENIED.has(normalize(part)));
 }
 
 /**

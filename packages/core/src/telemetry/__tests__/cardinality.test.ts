@@ -37,10 +37,15 @@ describe('label denylist', () => {
     expect(isDeniedLabel('input_value')).toBe('input');
   });
 
-  it('does NOT deny legitimate labels that merely contain a denied substring', () => {
-    // `outcome` contains "sub". A substring rule would reject the single most
-    // common label in the whole metric set — and a guard that blocks correct
-    // code is a guard someone switches off.
+  it('allows every label the metric set actually declares', () => {
+    // Previously titled as the substring-regression guard, and it was not one:
+    // it justified itself with "`outcome` contains sub" — `outcome` does not
+    // contain "sub" — and NONE of the labels below collides with the denylist
+    // by substring either. Every assertion passed, for a reason that was not
+    // true, guarding a regression it could not detect (#39 QA).
+    //
+    // What it does check is still worth checking: the declared label set is
+    // accepted. The substring regression is covered by the test below.
     expect(isDeniedLabel('outcome')).toBeNull();
     expect(isDeniedLabel('tool')).toBeNull();
     expect(isDeniedLabel('method')).toBeNull();
@@ -51,6 +56,23 @@ describe('label denylist', () => {
     expect(isDeniedLabel('registry_hash')).toBeNull();
     expect(isDeniedLabel('phase')).toBeNull();
     expect(isDeniedLabel('decision')).toBeNull();
+    expect(isDeniedLabel('error_class')).toBeNull();
+  });
+
+  it('does NOT deny a label that merely CONTAINS a denied term as a substring', () => {
+    // These genuinely collide by substring and not by segment, which is what
+    // makes them the real guard. Swap `isDeniedLabel` to `includes()` and every
+    // one of them starts failing.
+    expect('target'.includes('arg')).toBe(true);
+    expect(isDeniedLabel('target')).toBeNull();
+
+    expect('subject'.includes('sub')).toBe(true);
+    expect(isDeniedLabel('subject')).toBeNull();
+    expect(isDeniedLabel('subsystem')).toBeNull();
+
+    // `arguments` is not `arg`: a count OF the arguments carries no argument
+    // values, so the segment rule correctly lets it through.
+    expect(isDeniedLabel('arguments_count')).toBeNull();
   });
 
   it('normalizes case and separators consistently', () => {

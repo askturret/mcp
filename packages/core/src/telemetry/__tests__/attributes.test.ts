@@ -59,6 +59,45 @@ describe('sanitizeAttributes', () => {
     expect(sanitizeAttributes({ api_key: 'x' })).toEqual({ api_key: REDACTED });
     expect(sanitizeAttributes({ 'raw-input': 'x' })).toEqual({ 'raw-input': REDACTED });
   });
+
+  it('redacts COMPOUND keys built from a denied term', () => {
+    // Exact-match on the whole key was the original rule, and these all slipped
+    // straight through it: none is literally in the denylist, so an attribute
+    // called `bearer_token` reached the tracing backend intact (#39 QA).
+    //
+    // Nothing was leaking in practice — the dispatcher only sets the stable
+    // SPAN_ATTR constants — but this is the enforcement point for any attribute
+    // an adopter sets, and "no current caller does that" is a fact about
+    // callers, not a property of the guard.
+    expect(isDeniedAttributeKey('auth_header')).toBe(true);
+    expect(isDeniedAttributeKey('bearer_token')).toBe(true);
+    expect(isDeniedAttributeKey('cookie_jar')).toBe(true);
+    expect(isDeniedAttributeKey('requestPayload')).toBe(true);
+    expect(isDeniedAttributeKey('user.email')).toBe(true);
+
+    expect(sanitizeAttributes({ bearer_token: 'sk-live-abc' })).toEqual({
+      bearer_token: REDACTED,
+    });
+  });
+
+  it('still allows the one recommended principal attribute', () => {
+    // `principal.identityHash` is what §9.1 tells you to use INSTEAD of a
+    // principal id, and it contains the denied segment `principal`. Segment
+    // matching makes the allow-check ordering load-bearing: get it wrong and
+    // the guard redacts the very attribute the spec recommends.
+    expect(isDeniedAttributeKey('principal.identityHash')).toBe(false);
+    expect(sanitizeAttributes({ 'principal.identityHash': 'abc123' })).toEqual({
+      'principal.identityHash': 'abc123',
+    });
+  });
+
+  it('does not redact a key that merely contains a denied term as a substring', () => {
+    // Same reasoning as the metric-label guard: a substring rule would redact
+    // `target` (contains "arg") and get itself switched off.
+    expect(isDeniedAttributeKey('target')).toBe(false);
+    expect(isDeniedAttributeKey('mcp.tool.name')).toBe(false);
+    expect(isDeniedAttributeKey('subject')).toBe(false);
+  });
 });
 
 describe('maskUrl', () => {

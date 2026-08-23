@@ -11,6 +11,8 @@ export {
 
 export { createReloadWatcher } from './watcher.js';
 
+export { NO_ERROR_CLASS, reloadMetricsFromRecorder } from './metrics.js';
+
 export {
   DEFAULT_DEBOUNCE_MS,
   DEFAULT_RETAIN_COUNT,

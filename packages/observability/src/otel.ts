@@ -167,13 +167,69 @@ function otelMetrics(meter: OtelMeterLike): MetricRecorder {
     }
   };
 
+  // Last known level per gauge SERIES (metric + label set). See `set` below.
+  //
+  // Bounded by the label cardinality of the gauge metrics, which is exactly
+  // what the §9.2 cardinality rule keeps finite — `tool` is bounded by the
+  // registry, `bulkhead` / `breaker` / `registry_hash` are bounded by
+  // construction. An unbounded label here would be a memory leak, and the
+  // guard that prevents it is already enforced on every call below.
+  const gaugeLevels = new Map<string, number>();
+
+  const seriesKey = (name: MetricName, labels: MetricLabels): string => {
+    // Sorted, so `{a,b}` and `{b,a}` are recognised as the same series.
+    //
+    // The `=` and `,` separators are not decorative: with no delimiter
+    // between key and value, `{tool: 'ab'}` and `{too: 'lab'}` both flatten
+    // to `toolab` and would silently share one level.
+    const parts = Object.keys(labels)
+      .sort()
+      .map((key) => `${key}=${labels[key]}`);
+    return `${name}{${parts.join(',')}}`;
+  };
+
+  /**
+   * Record an ABSOLUTE level on a gauge.
+   *
+   * Gauges are modelled as UpDownCounters, which expose only `add` — and `add`
+   * SUMS what it is given. Passing the absolute level straight to `add` (which
+   * this adapter used to do) therefore accumulates instead of tracking: four
+   * sequential, non-overlapping tool calls each setting in-flight to 1 and
+   * back to 0 left `mcp_tool_inflight` reading 4 rather than 0.
+   *
+   * So convert the level to a DELTA against the last value seen for this
+   * series. `add(value - previous)` leaves the counter reading `value`, which
+   * is what an absolute-valued port must mean.
+   *
+   * A true observable gauge (a callback the SDK polls) would avoid the
+   * bookkeeping, but it does not fit a push-shaped port: the port is called at
+   * the moment the level changes and has nowhere to hang a pull callback.
+   *
+   * A zero delta is still emitted rather than skipped. `add(0)` does not change
+   * the value but does ensure the series EXISTS in the backend, which is the
+   * entire point of the v0.2 placeholder series (`mcp_tool_queue_depth`,
+   * `mcp_circuit_breaker_state`) that are set to 0 and never move — skipping
+   * them would delete the dashboards they exist to make buildable.
+   */
+  const set = (name: MetricName, value: number, labels: MetricLabels): void => {
+    // Runs before the instrument lookup and before the delta bookkeeping, so
+    // a denied label throws whether or not the series exists or has moved.
+    assertLabelsAllowed(name, labels);
+
+    const instrument = instruments.get(name);
+    const add = instrument?.add;
+    if (!instrument || typeof add !== 'function') return;
+
+    const key = seriesKey(name, labels);
+    const previous = gaugeLevels.get(key) ?? 0;
+    gaugeLevels.set(key, value);
+
+    add.call(instrument, value - previous, { ...labels });
+  };
+
   return {
     add: (name, value, labels) => emit('add', name, value, labels),
     record: (name, value, labels) => emit('record', name, value, labels),
-    // Gauges are modelled as UpDownCounters, which expose `add`. A true
-    // observable gauge needs a callback the SDK polls, which does not fit a
-    // push-shaped port; `set` therefore records an absolute sample via `add`
-    // and is documented as such rather than silently approximating.
-    set: (name, value, labels) => emit('add', name, value, labels),
+    set,
   };
 }

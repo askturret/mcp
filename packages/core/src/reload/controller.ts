@@ -10,6 +10,7 @@
 import type { RegistrySnapshot } from '../types.js';
 import type { Logger } from '../sources/types.js';
 import type { ReloadMode } from '../preset/types.js';
+import { reloadMetricsFromRecorder } from './metrics.js';
 import {
   DEFAULT_RETAIN_COUNT,
   type ReadinessState,
@@ -157,7 +158,14 @@ class DefaultReloadController implements ReloadController {
     this.mode = options.mode ?? 'degraded';
     this.retainCount = Math.max(0, options.retain ?? DEFAULT_RETAIN_COUNT);
     this.logger = options.logger ?? NOOP_LOGGER;
-    this.metrics = options.metrics ?? NOOP_METRICS;
+    // An explicit `metrics` sink wins; otherwise bridge the §9.2 recorder if
+    // one was supplied (#39). Falling all the way through to the no-op is what
+    // leaves `mcp_registry_reload_total` and `mcp_registry_operations` empty.
+    this.metrics =
+      options.metrics ??
+      (options.metricRecorder
+        ? reloadMetricsFromRecorder(options.metricRecorder)
+        : NOOP_METRICS);
 
     const initial = this.reference.current();
     this.readinessState = {

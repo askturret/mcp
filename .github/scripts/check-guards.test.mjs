@@ -652,12 +652,30 @@ check(
 );
 
 check(
-  'cardinality: does NOT fire on `outcome`, which contains the denied term "sub"',
+  'cardinality: does NOT fire on the ordinary declared labels `outcome` / `error_code`',
   runGuard(
     CARDINALITY,
     scratchSource(
       'core/src/telemetry/types.ts',
       `export const D = [{ name: METRIC.a, kind: 'counter', labels: ['outcome', 'error_code'] }];\n`,
+    ),
+  ).code,
+  0,
+);
+
+// The case the assertion above was NAMED for but never exercised. Its old title
+// claimed `outcome` "contains the denied term sub" — it does not — so it
+// asserted a true result for a false reason, and would not have caught the
+// guard being loosened to substring matching (#39 QA).
+//
+// `target` really does contain `arg`, and `subject` really does contain `sub`.
+check(
+  'cardinality: does NOT fire on labels containing a denied term as a mere SUBSTRING',
+  runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/telemetry/types.ts',
+      `export const D = [{ name: METRIC.a, kind: 'counter', labels: ['target', 'subject'] }];\n`,
     ),
   ).code,
   0,

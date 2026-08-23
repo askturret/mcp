@@ -348,6 +348,13 @@ jobs:
       - name: No NUL bytes in source
         run: node .github/scripts/check-nul-bytes.mjs
 
+      # #39 / §9.2: an unbounded metric label creates one time series per
+      # distinct value. Parses source rather than importing dist, so it still
+      # runs when the build is broken — which is exactly when a bad label is
+      # most likely to be sitting in the tree.
+      - name: No high-cardinality metric labels
+        run: node .github/scripts/check-metric-cardinality.mjs
+
       # Needs dist/ — packages resolve each other through their built entry points.
       - run: npm run build
 

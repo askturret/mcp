@@ -23,6 +23,7 @@ const PLACEHOLDER = join(here, 'check-placeholder-tests.mjs');
 const EXECUTION = join(here, 'check-test-execution.mjs');
 const NETWORK = join(here, 'check-network-imports.mjs');
 const NUL = join(here, 'check-nul-bytes.mjs');
+const CARDINALITY = join(here, 'check-metric-cardinality.mjs');
 
 let passed = 0;
 let failed = 0;
@@ -578,6 +579,133 @@ check(
     ),
   );
   check('nul: reports the offending line number', r.out.includes('thing.ts:2') ? 'located' : r.out, 'located');
+}
+
+// ---------------------------------------------------------------------------
+// check-metric-cardinality.mjs (#39, §9.2)
+//
+// An unbounded metric label creates one time series per distinct value. This
+// guard's own failure mode is the usual denylist trap: too narrow and it
+// misses the spelling people actually write, too broad and it blocks correct
+// labels until someone switches it off. Both directions are tested.
+// ---------------------------------------------------------------------------
+
+/** A throwaway package-shaped tree holding one source file. */
+function scratchSource(relPath, contents) {
+  const dir = mkdtempSync(join(tmpdir(), 'cardguard-'));
+  const full = join(dir, relPath);
+  mkdirSync(dirname(full), { recursive: true });
+  writeFileSync(full, contents);
+  tmpDirs.push(dir);
+  return dir;
+}
+
+check(
+  'cardinality: passes on the documented label sets',
+  runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/telemetry/types.ts',
+      `export const D = [
+         { name: METRIC.a, kind: 'counter', labels: ['method', 'outcome'] },
+         { name: METRIC.b, kind: 'gauge', labels: ['tool', 'registry_hash'] },
+       ];\n`,
+    ),
+  ).code,
+  0,
+);
+
+check(
+  "cardinality: fails on a declared user_id label (the issue's stated case)",
+  runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/telemetry/types.ts',
+      `export const D = [{ name: METRIC.a, kind: 'counter', labels: ['method', 'user_id'] }];\n`,
+    ),
+  ).code,
+  1,
+);
+
+check(
+  'cardinality: fails on snake_case request_id, not just camelCase requestId',
+  runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/telemetry/types.ts',
+      `export const D = [{ name: METRIC.a, kind: 'counter', labels: ['request_id'] }];\n`,
+    ),
+  ).code,
+  1,
+);
+
+check(
+  'cardinality: fails on a denied label passed at a CALL SITE, not just declared',
+  runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/dispatcher/index.ts',
+      `metrics.add(METRIC.requestsTotal, 1, { method: 'tools/call', tenant: t });\n`,
+    ),
+  ).code,
+  1,
+);
+
+check(
+  'cardinality: does NOT fire on the ordinary declared labels `outcome` / `error_code`',
+  runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/telemetry/types.ts',
+      `export const D = [{ name: METRIC.a, kind: 'counter', labels: ['outcome', 'error_code'] }];\n`,
+    ),
+  ).code,
+  0,
+);
+
+// The case the assertion above was NAMED for but never exercised. Its old title
+// claimed `outcome` "contains the denied term sub" — it does not — so it
+// asserted a true result for a false reason, and would not have caught the
+// guard being loosened to substring matching (#39 QA).
+//
+// `target` really does contain `arg`, and `subject` really does contain `sub`.
+check(
+  'cardinality: does NOT fire on labels containing a denied term as a mere SUBSTRING',
+  runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/telemetry/types.ts',
+      `export const D = [{ name: METRIC.a, kind: 'counter', labels: ['target', 'subject'] }];\n`,
+    ),
+  ).code,
+  0,
+);
+
+check(
+  'cardinality: does NOT fire on executor_type, bulkhead, breaker, phase, decision',
+  runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/telemetry/types.ts',
+      `export const D = [{ name: METRIC.a, kind: 'histogram', labels: ['executor_type', 'bulkhead', 'breaker', 'phase', 'decision'] }];\n`,
+    ),
+  ).code,
+  0,
+);
+
+{
+  const r = runGuard(
+    CARDINALITY,
+    scratchSource(
+      'core/src/telemetry/types.ts',
+      `export const D = [{ name: METRIC.a, kind: 'counter', labels: ['tenantName'] }];\n`,
+    ),
+  );
+  check(
+    'cardinality: names the offending label and the term it matched',
+    r.out.includes('tenantName') && r.out.includes('tenant') ? 'named' : r.out,
+    'named',
+  );
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });

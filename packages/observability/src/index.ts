@@ -26,4 +26,12 @@ export {
   type OtelExporterPluginOptions,
 } from './plugin.js';
 
+export {
+  createSpanBuffer,
+  recordingTracer,
+  DEFAULT_SPAN_BUFFER_SIZE,
+  type RecordedSpan,
+  type SpanBuffer,
+} from './span-buffer.js';
+
 export * from './types.js';

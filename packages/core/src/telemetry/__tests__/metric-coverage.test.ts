@@ -77,8 +77,33 @@ async function roundTrip(metrics: MetricRecorder, execute: () => Promise<Operati
   await dispatcher.dispatch(command());
 }
 
+/**
+ * Saturate a one-slot bulkhead so a third caller is rejected (#43).
+ *
+ * Drives the REAL registry rather than calling `metrics.add` directly: the
+ * point of this file is that a metric is emitted by the code path that owns
+ * it, and a hand-written sample would satisfy the assertion while proving
+ * nothing about the bulkhead.
+ */
+async function overflowOneBulkhead(metrics: MetricRecorder): Promise<void> {
+  const { createBulkheadRegistry } = await import('../../bulkhead/index.js');
+
+  const registry = createBulkheadRegistry({
+    config: { default: { concurrency: 1, queueSize: 1 } },
+    metrics,
+  });
+
+  const held = await registry.acquire('default'); // takes the only slot
+  const queued = registry.acquire('default'); // fills the only queue place
+
+  await expect(registry.acquire('default')).rejects.toThrow(/full/); // shed
+
+  held.release();
+  (await queued).release();
+}
+
 describe('§9.2 metric coverage', () => {
-  it('emits all thirteen metrics across a round-trip and a reload', async () => {
+  it('emits every declared metric across a round-trip, a reload and an overflow', async () => {
     const metrics = createRecordingMetricRecorder();
 
     // 1. A successful call: requests, tool calls, durations, policy, upstream,
@@ -103,6 +128,11 @@ describe('§9.2 metric coverage', () => {
       metricRecorder: metrics,
     });
     await controller.reload();
+
+    // 4. A bulkhead overflow, which is the only thing that produces
+    //    mcp_bulkhead_rejected_total (#43). Concurrency and queue are both 1
+    //    and the executor never returns, so the third caller must be shed.
+    await overflowOneBulkhead(metrics);
 
     const emitted = new Set<MetricName>(metrics.samples().map((sample) => sample.metric));
     const missing = (Object.values(METRIC) as MetricName[]).filter((name) => !emitted.has(name));

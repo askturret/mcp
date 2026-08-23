@@ -84,7 +84,10 @@ class StreamableHttpTransport implements HttpTransport {
       options.registry,
       options.hooks,
       options.executors,
-      authorization === undefined ? undefined : { authorization },
+      {
+        ...(authorization === undefined ? {} : { authorization }),
+        ...(options.bulkheads === undefined ? {} : { bulkheads: options.bulkheads }),
+      },
     );
 
     // No policy configured means no filtering, which is the behaviour that

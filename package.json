@@ -19,6 +19,10 @@
       "types": "./packages/adapters-express/dist/index.d.ts",
       "import": "./packages/adapters-express/dist/index.js"
     },
+    "./fastify": {
+      "types": "./packages/adapters-fastify/dist/index.d.ts",
+      "import": "./packages/adapters-fastify/dist/index.js"
+    },
     "./otel": {
       "types": "./packages/observability/dist/index.d.ts",
       "import": "./packages/observability/dist/index.js"

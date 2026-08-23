@@ -17,6 +17,7 @@ jobs:
     outputs:
       core: ${{ steps.filter.outputs.core }}
       adapters-express: ${{ steps.filter.outputs.adapters-express }}
+      adapters-fastify: ${{ steps.filter.outputs.adapters-fastify }}
       sources-openapi: ${{ steps.filter.outputs.sources-openapi }}
       transports: ${{ steps.filter.outputs.transports }}
       observability: ${{ steps.filter.outputs.observability }}
@@ -35,6 +36,11 @@ jobs:
               - 'packages/adapters-express/**'
               # adapters-express serves the Explorer, so an explorer-only
               # change must re-run these tests too.
+              - 'packages/explorer/**'
+            adapters-fastify:
+              - 'packages/adapters-fastify/**'
+              # Same reasoning as adapters-express: this adapter serves the
+              # Explorer too, so an explorer-only change must re-run it.
               - 'packages/explorer/**'
             sources-openapi:
               - 'packages/sources-openapi/**'
@@ -78,6 +84,20 @@ jobs:
       - run: npm ci
       - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-express
       - run: npm test --workspace=packages/adapters-express
+
+  # Test adapters-fastify package
+  test-adapters-fastify:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.adapters-fastify == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-fastify
+      - run: npm test --workspace=packages/adapters-fastify
 
   # Test sources-openapi package
   test-sources-openapi:
@@ -187,6 +207,26 @@ jobs:
             fi
           else
             echo "Adapters-express tests skipped (no changes)"
+            exit 0
+          fi
+
+  adapters-fastify-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-adapters-fastify]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.adapters-fastify }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-adapters-fastify.result }}" == "success" ]; then
+              echo "Adapters-fastify tests passed"
+              exit 0
+            else
+              echo "Adapters-fastify tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "Adapters-fastify tests skipped (no changes)"
             exit 0
           fi
 

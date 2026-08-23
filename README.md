@@ -168,6 +168,25 @@ Learn more: [Architecture documentation](docs/architecture-overview.md)
 
 ---
 
+## Framework Adapters
+
+Adapters mount MCP into a server you already have. Both first-tier adapters take
+the **same options object** — the type is declared once and aliased by each, so
+the compiler enforces the parity rather than this table asserting it.
+
+| Framework | Status | Mount |
+|-----------|--------|-------|
+| Express 4 / 5 | ✅ Stable | `app.use('/mcp', mcpFromOpenApi('./api.yaml'))` |
+| Fastify 4 / 5 | ✅ Stable | `app.register(mcpFromOpenApi('./api.yaml'), { prefix: '/mcp' })` |
+| Koa | 📋 Roadmap (v0.4) | — |
+| NestJS | 📋 Roadmap (community) | — |
+
+The Fastify adapter registers as a properly **encapsulated** plugin: its
+content-type parser, hooks and decorators stay inside its own scope, so mounting
+it cannot change how the rest of your app parses requests.
+
+---
+
 ## Policies & Governance
 
 Three presets for different maturity levels:
@@ -247,6 +266,54 @@ app.use('/mcp', mcpFromOpenApi('./petstore.yaml'));
 
 app.listen(7000, () => console.log('MCP server at http://localhost:7000/mcp'));
 ```
+
+### Fastify + OpenAPI
+
+Fastify is a first-class adapter, not a port. It takes **the same options object**
+as Express — swap the import and change nothing else.
+
+```ts
+import Fastify from 'fastify';
+import { mcpFromOpenApi } from '@askturret/mcp/fastify';
+
+const app = Fastify();
+
+// Serve the API on its normal routes
+app.get('/pets', async () => { /* ... */ });
+
+// Add MCP alongside your API. Registered as a proper encapsulated plugin:
+// it does not change body parsing, hooks or decorators for your other routes.
+await app.register(mcpFromOpenApi('./petstore.yaml'), { prefix: '/mcp' });
+
+await app.listen({ port: 7000 });
+```
+
+Composable form, identical in shape to the Express one:
+
+```ts
+import { fastifyMcp } from '@askturret/mcp/fastify';
+import { fromOpenApi } from '@askturret/mcp/openapi';
+import { viaHttp } from '@askturret/mcp';
+
+await app.register(
+  fastifyMcp({
+    sources: [fromOpenApi('./openapi.yaml')],
+    transport: {
+      executors: new Map([['http', viaHttp({ baseUrl: 'http://localhost:8080' })]]),
+    },
+  }),
+  { prefix: '/mcp' },
+);
+```
+
+Both facades share one options type, so a config object that type-checks against
+one type-checks against the other — that is enforced by the compiler, not by
+documentation.
+
+One convenience Fastify gains: `basePath` defaults to the registration `prefix`,
+because a Fastify plugin can read its own mount path and an Express router
+cannot. `{ prefix: '/tools' }` just works, where Express needs a matching
+`basePath: '/tools'`. An explicit `basePath` still wins on both.
 
 ### Production Policies
 

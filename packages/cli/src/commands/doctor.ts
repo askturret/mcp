@@ -117,7 +117,14 @@ function parseArgs(args: string[]): {
 /**
  * Load OpenAPI spec from file or URL
  */
-async function loadSpec(
+/**
+ * Exported for `diagnostics --spec` (#50), which needs the same loader.
+ *
+ * Reused rather than reimplemented: a second spec loader would be a second
+ * set of parse and validation behaviours, and the bundle's doctor section is
+ * only meaningful if it reports what `doctor` itself would report.
+ */
+export async function loadSpec(
   input: string,
   isUrl: boolean,
 ): Promise<OpenAPIDocument> {

@@ -136,13 +136,42 @@ function truncateSchemas(tools: readonly unknown[], full: boolean): unknown[] {
 }
 
 /**
+ * One-line description per bundle file, keyed by the filename itself.
+ *
+ * Data rather than prose so the README can be generated FROM the entries a
+ * run actually produced. See `bundleReadme` for why that matters.
+ */
+const FILE_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  'metadata.json': 'generation time, tool versions, what was collected.',
+  'versions.json': 'package, Node, OS/arch and MCP protocol versions.',
+  'configuration.json': 'expanded preset, env var names, path basenames.',
+  'registry.json': 'registry hash and operation summary.',
+  'tools.json': 'tool definitions as `tools/list` returns them, principal-agnostic.',
+  'health.json': 'live/ready endpoint responses.',
+  'doctor.json': 'readiness analysis against the supplied OpenAPI spec.',
+  'runtime-state.json': 'breaker and bulkhead state.',
+  'logs.txt': 'tail of the supplied log file, re-redacted.',
+  'README.md': 'this file.',
+};
+
+/**
  * The bundle's own README (§13, acceptance).
  *
- * Written from the SAME inputs the bundle was built from, so what it claims
- * and what is present cannot drift. In particular the "not included" list is
- * not a static blurb — it reflects what this build actually did.
+ * ## The Files list is generated from the ACTUAL entries
+ *
+ * It used to be a static enumeration of all nine §13 items, printed whatever
+ * a run produced. QA caught it: a realistic run emits five files while the
+ * README promised nine, which contradicted this bundle's own line three
+ * paragraphs down — "an absent section should never be mistaken for an empty
+ * one" — and #47's rule that "could not check" must never read as "nothing to
+ * report".
+ *
+ * It also falsified the claim this doc-comment used to make. Taking the
+ * filenames from `entries` is what makes "what it claims and what is present
+ * cannot drift" true rather than merely stated: the list cannot mention a
+ * file the archive does not contain, because it is derived from the archive.
  */
-export function bundleReadme(inputs: BundleInputs): string {
+export function bundleReadme(inputs: BundleInputs, filenames: readonly string[] = []): string {
   const unavailable = Object.entries(inputs.unavailable ?? {});
 
   return [
@@ -179,20 +208,18 @@ export function bundleReadme(inputs: BundleInputs): string {
     '- Any live capture of traffic. This is a snapshot, not a packet trace.',
     '- Environment variable values (see above).',
     '',
-    '## Files',
+    '## Files in THIS bundle',
     '',
-    '- `metadata.json` — generation time, tool versions, what was collected.',
-    '- `versions.json` — package, Node, OS/arch and MCP protocol versions.',
-    '- `configuration.json` — expanded preset, env var names, path basenames.',
-    '- `registry.json` — registry hash and operation summary.',
-    '- `tools.json` — tool definitions as `tools/list` returns them, principal-agnostic.',
-    inputs.fullSchemas === true
-      ? '  Schemas are included in full (`--full-schemas`).'
-      : `  Schemas over ${SCHEMA_TRUNCATE_CHARS} bytes are replaced with a marker; re-run with \`--full-schemas\`.`,
-    '- `health.json` — live/ready endpoint responses.',
-    '- `doctor.json` — readiness analysis against the configured source.',
-    '- `runtime-state.json` — breaker and bulkhead state.',
-    '- `logs.txt` — tail of the supplied log file, re-redacted.',
+    ...filenames.map(
+      (name) => `- \`${name}\` — ${FILE_DESCRIPTIONS[name] ?? 'see contents.'}`,
+    ),
+    ...(filenames.includes('tools.json')
+      ? [
+          inputs.fullSchemas === true
+            ? '  Schemas are included in full (`--full-schemas`).'
+            : `  Schemas over ${SCHEMA_TRUNCATE_CHARS} bytes are replaced with a marker; re-run with \`--full-schemas\`.`,
+        ]
+      : []),
     '',
     ...(unavailable.length === 0
       ? []
@@ -267,8 +294,11 @@ export function buildBundleEntries(inputs: BundleInputs): TarEntry[] {
     entries.push({ name: 'logs.txt', content: `${redacted.join('\n')}\n` });
   }
 
-  // README last so it can report on everything decided above.
-  entries.push({ name: 'README.md', content: `${bundleReadme(inputs)}\n` });
+  // README last, and built FROM the entries above plus its own name — so the
+  // Files list it prints is the archive's actual contents by construction,
+  // not a parallel enumeration that can drift from them.
+  const filenames = [...entries.map((entry) => entry.name), 'README.md'];
+  entries.push({ name: 'README.md', content: `${bundleReadme(inputs, filenames)}\n` });
 
   return entries;
 }

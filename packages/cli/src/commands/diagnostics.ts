@@ -7,6 +7,8 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { arch, platform, release } from 'node:os';
 import { describePreset } from '@askturret/mcp-core';
 
+import { analyzeSpec, loadSpec } from './doctor.js';
+
 import { createTarGz } from './diagnostics-tar.js';
 import {
   buildBundleEntries,
@@ -22,6 +24,8 @@ export const DEFAULT_LOG_TAIL_LINES = 500;
 
 export interface DiagnosticsFlags {
   readonly url?: string;
+  /** OpenAPI spec for the doctor section (§13 item 6). */
+  readonly spec?: string;
   readonly config?: string;
   readonly out: string;
   readonly fullSchemas: boolean;
@@ -33,6 +37,7 @@ export interface DiagnosticsFlags {
 
 export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags {
   let url: string | undefined;
+  let spec: string | undefined;
   let config: string | undefined;
   let out = './bundle.tar.gz';
   let fullSchemas = false;
@@ -46,6 +51,9 @@ export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags 
     switch (arg) {
       case '--url':
         url = args[++i];
+        break;
+      case '--spec':
+        spec = args[++i];
         break;
       case '--config':
         config = args[++i];
@@ -75,6 +83,7 @@ export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags 
 
   return {
     ...(url === undefined ? {} : { url }),
+    ...(spec === undefined ? {} : { spec }),
     ...(config === undefined ? {} : { config }),
     out,
     fullSchemas,
@@ -164,6 +173,35 @@ export async function collectBundleInputs(
     unavailable['health'] = 'No --url supplied; live server sections were skipped.';
   }
 
+  // `registry` rides on the same live call as `tools`, so it is unreachable
+  // for exactly the same reason. Recorded explicitly: QA found it absent with
+  // NO reason anywhere, which is the one outcome this bundle's own README
+  // says must not happen.
+  if (registry === undefined && unavailable['registry'] === undefined) {
+    unavailable['registry'] =
+      unavailable['tools'] ?? 'Registry summary comes from the live server and was not collected.';
+  }
+
+  // §13 item 6 — the doctor readiness analysis.
+  //
+  // This section previously existed in the type and in the README and was
+  // assigned by NO code path, so `doctor.json` could never appear in a
+  // CLI-produced bundle while every README promised it. Wired for real rather
+  // than recorded as permanently unavailable: `analyzeSpec` and `loadSpec`
+  // already exist, so the section is a genuine deliverable rather than one
+  // that needs writing off.
+  let doctor: unknown;
+  if (flags.spec !== undefined) {
+    try {
+      const isUrl = /^https?:\/\//.test(flags.spec);
+      doctor = await analyzeSpec(await loadSpec(flags.spec, isUrl));
+    } catch (error) {
+      unavailable['doctor'] = describeError(error);
+    }
+  } else {
+    unavailable['doctor'] = 'No --spec supplied; the readiness analysis needs an OpenAPI source.';
+  }
+
   // §13 lists a snapshot of mcp_circuit_breaker_state and mcp_tool_queue_depth.
   // Neither is reachable over the wire: there is no metrics endpoint on the
   // transport, and #46 deliberately left per-breaker state to a read seam
@@ -182,7 +220,7 @@ export async function collectBundleInputs(
     }
   }
 
-  const paths = [flags.config, flags.logFile].filter(
+  const paths = [flags.config, flags.logFile, flags.spec].filter(
     (value): value is string => value !== undefined,
   );
 
@@ -193,6 +231,7 @@ export async function collectBundleInputs(
     ...(registry === undefined ? {} : { registry }),
     ...(tools === undefined ? {} : { tools }),
     ...(health === undefined ? {} : { health }),
+    ...(doctor === undefined ? {} : { doctor }),
     ...(logTail === undefined ? {} : { logTail }),
     paths,
     envNames: environmentNames(),
@@ -264,6 +303,7 @@ function printDiagnosticsHelp(): void {
   console.log('');
   console.log('Options:');
   console.log('  --url <url>         Live MCP endpoint to snapshot');
+  console.log('  --spec <path|url>   OpenAPI source for the readiness analysis');
   console.log('  --config <path>     Configuration file (recorded by basename)');
   console.log('  --out <path>        Output archive (default ./bundle.tar.gz)');
   console.log('  --preset production Include the expanded preset');

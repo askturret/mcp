@@ -163,6 +163,49 @@ describe('bundle contents (§13)', () => {
   });
 });
 
+describe('the README names exactly the files in the archive (QA #162)', () => {
+  /** Filenames the README's "Files in THIS bundle" section lists. */
+  function readmeFilenames(entries: ReturnType<typeof buildBundleEntries>): string[] {
+    const readme = entries.find((e) => e.name === 'README.md')?.content ?? '';
+    const section = readme.split('## Files in THIS bundle')[1]?.split('\n##')[0] ?? '';
+    return [...section.matchAll(/^- `([^`]+)`/gm)].map((m) => m[1] as string);
+  }
+
+  // The assertion QA proved was missing. Tester inserted a fabricated
+  // filename into the Files list and all 28 tests still passed — nothing tied
+  // the README's claims to the archive's contents. These do, in BOTH
+  // directions, so neither an over-claim nor an omission can pass.
+  it.each([
+    ['minimal run', {}],
+    ['live-server run', { tools: [], health: {}, registry: { summary: {} } }],
+    ['run with logs', { logTail: ['a line'] }],
+    ['run with doctor', { doctor: { score: 90 } }],
+    ['everything', {
+      tools: [],
+      health: {},
+      registry: { summary: {} },
+      doctor: { score: 90 },
+      runtimeState: {},
+      logTail: ['x'],
+    }],
+  ])('%s: README lists every file present, and only those', (_label, overrides) => {
+    const entries = buildBundleEntries(inputs(overrides as Partial<BundleInputs>));
+
+    expect(readmeFilenames(entries).sort()).toEqual(entries.map((e) => e.name).sort());
+  });
+
+  it('never names a file the archive does not contain', () => {
+    // The specific defect: a realistic run emitted 5 files while the README
+    // promised all 9 §13 items regardless of what was collected.
+    const entries = buildBundleEntries(inputs());
+    const listed = readmeFilenames(entries);
+
+    expect(listed).not.toContain('doctor.json');
+    expect(listed).not.toContain('tools.json');
+    expect(listed).toHaveLength(entries.length);
+  });
+});
+
 describe('the README tells the truth about this build', () => {
   it('enumerates the redaction guarantees (§50 acceptance)', () => {
     const readme = bundleReadme(inputs());
@@ -182,6 +225,19 @@ describe('the README tells the truth about this build', () => {
     expect(readme).toContain('Review this bundle before you send it');
   });
 
+  it('records a reason for EVERY section a real run could not collect', async () => {
+    // QA's second finding: registry and doctor were absent with no reason
+    // recorded anywhere, unlike the other missing sections. "Silently absent"
+    // is the one outcome this bundle's own README forbids.
+    const collected = await collectBundleInputs(parseDiagnosticsArgs([]));
+    const reasons = collected.unavailable ?? {};
+
+    for (const section of ['tools', 'registry', 'doctor', 'health', 'runtimeState']) {
+      expect(typeof reasons[section]).toBe('string');
+      expect(reasons[section]?.length ?? 0).toBeGreaterThan(0);
+    }
+  });
+
   it('lists sections that could not be collected, with reasons', () => {
     const readme = bundleReadme(
       inputs({ unavailable: { health: 'connection refused' } }),
@@ -192,8 +248,20 @@ describe('the README tells the truth about this build', () => {
   });
 
   it('describes schema truncation matching what this build actually did', () => {
-    expect(bundleReadme(inputs({ fullSchemas: true }))).toContain('in full');
-    expect(bundleReadme(inputs({ fullSchemas: false }))).toContain('--full-schemas');
+    // Passing the filenames is now required for the schema note to appear at
+    // all — it is only relevant when tools.json is genuinely in the bundle.
+    // That is the fix working: the README no longer explains a file that is
+    // not there.
+    const withTools = ['tools.json', 'README.md'];
+
+    expect(bundleReadme(inputs({ fullSchemas: true }), withTools)).toContain('in full');
+    expect(bundleReadme(inputs({ fullSchemas: false }), withTools)).toContain('--full-schemas');
+  });
+
+  it('omits the schema note entirely when there is no tools.json', () => {
+    expect(bundleReadme(inputs({ fullSchemas: false }), ['README.md'])).not.toContain(
+      '--full-schemas',
+    );
   });
 });
 
@@ -269,6 +337,32 @@ describe('collection degrades rather than failing', () => {
 
     expect(collected.unavailable?.['tools']).toContain('No --url');
     expect(collected.unavailable?.['runtimeState']).toContain('in-process only');
+  });
+
+  it('produces a REAL doctor section when --spec is supplied (QA #162)', async () => {
+    // The core of the QA finding: `doctor` was declared in the type and
+    // promised in every README while NO code path assigned it, so doctor.json
+    // could never appear in a CLI-produced bundle. This drives the real
+    // loader and the real analyzer against the repo's own example spec.
+    const collected = await collectBundleInputs(
+      parseDiagnosticsArgs(['--spec', '../../examples/petstore-light/openapi.yaml']),
+    );
+
+    expect(collected.doctor).toBeDefined();
+    // And it drops out of `unavailable`, rather than being reported both ways.
+    expect(collected.unavailable?.['doctor']).toBeUndefined();
+
+    const names = buildBundleEntries(collected).map((entry) => entry.name);
+    expect(names).toContain('doctor.json');
+  });
+
+  it('records a reason when --spec points at something unreadable', async () => {
+    const collected = await collectBundleInputs(
+      parseDiagnosticsArgs(['--spec', '/nonexistent/no-such-spec.yaml']),
+    );
+
+    expect(collected.doctor).toBeUndefined();
+    expect(collected.unavailable?.['doctor']).toBeDefined();
   });
 
   it('still records a missing log file as unavailable, with the reason', async () => {

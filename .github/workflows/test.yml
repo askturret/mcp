@@ -18,6 +18,7 @@ jobs:
       core: ${{ steps.filter.outputs.core }}
       adapters-express: ${{ steps.filter.outputs.adapters-express }}
       adapters-fastify: ${{ steps.filter.outputs.adapters-fastify }}
+      adapter-conformance: ${{ steps.filter.outputs.adapter-conformance }}
       sources-openapi: ${{ steps.filter.outputs.sources-openapi }}
       transports: ${{ steps.filter.outputs.transports }}
       observability: ${{ steps.filter.outputs.observability }}
@@ -42,6 +43,16 @@ jobs:
               # Same reasoning as adapters-express: this adapter serves the
               # Explorer too, so an explorer-only change must re-run it.
               - 'packages/explorer/**'
+            adapter-conformance:
+              # The conformance suite asserts PARITY, so it must re-run when any
+              # adapter changes, and when the shared machinery underneath them
+              # does. Narrowing this to its own directory would let an adapter
+              # or transport change break parity without the suite noticing.
+              - 'packages/adapter-conformance/**'
+              - 'packages/adapters-express/**'
+              - 'packages/adapters-fastify/**'
+              - 'packages/core/**'
+              - 'packages/transports/**'
             sources-openapi:
               - 'packages/sources-openapi/**'
             transports:
@@ -98,6 +109,21 @@ jobs:
       - run: npm ci
       - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-fastify
       - run: npm test --workspace=packages/adapters-fastify
+
+  # Adapter conformance contract - runs the shared bank against every adapter
+  test-adapter-conformance:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.adapter-conformance == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-express -w packages/adapters-fastify -w packages/adapter-conformance
+      # Prints the side-by-side parity table (§42 Acceptance).
+      - run: npm run test:conformance
 
   # Test sources-openapi package
   test-sources-openapi:
@@ -227,6 +253,26 @@ jobs:
             fi
           else
             echo "Adapters-fastify tests skipped (no changes)"
+            exit 0
+          fi
+
+  adapter-conformance-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-adapter-conformance]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.adapter-conformance }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-adapter-conformance.result }}" == "success" ]; then
+              echo "Adapter conformance passed on every registered adapter"
+              exit 0
+            else
+              echo "Adapter conformance failed or was cancelled"
+              exit 1
+            fi
+          else
+            echo "Adapter conformance skipped (no changes)"
             exit 0
           fi
 

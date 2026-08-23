@@ -185,6 +185,55 @@ The Fastify adapter registers as a properly **encapsulated** plugin: its
 content-type parser, hooks and decorators stay inside its own scope, so mounting
 it cannot change how the rest of your app parses requests.
 
+### The adapter conformance contract
+
+Every adapter — ours and yours — must pass the same test bank. This is the
+contract a new adapter (NestJS, Koa, a community one) has to satisfy before it
+can be called an AskTurret MCP adapter.
+
+```bash
+npm run test:conformance                      # every registered adapter
+npm run test:conformance -- --adapter express # one of them
+```
+
+The bank speaks **only JSON-RPC over a real socket**. It never imports a
+framework, so it tests the surface a user actually depends on rather than two
+code paths it already knows are different. An adapter joins by supplying one
+function — build a listening server from the shared options, and close it:
+
+```ts
+registerAdapter('koa', async (options) => {
+  const server = /* mount the MCP handler and listen */;
+  return { url: `http://127.0.0.1:${port}/mcp`, close: () => server.close() };
+});
+```
+
+Eight required categories, each run against every adapter:
+
+| # | Category | What it pins |
+|---|----------|--------------|
+| 1 | Discovery | operation count, and an identical surface across adapters |
+| 2 | Schema preservation | a nested optional readonly field survives end to end |
+| 3 | Context propagation | deadline and request id reach the executor |
+| 4 | Cancellation | a client disconnect aborts the executor's `AbortSignal` |
+| 5 | Error mapping | all 12 `OperationErrorCode` values reach the wire |
+| 6 | Authorization | `tools/call` is refused without a principal |
+| 7 | Lifecycle cleanup | `close()` releases the listening socket |
+| 8 | Duplicate handling | overlapping operation ids resolve to one deterministic winner |
+
+CI runs the bank on every PR and prints the results side by side, so a parity
+divergence is visible as a table rather than as one adapter's test failing:
+
+```
+category              | express   | fastify   | parity
+----------------------+-----------+-----------+-------
+cancellation          | PASS      | PASS      | same
+```
+
+A new adapter package cannot land and quietly sit outside the suite: the
+membership check discovers `packages/adapters-*` from disk and fails the build
+if any of them has no registered factory.
+
 ---
 
 ## Policies & Governance

@@ -210,7 +210,32 @@ class StreamableHttpTransport implements HttpTransport {
     const sessionId = this.sessionStore ? this.getSessionId(req) : null;
 
     // Handle JSON-RPC method
-    const response = await this.handleMethod(jsonRpcRequest, sessionId);
+    // Cancel in-flight work when the CLIENT goes away (#42 conformance
+    // category 4).
+    //
+    // Before this, the per-request AbortController was aborted only by the
+    // deadline timer, so a client that disconnected left the executor running
+    // and the upstream call in flight — the work continued with nobody left to
+    // receive it. The adapter conformance suite found this on both Express and
+    // Fastify identically, which is what located it here in the transport
+    // rather than in either adapter.
+    //
+    // Keyed on `res` closing rather than `req`: `req` emits 'close' on a
+    // NORMAL request once its body has been consumed, so aborting on that
+    // would cancel every healthy call. `res` closing with `writableEnded`
+    // false means the response never finished — the client is gone.
+    const clientAbort = new AbortController();
+    const onResponseClosed = (): void => {
+      if (res.writableEnded !== true) clientAbort.abort();
+    };
+    res.on?.('close', onResponseClosed);
+
+    let response;
+    try {
+      response = await this.handleMethod(jsonRpcRequest, sessionId, clientAbort.signal);
+    } finally {
+      res.off?.('close', onResponseClosed);
+    }
 
     // Check response size
     const responseBody = JSON.stringify(response);
@@ -233,7 +258,11 @@ class StreamableHttpTransport implements HttpTransport {
     res.end(responseBody);
   }
 
-  private async handleMethod(request: any, sessionId: string | null): Promise<any> {
+  private async handleMethod(
+    request: any,
+    sessionId: string | null,
+    clientSignal?: AbortSignal,
+  ): Promise<any> {
     const { method, params, id } = request;
 
     try {
@@ -245,7 +274,7 @@ class StreamableHttpTransport implements HttpTransport {
           return await this.handleToolsList(id, sessionId);
 
         case 'tools/call':
-          return await this.handleToolsCall(id, params, sessionId);
+          return await this.handleToolsCall(id, params, sessionId, clientSignal);
 
         case 'ping':
           return { jsonrpc: '2.0', id, result: { status: 'ok' } };
@@ -351,7 +380,12 @@ class StreamableHttpTransport implements HttpTransport {
     };
   }
 
-  private async handleToolsCall(id: any, params: any, sessionId: string | null): Promise<any> {
+  private async handleToolsCall(
+    id: any,
+    params: any,
+    sessionId: string | null,
+    clientSignal?: AbortSignal,
+  ): Promise<any> {
     // Update session activity and get client info if sessions enabled
     let clientInfo;
     if (this.sessionStore && sessionId) {
@@ -371,6 +405,17 @@ class StreamableHttpTransport implements HttpTransport {
     // Build OperationCommand with full context
     const deadline = new Date(Date.now() + this.deadlineMs);
     const abortController = new AbortController();
+
+    // Link the client's disconnect to this call's cancellation. Checked for an
+    // already-aborted signal first: a client that vanished while the body was
+    // being read would otherwise never fire 'abort' again.
+    if (clientSignal) {
+      if (clientSignal.aborted) {
+        abortController.abort();
+      } else {
+        clientSignal.addEventListener('abort', () => abortController.abort(), { once: true });
+      }
+    }
     const requestId = params.id || randomUUID();
     const traceId = params._meta?.traceId || randomUUID();
 

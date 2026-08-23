@@ -91,8 +91,15 @@ const PRODUCTION_PENDING: readonly PendingControl[] = [
     control: 'reloadMode',
     trackedBy: 37,
     detail:
-      'Declared degraded (retain last-good snapshot). AtomicRegistryReference has no ' +
-      'validation or readiness concept yet, so nothing consumes this value until #37.',
+      'Partially live as of #37. The mechanism exists and honours this value: ' +
+      'createReloadController retains the last-good snapshot on a rejected candidate, ' +
+      'marks readiness degraded, and never publishes a snapshot that failed validation. ' +
+      'What is NOT yet wired is preset -> controller: createMcpServer is still a v0.1 ' +
+      'stub, so nothing reads this field off the preset and constructs a controller from ' +
+      'it. An adopter selecting the Production preset must build the controller itself ' +
+      'and pass mode: preset.reloadMode. Downgraded from "nothing consumes this value" ' +
+      'rather than removed, because removing it would claim an end-to-end guarantee that ' +
+      'server assembly has not yet made true.',
   },
 ];
 

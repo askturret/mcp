@@ -8,7 +8,12 @@
  * practice (or the reverse). `phase` distinguishes them; the policy does not.
  */
 
-import type { EffectClassification, OperationDefinition, Principal } from '../types.js';
+import type {
+  ConfirmationProof,
+  EffectClassification,
+  OperationDefinition,
+  Principal,
+} from '../types.js';
 
 /**
  * Identifying information a client volunteered about itself.
@@ -104,6 +109,27 @@ export interface PolicyContext {
   /** Present only when `phase === 'invocation'`. */
   readonly input?: unknown;
   readonly clientInfo?: ClientInfo;
+
+  /**
+   * A confirmation proof the caller PRESENTED, if any (#52).
+   *
+   * ## This is an untrusted claim, not an established fact
+   *
+   * The engine already redeems this proof against a server-side binding —
+   * caller, operation, registry and input hash, plus freshness and single use.
+   * None of that happens here, and a policy MUST NOT treat the presence of this
+   * field as evidence that the confirmation was valid. It is the raw thing the
+   * client sent.
+   *
+   * It is exposed so a policy can apply an ADDITIONAL check the engine cannot
+   * know about — `requireEvidence` uses it to verify an out-of-band signature,
+   * whose scheme is adopter-specific. The correct shape for such a policy is to
+   * DENY when its own check fails and otherwise still return
+   * `confirmation_required`, so the engine's binding checks run too. Returning
+   * `allow` on the strength of this field alone would skip redemption entirely
+   * and turn a single-use proof into a reusable one.
+   */
+  readonly confirmation?: ConfirmationProof;
 }
 
 /**

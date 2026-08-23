@@ -12,7 +12,7 @@
  * principal's identifier, and none read `context.input`.
  */
 
-import type { EffectClassification } from '../types.js';
+import type { ConfirmationProof, EffectClassification } from '../types.js';
 import type {
   ConfirmationChallenge,
   Policy,
@@ -227,6 +227,135 @@ export function confirmationForEffects(
         challenge,
         evidence: [
           evidence(id, 'operation requires confirmation for its effects', `classifications: ${sorted.join(', ')}`),
+        ],
+      });
+    },
+  };
+}
+
+/**
+ * Verifies an out-of-band signature on a presented confirmation proof.
+ *
+ * Returns `true` when the signature is valid for this proof in this context.
+ * Deliberately synchronous and total: it must not throw, because a policy that
+ * throws denies nothing — it turns the call into `INTERNAL_ERROR` and loses the
+ * reason. Return `false` for every failure, including malformed input.
+ */
+export type EvidenceVerifier = (
+  proof: ConfirmationProof,
+  context: PolicyContext,
+) => boolean;
+
+export interface RequireEvidenceOptions {
+  readonly id?: string;
+  /**
+   * Human-readable instruction rendered in the challenge prompt and written to
+   * the audit trail. Same safety rules as evidence: describe what is needed,
+   * never who or what it applies to.
+   */
+  readonly prompt?: string;
+}
+
+/**
+ * Require a signed, out-of-band approval before an operation proceeds (§10.2,
+ * #52).
+ *
+ * This is the Regulated column's "explicit evidence policy": confirmation is
+ * demanded for EVERY operation the policy guards, not only for operations whose
+ * effects happen to be classified — which is the difference between this and
+ * `confirmationForEffects`. A regulated deployment does not want its confirmation
+ * requirement to depend on whether a spec author remembered to classify an
+ * operation as `destructive`.
+ *
+ * ## Why the verifier is mandatory
+ *
+ * There is no default. A default that accepted anything would make the policy
+ * decorative, and one that rejected everything would make every guarded call
+ * fail at runtime with a confusing error — the failure an operator discovers
+ * from behaviour rather than from configuration. Callers must decide, and the
+ * Regulated preset refuses to boot without one.
+ *
+ * ## How it composes with the engine
+ *
+ * Three outcomes, and the middle one is the point:
+ *
+ *   - **No proof presented** → `confirmation_required`. The engine issues a
+ *     nonce-bound challenge.
+ *   - **Proof presented, signature invalid** → `deny`. The engine never reaches
+ *     redemption, so a bad signature cannot consume a live challenge.
+ *   - **Proof presented, signature valid** → `confirmation_required` *again*,
+ *     NOT `allow`.
+ *
+ * That last one looks wrong and is the crux. Returning `allow` would tell the
+ * engine the call is authorised and skip redemption entirely — discarding the
+ * binding checks (right caller, right operation, right input, right registry),
+ * the expiry, and single use. The signature would then be sufficient on its
+ * own, and one valid signature would be replayable forever. Returning
+ * `confirmation_required` keeps redemption in the path, so the signature check
+ * is strictly ADDITIVE to the engine's guarantees rather than a substitute for
+ * them.
+ */
+export function requireEvidence(
+  kind: string,
+  verify: EvidenceVerifier,
+  options?: RequireEvidenceOptions,
+): Policy {
+  const id = options?.id ?? `requireEvidence(${kind})`;
+  const prompt =
+    options?.prompt ??
+    `This operation requires ${kind} evidence from a separately-authenticated approver.`;
+
+  return {
+    id,
+    evaluate(context: PolicyContext): Promise<PolicyDecision> {
+      const challenge: ConfirmationChallenge = {
+        id: `evidence:${kind}:${context.operation.id}`,
+        kind,
+        prompt,
+      };
+
+      const presented = context.confirmation;
+
+      if (presented === undefined) {
+        return Promise.resolve({
+          effect: 'confirmation_required',
+          challenge,
+          evidence: [evidence(id, 'no confirmation evidence was presented', `required kind: ${kind}`)],
+        });
+      }
+
+      // A verifier that throws would surface as INTERNAL_ERROR and lose the
+      // reason, so a throw is treated as a failed verification — the same
+      // answer, with the reason preserved.
+      let verified: boolean;
+      try {
+        verified = verify(presented, context);
+      } catch {
+        verified = false;
+      }
+
+      if (!verified) {
+        return Promise.resolve({
+          effect: 'deny',
+          code: 'FORBIDDEN',
+          safeReason: 'The confirmation evidence presented was not accepted.',
+          evidence: [
+            evidence(id, 'presented evidence failed signature verification', `required kind: ${kind}`),
+          ],
+        });
+      }
+
+      // Verified, and STILL confirmation_required — see the header. The engine
+      // must redeem the proof so binding, freshness and single-use all apply.
+      return Promise.resolve({
+        effect: 'confirmation_required',
+        challenge,
+        evidence: [
+          evidence(
+            id,
+            'presented evidence passed signature verification; redemption still required',
+            `required kind: ${kind}`,
+          ),
         ],
       });
     },

@@ -33,8 +33,11 @@ export {
   confirmationForEffects,
   permissionPolicy,
   readOnly,
+  requireEvidence,
   type ConfirmationForEffectsOptions,
+  type EvidenceVerifier,
   type PermissionPolicyOptions,
+  type RequireEvidenceOptions,
   type UnlistedOperationBehaviour,
 } from './builtins.js';
 

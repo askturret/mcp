@@ -1,0 +1,1 @@
+{"branch":"test/issue-51-reliability-suite","pre_sha":"d99f83389a4cb5d5da866c08b0e79ee8c94b26dd","pre_count":3,"started_at":"2026-08-23T20:03:30Z","operation":"reset-mixed-and-recommit","reason":"DCO sign-off trailer did not match author identity on 2 commits","source":"agent"}

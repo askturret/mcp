@@ -105,6 +105,7 @@ class StreamableHttpTransport implements HttpTransport {
         ...(authorization === undefined ? {} : { authorization }),
         ...(options.bulkheads === undefined ? {} : { bulkheads: options.bulkheads }),
         ...(options.retry === undefined ? {} : { retry: options.retry }),
+        ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
       },
     );
 

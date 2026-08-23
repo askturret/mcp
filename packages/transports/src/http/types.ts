@@ -3,7 +3,7 @@
  * HTTP transport types - MCP Streamable HTTP server configuration
  */
 
-import type { BulkheadsConfig, RetryConfig } from '@askturret/mcp-core';
+import type { BreakersConfig, BulkheadsConfig, RetryConfig } from '@askturret/mcp-core';
 import type {
   RegistryReference,
   DispatcherHooks,
@@ -85,6 +85,16 @@ export interface HttpTransportOptions {
    * adapter changing.
    */
   readonly retry?: RetryConfig;
+
+  /**
+   * Circuit breakers, forwarded to the dispatcher (#46, §8.5).
+   *
+   * Same seam as `bulkheads` and `retry` above: the transport constructs the
+   * dispatcher, so an option that lives only on `DispatcherOptions` is
+   * unreachable from any adapter. `transport: { breakers: { ... } }` works on
+   * both Express and Fastify without either adapter changing.
+   */
+  readonly breakers?: BreakersConfig;
 
   /**
    * Registry reference (snapshot provider)

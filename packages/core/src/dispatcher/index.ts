@@ -38,6 +38,12 @@ import {
   type BulkheadsConfig,
 } from '../bulkhead/index.js';
 import {
+  createBreakerRegistry,
+  type BreakerRegistry,
+  type BreakerStats,
+  type BreakersConfig,
+} from '../breaker/index.js';
+import {
   computeBackoffMs,
   decideRetry,
   defaultSleep,
@@ -77,6 +83,21 @@ export interface CommandDispatcher {
    * @returns MCP wire result
    */
   dispatch(command: OperationCommand): Promise<MCPResult>;
+
+  /**
+   * Current state of every configured circuit breaker (§8.5).
+   *
+   * Empty when breakers are disabled — which is distinguishable from "all
+   * closed", and deliberately so: a UI that cannot tell those apart shows a
+   * reassuring row of green for a server with no breakers at all.
+   *
+   * This is the READ SEAM for §8.5's "Explorer displays breaker state per
+   * group". The Explorer RENDERING is #56's scope — that issue lists breaker
+   * state among the surfaces it adds, and the Explorer has no runtime-state
+   * surface of any kind today (not even for bulkheads, which #43 also left to
+   * it). Building one here would duplicate #56 and pre-empt its design.
+   */
+  breakerStats(): readonly BreakerStats[];
 }
 
 /**
@@ -160,6 +181,22 @@ export interface DispatcherOptions {
    * than it did yesterday. Turning that on is an explicit act.
    */
   readonly retry?: RetryConfig;
+
+  /**
+   * Circuit breakers, scoped per upstream/executor group (#46, §8.5).
+   *
+   * Absent means breakers are DISABLED.
+   *
+   * That is deliberately the opposite of `bulkheads`, which defaults to
+   * protected, and the asymmetry is worth stating because it looks
+   * inconsistent. A bulkhead only bites under genuine overload, and bounds
+   * resource use that would otherwise be unbounded. A breaker REFUSES calls
+   * that might have succeeded — switching it on by default would mean every
+   * dispatcher that upgrades starts hard-failing whole groups of calls the
+   * first time an upstream has a bad minute. Deciding to trade availability
+   * for blast-radius containment is an operator's call, not an upgrade's.
+   */
+  readonly breakers?: BreakersConfig;
 }
 
 /**
@@ -193,6 +230,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   private readonly metrics: MetricRecorder;
   private readonly bulkheads: BulkheadRegistry;
   private readonly retry: RetryConfig | undefined;
+  private readonly breakers: BreakerRegistry | undefined;
 
   /** In-flight count per tool, backing `mcp_tool_inflight` (§9.2). */
   private readonly inflight = new Map<string, number>();
@@ -216,6 +254,23 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     // The v0.2 placeholder series, emitted once at construction so the two
     // Epic-#3 metrics exist on a dashboard before their behaviour does.
     emitPlaceholderSeries(this.metrics);
+
+    // AFTER the placeholder, deliberately. #39 emits
+    // `mcp_circuit_breaker_state` as a single `default` series with no
+    // behaviour behind it; once breakers are configured the registry publishes
+    // a real series per group, and constructing it second means the real
+    // values overwrite the placeholder rather than the other way round.
+    //
+    // Undefined config leaves the placeholder in place, which is the honest
+    // reading: with breakers disabled there is no real state to report.
+    this.breakers =
+      options?.breakers === undefined
+        ? undefined
+        : createBreakerRegistry({
+            config: options.breakers,
+            metrics: this.metrics,
+            logger: this.logger,
+          });
   }
 
   /**
@@ -322,6 +377,10 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     });
 
     return result;
+  }
+
+  breakerStats(): readonly BreakerStats[] {
+    return this.breakers?.stats() ?? [];
   }
 
   private bumpInflight(tool: string, delta: number): void {
@@ -753,9 +812,14 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     context: DispatchContext,
     log: StructuredLogger,
   ): Promise<OperationResult> {
+    // Assignment is a property of the operation, not of the attempt, so it is
+    // resolved ONCE. Re-assigning per attempt would let a retry land on a
+    // different breaker from the call that opened one.
+    const breakerName = this.breakers?.assign(operation);
+
     const config = this.retry;
     if (config === undefined) {
-      return this.execute(operation, input, context);
+      return (await this.executeGuarded(operation, input, context, breakerName, log)).result;
     }
 
     const tool = operation.id;
@@ -767,7 +831,23 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
     for (;;) {
       attempt += 1;
-      const result = await this.execute(operation, input, context);
+      const { result, shortCircuited } = await this.executeGuarded(
+        operation,
+        input,
+        context,
+        breakerName,
+        log,
+      );
+
+      // §8.5: "If breaker is open when retry attempts, the retry
+      // short-circuits — no attempt made." Returned immediately rather than
+      // looped over: every remaining attempt would hit the same open breaker,
+      // so the only thing further iterations could add is backoff latency in
+      // front of an answer we already have.
+      if (shortCircuited) {
+        this.recordRetryOutcome(tool, attempt, 'breaker-open', 'UPSTREAM_UNAVAILABLE', log);
+        return result;
+      }
 
       // Retries only — the initial attempt is already counted by
       // `mcp_tool_calls_total`, and counting it twice would put a floor of 1
@@ -842,6 +922,56 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     }
 
     log.debug('retry stopped', { attempt, reason, errorCode: terminalError });
+  }
+
+  /**
+   * One execution attempt, gated by the operation's circuit breaker (§8.5).
+   *
+   * Returns `shortCircuited` so the retry loop can tell "the upstream said no"
+   * apart from "we never asked". They produce the same error code on the wire
+   * — `UPSTREAM_UNAVAILABLE` — but they call for opposite behaviour: the first
+   * is worth retrying, and the second is worth abandoning.
+   */
+  private async executeGuarded(
+    operation: OperationDefinition,
+    input: unknown,
+    context: DispatchContext,
+    breakerName: string | undefined,
+    log: StructuredLogger,
+  ): Promise<{ result: OperationResult; shortCircuited: boolean }> {
+    if (breakerName === undefined || this.breakers === undefined) {
+      return { result: await this.execute(operation, input, context), shortCircuited: false };
+    }
+
+    const admission = this.breakers.tryAcquire(breakerName);
+
+    if (!admission.allowed) {
+      log.debug('circuit breaker rejected call', {
+        breaker: breakerName,
+        state: admission.state,
+      });
+
+      // NOT recorded as a breaker failure. This call never reached the
+      // upstream, so it is no evidence about the upstream's health — and
+      // feeding it back in would make an open breaker generate its own
+      // failures, refreshing the very count that keeps it open. A breaker
+      // that can never observe recovery never closes.
+      return {
+        result: {
+          ok: false,
+          error: {
+            code: 'UPSTREAM_UNAVAILABLE',
+            message: `Circuit breaker '${breakerName}' is ${admission.state}`,
+          },
+        },
+        shortCircuited: true,
+      };
+    }
+
+    const result = await this.execute(operation, input, context);
+    this.breakers.record(breakerName, result.ok ? undefined : result.error.code);
+
+    return { result, shortCircuited: false };
   }
 
   private async execute(

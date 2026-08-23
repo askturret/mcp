@@ -14,7 +14,17 @@ export {
   PRODUCTION_CONFIRM_FOR,
 } from './production.js';
 
+export {
+  regulatedPending,
+  regulatedPreset,
+  RegulatedPresetRefusal,
+  REGULATED_BOUNDS,
+  REGULATED_EVIDENCE_KIND,
+} from './regulated.js';
+
 export type {
+  AuditDurability,
+  AuditSinkDurabilityClaim,
   OutputValidationMode,
   PendingControl,
   PresetAuditConfig,
@@ -26,10 +36,13 @@ export type {
   PresetConfigurationSummary,
   PresetDescription,
   PresetDiscoveryConfig,
+  PresetRedactionConfig,
   PresetTransportConfig,
   ProductionPresetOptions,
   ReadDiscoveryMode,
   RedactionMode,
+  RegulatedAuditSinkDescriptor,
+  RegulatedPresetOptions,
   ReloadMode,
   SessionMode,
   WriteDiscoveryMode,

@@ -16,10 +16,11 @@
 
 import type { EffectClassification } from '../types.js';
 import type { PresetName } from '../compiler/types.js';
+import type { EvidenceVerifier } from '../policy/builtins.js';
 import type { Policy } from '../policy/types.js';
 
 /** Which operations are visible at discovery. */
-export type ReadDiscoveryMode = 'all' | 'tagged-only';
+export type ReadDiscoveryMode = 'all' | 'tagged-only' | 'explicit-only';
 export type WriteDiscoveryMode = 'all' | 'explicit-only';
 
 export type OutputValidationMode = 'off' | 'lenient' | 'strict';
@@ -31,8 +32,23 @@ export type RedactionMode = 'off' | 'required';
  * `degraded` retains the last-good snapshot and marks readiness degraded — the
  * server keeps serving what it already had rather than going dark or, worse,
  * publishing a snapshot that failed validation.
+ *
+ * `fail-readiness` (§10.2 Regulated) also retains the last-good snapshot, and
+ * differs in what it tells the outside world: readiness goes hard-negative so
+ * the instance is pulled from its load balancer, rather than continuing to
+ * serve while flagged degraded. The distinction matters for an environment
+ * where serving a stale-but-valid contract without announcing it is itself the
+ * compliance failure — "retain evidence, do not degrade silently".
  */
-export type ReloadMode = 'fail-fast' | 'degraded';
+export type ReloadMode = 'fail-fast' | 'degraded' | 'fail-readiness';
+
+/**
+ * Whether the audit sink must survive process loss.
+ *
+ * `required` (§10.2 Regulated) refuses to boot against a sink that cannot make
+ * that promise — stdout and in-memory buffers are the named examples.
+ */
+export type AuditDurability = 'optional' | 'required';
 
 export type SessionMode = 'stateless' | 'stateful';
 
@@ -61,6 +77,38 @@ export interface PresetAuditConfig {
    * rather than a redesign. See `PresetDescription.pending`.
    */
   readonly sink: null;
+  /**
+   * Whether a durable sink is mandatory (§10.2).
+   *
+   * §52 writes this as `sink: { durable: 'required' }`. It is a sibling field
+   * here instead, because `sink` is still the `null` placeholder above and
+   * collapsing a declared requirement into a slot that is not yet wired would
+   * make the requirement unreadable exactly while it is unenforced. Recorded
+   * against #156 rather than reshaping the spec's example silently.
+   */
+  readonly durability: AuditDurability;
+}
+
+/**
+ * Redaction settings (§10.2).
+ *
+ * An object rather than the bare `RedactionMode` scalar the earlier presets
+ * used, because Regulated needs a second field and ADR-007 requires all three
+ * presets to produce the SAME shape — a scalar for two of them and an object
+ * for the third is precisely the divergent code path the ADR forbids.
+ */
+export interface PresetRedactionConfig {
+  readonly mode: RedactionMode;
+  /**
+   * The adopter's attestation that they reviewed their custom redaction rules
+   * for this environment.
+   *
+   * §52 is explicit that this "is a signature, not a security control" — the
+   * value proves nothing on its own, and nothing downstream reads it to decide
+   * whether to redact. Its only job is to make an adopter state, at boot, that
+   * a human looked. The Regulated preset refuses to boot while it is `false`.
+   */
+  readonly customReviewAcknowledged: boolean;
 }
 
 export interface PresetBounds {
@@ -86,7 +134,7 @@ export interface PresetConfiguration {
   readonly authorization: PresetAuthorizationConfig;
   readonly audit: PresetAuditConfig;
   readonly outputValidation: OutputValidationMode;
-  readonly redaction: RedactionMode;
+  readonly redaction: PresetRedactionConfig;
   readonly reloadMode: ReloadMode;
   readonly transport: PresetTransportConfig;
   readonly bounds: PresetBounds;
@@ -171,4 +219,58 @@ export interface ProductionPresetOptions {
    * theirs, but widening is the expected direction.
    */
   readonly confirmFor?: readonly EffectClassification[];
+}
+
+/**
+ * How an audit sink identifies itself for the durability check.
+ *
+ * The check is a DECLARATION, not an inspection: nothing here can prove a sink
+ * writes to durable storage, and pretending otherwise would be worse than not
+ * checking. What it does is stop the two sinks §52 names — stdout and an
+ * in-memory buffer — from being selected by accident, and force anything else
+ * to state its case at boot.
+ */
+export type AuditSinkDurabilityClaim = 'durable' | 'stdout' | 'memory';
+
+export interface RegulatedAuditSinkDescriptor {
+  /** Sink name, used only in the refusal message. */
+  readonly id: string;
+  readonly durability: AuditSinkDurabilityClaim;
+}
+
+export interface RegulatedPresetOptions {
+  /**
+   * Operation-id → required permissions. Same semantics and same deny-by-
+   * default as the Production preset.
+   */
+  readonly permissions?: Readonly<Record<string, readonly string[]>>;
+
+  /**
+   * The audit sink this deployment will use.
+   *
+   * REQUIRED. §10.2 makes a durable sink mandatory under Regulated, so there is
+   * no default that could be correct — omitting it refuses the boot rather than
+   * assuming one.
+   */
+  readonly auditSink: RegulatedAuditSinkDescriptor;
+
+  /**
+   * The adopter's acknowledgement that they reviewed their custom redaction
+   * rules. Must be `true`; `false` or omitted refuses the boot.
+   */
+  readonly customReviewAcknowledged?: boolean;
+
+  /**
+   * Verifier for the out-of-band signature on a confirmation proof.
+   *
+   * REQUIRED, for the reason given on `requireEvidence`: there is no default
+   * that is not either decorative or a runtime trap.
+   */
+  readonly verifyEvidence: EvidenceVerifier;
+
+  /**
+   * Evidence kind demanded by the composed confirmation policy.
+   * Defaults to §52's `'signed-approval'`.
+   */
+  readonly evidenceKind?: string;
 }

@@ -34,6 +34,16 @@ export interface DiagnosticsFlags {
   readonly json: boolean;
   readonly preset?: 'production';
   readonly tailLines: number;
+  /**
+   * §52's Regulated-only bundle: strip schemas and config paths.
+   *
+   * Separate from `--preset regulated` on purpose. This flag governs what the
+   * BUNDLE discloses, and a regulated organisation may well want the tighter
+   * bundle from a server running any preset — for instance when sending a
+   * diagnostic to a vendor. Tying the two together would mean choosing between
+   * a preset and a disclosure level.
+   */
+  readonly regulated: boolean;
 }
 
 export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags {
@@ -46,6 +56,7 @@ export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags 
   let json = false;
   let preset: 'production' | undefined;
   let tailLines = DEFAULT_LOG_TAIL_LINES;
+  let regulated = false;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -74,6 +85,9 @@ export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags 
       case '--full-schemas':
         fullSchemas = true;
         break;
+      case '--regulated':
+        regulated = true;
+        break;
       case '--json':
         json = true;
         break;
@@ -87,12 +101,37 @@ export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags 
     ...(spec === undefined ? {} : { spec }),
     ...(config === undefined ? {} : { config }),
     out,
-    fullSchemas,
+    // --regulated WINS over --full-schemas rather than the last flag winning.
+    // The two are contradictory, and the safe resolution of a contradiction
+    // about disclosure is the narrower one: someone who passes both has more
+    // likely inherited --full-schemas from a saved command line than decided
+    // to widen a regulated bundle.
+    fullSchemas: regulated ? false : fullSchemas,
     ...(logFile === undefined ? {} : { logFile }),
     json,
     ...(preset === undefined ? {} : { preset }),
     tailLines,
+    regulated,
   };
+}
+
+/** Schema-bearing fields stripped from a tool entry under `--regulated`. */
+const SCHEMA_FIELDS = ['inputSchema', 'outputSchema', 'schema'] as const;
+
+/**
+ * Remove schemas from a tools/list entry (§52 Regulated-only diagnostics).
+ *
+ * A tool's input schema describes the shape of its arguments — field names,
+ * enums, formats — which for a regulated adopter is a description of their
+ * internal data model, not just their API surface. The tool NAMES are kept: a
+ * bundle that could not say which tools exist would not be a diagnostic.
+ */
+function stripSchemas(tool: unknown): unknown {
+  if (tool === null || typeof tool !== 'object') return tool;
+
+  const copy: Record<string, unknown> = { ...(tool as Record<string, unknown>) };
+  for (const field of SCHEMA_FIELDS) delete copy[field];
+  return copy;
 }
 
 /** JSON-RPC POST, kept local so a failure here degrades one section only. */
@@ -221,16 +260,41 @@ export async function collectBundleInputs(
     }
   }
 
-  const paths = [flags.config, flags.logFile, flags.spec].filter(
-    (value): value is string => value !== undefined,
-  );
+  // §52 Regulated-only diagnostics: no config paths.
+  //
+  // A filesystem path is a disclosure in its own right — it names deployment
+  // layout, usernames in home directories, and internal hostnames in mount
+  // points. The sanitiser (#50) scrubs values found INSIDE collected content;
+  // these are the paths the operator supplied on the command line, and under
+  // --regulated they are withheld entirely rather than sanitised.
+  //
+  // Withheld with a stated reason, never silently: an empty `paths` array that
+  // meant "none supplied" and "deliberately removed" interchangeably is exactly
+  // the ambiguity this bundle's own contract forbids.
+  const paths = flags.regulated
+    ? []
+    : [flags.config, flags.logFile, flags.spec].filter(
+        (value): value is string => value !== undefined,
+      );
+
+  if (flags.regulated) {
+    unavailable['paths'] =
+      'Withheld by --regulated: filesystem paths disclose deployment layout and are omitted ' +
+      'from a regulated bundle.';
+    unavailable['schemas'] =
+      'Withheld by --regulated: tool input/output schemas describe the adopter data model and ' +
+      'are stripped from a regulated bundle. Tool names are retained.';
+  }
+
+  const disclosedTools =
+    tools === undefined ? undefined : flags.regulated ? tools.map(stripSchemas) : tools;
 
   return {
     generatedAt: now.toISOString(),
     versions,
     ...(flags.preset === undefined ? {} : { preset: describePreset(flags.preset) }),
     ...(registry === undefined ? {} : { registry }),
-    ...(tools === undefined ? {} : { tools }),
+    ...(disclosedTools === undefined ? {} : { tools: disclosedTools }),
     ...(health === undefined ? {} : { health }),
     ...(doctor === undefined ? {} : { doctor }),
     ...(logTail === undefined ? {} : { logTail }),

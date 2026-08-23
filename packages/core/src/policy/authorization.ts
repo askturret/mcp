@@ -189,6 +189,11 @@ export function createAuthorizationEngine(
         input: request.input,
         ...(request.principal === undefined ? {} : { principal: request.principal }),
         ...(request.clientInfo === undefined ? {} : { clientInfo: request.clientInfo }),
+        // Exposed so a policy can apply a check the engine cannot know about —
+        // an out-of-band signature, say. It is the caller's UNVERIFIED claim;
+        // the binding redemption below is what actually validates it, and that
+        // still runs regardless of what any policy concluded from this field.
+        ...(request.confirmation === undefined ? {} : { confirmation: request.confirmation }),
       };
 
       const decision = await evaluate(context);

@@ -29,7 +29,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm install
+
+      # `npm ci`, not `npm install` — this job's verdict must be a function of
+      # the committed lockfile and nothing else.
+      #
+      # Both gates below (licence review, NOTICE freshness) derive their answer
+      # from `npm ls --omit=dev` against the INSTALLED tree. `npm install` is
+      # free to reconcile that tree with the registry, so the installed set can
+      # change without any commit changing — and then a compliance gate fails
+      # on a PR that touched nothing related to it.
+      #
+      # That is not hypothetical: supply-chain went red on main at afc0f06,
+      # whose only commits (#38) changed no package.json, no lockfile, no
+      # NOTICE and no script. A dependency-manifest gate broke with zero
+      # dependency-manifest changes, which can only be non-determinism in the
+      # install step.
+      #
+      # `npm ci` installs the lockfile exactly and errors if the two disagree,
+      # so a red here now means "the lockfile really did change" rather than
+      # "the registry moved".
+      - run: npm ci
 
       # The policy evaluator decides what ships, so verify it before trusting
       # its verdict on the real tree.

@@ -20,10 +20,15 @@ import type {
   ClientInfo,
   VisibilityEngine,
 } from '@askturret/mcp-core';
+import type { HealthReport, ReloadController, ShutdownResult } from '@askturret/mcp-core';
 import {
+  DEFAULT_LIVENESS_BUDGET_MS,
   createAuthorizationEngine,
   createDispatcher,
+  createShutdownCoordinator,
   createVisibilityEngine,
+  evaluateLiveness,
+  evaluateReadiness,
 } from '@askturret/mcp-core';
 import type {
   HttpTransport,
@@ -77,6 +82,22 @@ class StreamableHttpTransport implements HttpTransport {
   private readonly maxRequestBodySize: number;
   private readonly maxResponseSize: number;
   private readonly visibility: VisibilityEngine | null;
+
+  /** §8.6 lifecycle. Built lazily so the hooks can close over `this`. */
+  private readonly lifecycle: ReturnType<typeof createShutdownCoordinator>;
+  private readonly reload: ReloadController | undefined;
+  private readonly enforceDependencies: boolean;
+  private readonly auditSinkReachable: (() => boolean) | undefined;
+  private readonly livenessBudgetMs: number;
+
+  /**
+   * Resolves when the last in-flight call finishes.
+   *
+   * Rebuilt on demand rather than kept as a live counter: drain happens once,
+   * and a counter maintained on every request would be a hot-path cost paid
+   * continuously for a value read at most once per process.
+   */
+  private drainWaiters: (() => void)[] = [];
 
   constructor(options: HttpTransportOptions) {
     this.registry = options.registry;
@@ -144,6 +165,38 @@ class StreamableHttpTransport implements HttpTransport {
     // Host-header validation (DNS rebinding mitigation)
     const defaultHosts = ['localhost', '127.0.0.1', '[::1]'];
     this.allowedHosts = new Set(options.allowedHosts ?? defaultHosts);
+
+    this.reload = options.reload;
+    this.enforceDependencies = options.enforceDependencies ?? false;
+    this.auditSinkReachable = options.auditSinkReachable;
+    this.livenessBudgetMs = options.livenessBudgetMs ?? DEFAULT_LIVENESS_BUDGET_MS;
+
+    this.lifecycle = createShutdownCoordinator({
+      // Phase 1 and 2 need no work here: readiness reads
+      // `lifecycle.isShuttingDown`, which the coordinator sets before the
+      // first phase runs, and `handler()` reads the same flag to start
+      // returning 503. Both are therefore true the instant shutdown begins,
+      // which is stricter than flipping them inside the phases.
+      // Phase 3 (cancel-queued) has NO hook here, deliberately.
+      //
+      // §8.6 separates "queued" from "in-flight", but this transport has no
+      // queue of its own: a call is either accepted and tracked in
+      // `inFlightCalls`, or it has not arrived. The only real queue is the
+      // dispatcher's bulkhead (#43), and from the transport's side a
+      // bulkhead-queued call is indistinguishable from a running one — both
+      // are awaiting the same `dispatch()` promise.
+      //
+      // Supplying a hook that aborted everything would collapse phase 3 into
+      // phase 4 and cancel calls that were about to succeed. So the phase
+      // runs with nothing to do and is recorded as such, which is the honest
+      // report. Flagged for QA: a transport that grows its own admission
+      // queue must fill this in. See #156.
+      drainInFlight: () => this.waitForDrain(),
+      cancelInFlight: () => this.abortAllInFlight('drain-deadline'),
+      flushAudit: () => options.flushAudit?.() ?? Promise.resolve(),
+      flushTelemetry: () => options.flushTelemetry?.() ?? Promise.resolve(),
+      closeResources: () => options.closeResources?.() ?? Promise.resolve(),
+    });
   }
 
   handler() {
@@ -168,9 +221,42 @@ class StreamableHttpTransport implements HttpTransport {
         const rawPath = (req as any).originalUrl ?? req.url ?? '/';
         const url = new URL(rawPath, `http://${host}`);
 
+        // Health endpoints are served BEFORE the shutdown gate below, and
+        // that ordering is the whole point: during a drain the load balancer
+        // needs `/ready` to answer 503 deliberately. If the gate came first,
+        // readiness would return the generic "shutting down" rejection for
+        // every path alike and the probe would be indistinguishable from an
+        // instance that had simply stopped responding.
+        if (url.pathname === `${this.basePath}/health/live`) {
+          await this.respondHealth(res, await this.liveness());
+          return;
+        }
+
+        if (url.pathname === `${this.basePath}/health/ready`) {
+          await this.respondHealth(res, this.readiness());
+          return;
+        }
+
         if (url.pathname !== this.basePath) {
           res.writeHead(404, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({ error: { code: -32601, message: 'Not found' } }));
+          return;
+        }
+
+        // §8.6 phase 2 — stop accepting new calls. Existing in-flight calls
+        // continue and are drained; only NEW work is turned away.
+        if (this.lifecycle.isShuttingDown) {
+          res.writeHead(503, {
+            'Content-Type': 'application/json',
+            // Tells a well-behaved client and most load balancers to retry
+            // elsewhere rather than treating this as a hard failure.
+            Connection: 'close',
+          });
+          res.end(
+            JSON.stringify({
+              error: { code: -32000, message: 'Server is shutting down' },
+            }),
+          );
           return;
         }
 
@@ -196,6 +282,25 @@ class StreamableHttpTransport implements HttpTransport {
         );
       }
     };
+  }
+
+  /**
+   * Write a health report.
+   *
+   * The body carries the machine-readable `reason` as well as the detail, so
+   * an operator paging at 3am gets the cause from the probe itself rather
+   * than having to correlate a bare 503 against logs — which is §8.7's
+   * "returns 503 with a diagnostic body describing the degradation".
+   */
+  private async respondHealth(res: any, report: HealthReport): Promise<void> {
+    res.writeHead(report.httpStatus, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        status: report.ready ? 'ok' : 'unavailable',
+        ...(report.reason === undefined ? {} : { reason: report.reason }),
+        ...(report.detail === undefined ? {} : { detail: report.detail }),
+      }),
+    );
   }
 
   private isHostAllowed(host: string | undefined): boolean {
@@ -507,11 +612,36 @@ class StreamableHttpTransport implements HttpTransport {
       }, deadlineMs);
     });
 
-    // Race dispatch against deadline
+    // Cancellation resolves the race too (§8.6 drain deadline, §44).
+    //
+    // Aborting the controller only SIGNALS the executor; it does not settle
+    // the dispatch promise, and an executor that ignores its signal keeps the
+    // race pending until the deadline. Before this, a shutdown that cancelled
+    // a hung call still left the client waiting the full deadline for an
+    // answer — §8.6 requires those calls to "receive CANCELLED".
+    //
+    // The executor may keep running afterwards; JavaScript cannot cancel an
+    // in-flight promise. That is already true of the deadline branch above,
+    // and answering the client promptly is the point of both.
+    let onAbort: (() => void) | undefined;
+    const cancelPromise = new Promise<MCPResult>((resolve) => {
+      onAbort = () =>
+        resolve({
+          isError: true,
+          error: { code: 'CANCELLED', message: 'Request cancelled' },
+        });
+      if (abortController.signal.aborted) onAbort();
+      else abortController.signal.addEventListener('abort', onAbort, { once: true });
+    });
+
+    // Race dispatch against deadline and cancellation
     let result: MCPResult;
     try {
-      result = await Promise.race([dispatchPromise, timeoutPromise]);
+      result = await Promise.race([dispatchPromise, timeoutPromise, cancelPromise]);
     } finally {
+      if (onAbort !== undefined) {
+        abortController.signal.removeEventListener('abort', onAbort);
+      }
       // Deregister on EVERY exit path. A leaked entry keeps an AbortController
       // alive for a call that has already finished, and a later
       // notifications/cancelled naming a recycled id would abort the wrong
@@ -520,6 +650,11 @@ class StreamableHttpTransport implements HttpTransport {
       if (id !== undefined && id !== null) {
         this.inFlightCalls.delete(String(id));
       }
+      // Release a waiting drain (§8.6 phase 4) here rather than at the abort
+      // site: an aborted call is not finished, it is unwinding, and a drain
+      // that resolved on `abort()` would report the server quiet while
+      // handlers were still running.
+      this.releaseDrainIfIdle();
       if (timeoutId !== undefined) {
         clearTimeout(timeoutId);
       }
@@ -636,8 +771,94 @@ class StreamableHttpTransport implements HttpTransport {
     });
   }
 
+  /**
+   * Graceful shutdown (§8.6). Idempotent — see the coordinator.
+   */
+  async close(options: { drainMs?: number } = {}): Promise<ShutdownResult> {
+    return this.lifecycle.shutdown(
+      options.drainMs === undefined ? {} : { drainMs: options.drainMs },
+    );
+  }
+
+  /** Immediate close: skip the drain, still attempt the audit flush (§8.6). */
+  async forceClose(): Promise<ShutdownResult> {
+    return this.lifecycle.shutdown({ force: true });
+  }
+
+  /**
+   * Retained for API compatibility — `close()` is the §8.6 entry point.
+   *
+   * This was an empty stub before #47, so anything already calling it got no
+   * shutdown at all. Pointing it at the real sequence is strictly better than
+   * leaving it inert, and better than deleting it and breaking a caller.
+   */
   async shutdown(): Promise<void> {
-    // Cleanup resources
-    // In v0.1, we don't have persistent connections to clean up
+    await this.close();
+  }
+
+  /** Cached readiness (§8.7). Never probes a dependency. */
+  readiness(): HealthReport {
+    return evaluateReadiness({
+      shuttingDown: this.lifecycle.isShuttingDown,
+      hasRegistrySnapshot: this.hasRegistrySnapshot(),
+      enforceDependencies: this.enforceDependencies,
+      breakers: this.dispatcher.breakerStats(),
+      ...(this.reload === undefined ? {} : { reload: this.reload.readiness() }),
+      ...(this.auditSinkReachable === undefined
+        ? {}
+        : { auditSinkReachable: this.auditSinkReachable() }),
+    });
+  }
+
+  /** Event-loop responsiveness (§8.7). */
+  async liveness(): Promise<HealthReport> {
+    return evaluateLiveness(this.livenessBudgetMs);
+  }
+
+  private hasRegistrySnapshot(): boolean {
+    try {
+      const snapshot = this.registry.current();
+      return snapshot !== undefined && snapshot !== null;
+    } catch {
+      // A registry reference that throws is exactly the "no valid snapshot"
+      // condition, not an internal error to propagate into a health probe.
+      return false;
+    }
+  }
+
+  /**
+   * Resolve once no call is in flight.
+   *
+   * Checked first so a shutdown with an idle server returns immediately
+   * rather than waiting for a completion that will never come.
+   */
+  private waitForDrain(): Promise<void> {
+    if (this.inFlightCalls.size === 0) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      this.drainWaiters.push(resolve);
+    });
+  }
+
+  /** Called whenever a call finishes, to release a waiting drain. */
+  private releaseDrainIfIdle(): void {
+    if (this.inFlightCalls.size > 0) return;
+    const waiters = this.drainWaiters;
+    this.drainWaiters = [];
+    for (const resolve of waiters) resolve();
+  }
+
+  /**
+   * Abort every in-flight call.
+   *
+   * Aborting the controller is what makes the call return `CANCELLED` rather
+   * than hanging until its own deadline — §8.6's drain-deadline case, where
+   * "hung calls receive CANCELLED".
+   */
+  private abortAllInFlight(_reason: string): void {
+    for (const controller of this.inFlightCalls.values()) {
+      controller.abort();
+    }
+    // The aborted calls still have to unwind before their `finally` blocks
+    // remove them from the map, so drain waiters are released there, not here.
   }
 }

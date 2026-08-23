@@ -3,7 +3,14 @@
  * HTTP transport types - MCP Streamable HTTP server configuration
  */
 
-import type { BreakersConfig, BulkheadsConfig, RetryConfig } from '@askturret/mcp-core';
+import type {
+  BreakersConfig,
+  BulkheadsConfig,
+  HealthReport,
+  ReloadController,
+  RetryConfig,
+  ShutdownResult,
+} from '@askturret/mcp-core';
 import type {
   RegistryReference,
   DispatcherHooks,
@@ -95,6 +102,43 @@ export interface HttpTransportOptions {
    * both Express and Fastify without either adapter changing.
    */
   readonly breakers?: BreakersConfig;
+
+  /**
+   * Reload controller, so `/health/ready` can report a degraded reload (§8.7).
+   *
+   * `ReloadController.readiness()` already existed and its own docs say it is
+   * "for a health endpoint to surface" — #47 is that endpoint. Reading the
+   * CACHED state it maintains, never triggering a reload.
+   */
+  readonly reload?: ReloadController;
+
+  /**
+   * Enforce dependency conditions in readiness (§8.7 "production preset").
+   *
+   * Default false. Outside production an unreachable audit sink or a fully
+   * open breaker set is a degraded instance, not one to pull from rotation —
+   * and pulling EVERY instance for a shared dependency blip takes the service
+   * down instead of the dependency.
+   */
+  readonly enforceDependencies?: boolean;
+
+  /**
+   * Last known audit-sink reachability. Must be CACHED, never a live probe:
+   * §8.7 forbids readiness fanning out to dependencies.
+   */
+  readonly auditSinkReachable?: () => boolean;
+
+  /** Event-loop budget for `/health/live`. Default 200ms (§8.7). */
+  readonly livenessBudgetMs?: number;
+
+  /** §8.6 phase 5 — must complete. Stronger delivery than telemetry. */
+  readonly flushAudit?: () => Promise<void>;
+
+  /** §8.6 phase 6 — best-effort, bounded. */
+  readonly flushTelemetry?: () => Promise<void>;
+
+  /** §8.6 phase 7 — executors, HTTP clients, anything the adopter owns. */
+  readonly closeResources?: () => Promise<void>;
 
   /**
    * Registry reference (snapshot provider)
@@ -213,7 +257,28 @@ export interface HttpTransport {
   handler(): (req: unknown, res: unknown) => Promise<void>;
 
   /**
-   * Shutdown transport and clean up resources
+   * Shutdown transport and clean up resources.
+   *
+   * Retained for compatibility; delegates to `close()`. Before #47 this was an
+   * empty stub, so an existing caller got no shutdown at all.
    */
   shutdown(): Promise<void>;
+
+  /**
+   * Graceful shutdown following the §8.6 sequence.
+   *
+   * Idempotent: concurrent or repeated calls share one shutdown. Two drains
+   * running at once would double-flush the audit sink and race to close the
+   * same resources.
+   */
+  close(options?: { drainMs?: number }): Promise<ShutdownResult>;
+
+  /** Skip the drain; audit flush is still attempted (§8.6). */
+  forceClose(): Promise<ShutdownResult>;
+
+  /** Cached readiness for `/health/ready` (§8.7). Never probes a dependency. */
+  readiness(): HealthReport;
+
+  /** Event-loop responsiveness for `/health/live` (§8.7). */
+  liveness(): Promise<HealthReport>;
 }

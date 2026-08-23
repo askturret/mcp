@@ -52,6 +52,23 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
  */
 class StreamableHttpTransport implements HttpTransport {
   private readonly registry;
+  /**
+   * In-flight tool calls, keyed by the client's JSON-RPC envelope id (#44).
+   *
+   * ## What this can and cannot do
+   *
+   * `notifications/cancelled` arrives as a SEPARATE HTTP POST. In a stateless
+   * multi-instance deployment that POST may land on a different process than
+   * the call it names, and this map is per-process — so cancellation is
+   * best-effort across instances. Making it work everywhere needs shared
+   * state, which is a session-store concern and not this issue's.
+   *
+   * Stated rather than implied: a cancellation that silently did nothing,
+   * with no way to tell that apart from one that worked, would be worse than
+   * none at all. `handleCancelled` therefore reports whether it found the call.
+   */
+  private readonly inFlightCalls = new Map<string, AbortController>();
+
   private readonly dispatcher: CommandDispatcher;
   private readonly basePath: string;
   private readonly sessionStore: SessionStore | null;
@@ -282,6 +299,9 @@ class StreamableHttpTransport implements HttpTransport {
         case 'ping':
           return { jsonrpc: '2.0', id, result: { status: 'ok' } };
 
+        case 'notifications/cancelled':
+          return this.handleCancelled(id, params);
+
         default:
           return {
             jsonrpc: '2.0',
@@ -383,6 +403,33 @@ class StreamableHttpTransport implements HttpTransport {
     };
   }
 
+  /**
+   * `notifications/cancelled` — client-initiated cancellation (§44).
+   *
+   * Fires the AbortController for the named request, which reaches the
+   * executor's `signal` and, through `viaHttp`, the socket itself.
+   */
+  private handleCancelled(id: any, params: any): any {
+    const target = params?.requestId;
+    const controller =
+      target === undefined || target === null
+        ? undefined
+        : this.inFlightCalls.get(String(target));
+
+    controller?.abort();
+
+    // JSON-RPC notifications carry no id and expect no response, but this
+    // transport is request/response over POST and must write something. The
+    // body reports whether a matching call was actually found — see the note
+    // on `inFlightCalls` for why "cancelled nothing" must be distinguishable
+    // from "cancelled successfully".
+    return {
+      jsonrpc: '2.0',
+      id: id ?? null,
+      result: { cancelled: controller !== undefined },
+    };
+  }
+
   private async handleToolsCall(
     id: any,
     params: any,
@@ -412,6 +459,13 @@ class StreamableHttpTransport implements HttpTransport {
     // Link the client's disconnect to this call's cancellation. Checked for an
     // already-aborted signal first: a client that vanished while the body was
     // being read would otherwise never fire 'abort' again.
+    // Register for explicit client cancellation (#44). Keyed on the client's
+    // JSON-RPC envelope id, because that is what `notifications/cancelled`
+    // names — NOT the internal `requestId`, which the client has never seen.
+    if (id !== undefined && id !== null) {
+      this.inFlightCalls.set(String(id), abortController);
+    }
+
     if (clientSignal) {
       if (clientSignal.aborted) {
         abortController.abort();
@@ -452,11 +506,21 @@ class StreamableHttpTransport implements HttpTransport {
     });
 
     // Race dispatch against deadline
-    const result: MCPResult = await Promise.race([dispatchPromise, timeoutPromise]);
-
-    // Clean up timeout
-    if (timeoutId !== undefined) {
-      clearTimeout(timeoutId);
+    let result: MCPResult;
+    try {
+      result = await Promise.race([dispatchPromise, timeoutPromise]);
+    } finally {
+      // Deregister on EVERY exit path. A leaked entry keeps an AbortController
+      // alive for a call that has already finished, and a later
+      // notifications/cancelled naming a recycled id would abort the wrong
+      // thing — a cancellation that lands on someone else's request is worse
+      // than one that lands nowhere.
+      if (id !== undefined && id !== null) {
+        this.inFlightCalls.delete(String(id));
+      }
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
     }
 
     // Map to MCP wire format

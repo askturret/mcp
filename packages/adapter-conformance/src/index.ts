@@ -24,9 +24,11 @@ export {
   renderTable,
   rpc,
   callTool,
+  unknownCategories,
   type Category,
   type CategoryContext,
   type CategoryResult,
+  type RunBankOptions,
 } from './bank.js';
 
 export { MOUNT_PATH } from './adapters.js';

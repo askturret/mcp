@@ -10,8 +10,9 @@
 
 import { describe, it, expect } from '@jest/globals';
 
-import { assignBreaker } from '../registry.js';
+import { assignBreaker, createBreakerRegistry, unmatchedBreakerGroup } from '../registry.js';
 import type { BreakersConfig } from '../types.js';
+import type { StructuredLogger } from '../../logging/types.js';
 import type { OperationDefinition } from '../../types.js';
 
 const CONFIG: BreakersConfig = {
@@ -115,5 +116,128 @@ describe('assignment never throws (#43 precedent)', () => {
 
   it.each(malformed)('routes %s to default without throwing', (_label, shape) => {
     expect(assignBreaker(shape as OperationDefinition, CONFIG)).toBe('default');
+  });
+});
+
+describe('an annotated group that is not configured is not silent (QA case C)', () => {
+  // The routing answer is correct and deliberate: fall back to `default`
+  // rather than throw. What was wrong is that it happened with NO signal at
+  // all. An operator who writes `breakerGroup: 'ordersApi'` has explicitly
+  // asked for isolation; a typo or an un-wired config entry hands them shared
+  // fate with every other operation instead, and nothing anywhere says so.
+
+  function recordingLogger(): {
+    warns: { message: string; fields?: unknown }[];
+    logger: StructuredLogger;
+  } {
+    const warns: { message: string; fields?: unknown }[] = [];
+    const logger = {
+      trace: () => {},
+      debug: () => {},
+      info: () => {},
+      warn: (message: string, fields?: unknown) => {
+        warns.push({ message, fields });
+      },
+      error: () => {},
+      child: () => logger,
+    } as unknown as StructuredLogger;
+    return { warns, logger };
+  }
+
+  it('warns, naming the group, the operation and what IS configured', () => {
+    const { warns, logger } = recordingLogger();
+    const registry = createBreakerRegistry({ config: CONFIG, logger });
+
+    const assigned = registry.assign(
+      operation({ id: 'listOrders', annotations: { breakerGroup: 'ordresApi' } }),
+    );
+
+    // Routing is unchanged — this is a warning, not a behaviour change.
+    expect(assigned).toBe('default');
+
+    expect(warns).toHaveLength(1);
+    expect(warns[0]?.message).toMatch(/not configured/i);
+    expect(warns[0]?.fields).toMatchObject({
+      breakerGroup: 'ordresApi',
+      operation: 'listOrders',
+    });
+    // Naming the configured groups is what turns "wrong" into "wrong, and
+    // here is the list you meant to pick from".
+    expect((warns[0]?.fields as { configured: string[] }).configured).toEqual(
+      expect.arrayContaining(['ordersApi', 'default']),
+    );
+  });
+
+  it('warns ONCE per group however many calls are assigned', () => {
+    const { warns, logger } = recordingLogger();
+    const registry = createBreakerRegistry({ config: CONFIG, logger });
+    const op = operation({ annotations: { breakerGroup: 'nope' } });
+
+    for (let i = 0; i < 50; i += 1) registry.assign(op);
+
+    // Assignment runs on every dispatch. Warning per call would put a line in
+    // the log for every request to a mis-annotated operation, which is how a
+    // logger gets turned down and takes the real signal with it.
+    expect(warns).toHaveLength(1);
+  });
+
+  it('warns separately for each distinct unconfigured group', () => {
+    const { warns, logger } = recordingLogger();
+    const registry = createBreakerRegistry({ config: CONFIG, logger });
+
+    registry.assign(operation({ annotations: { breakerGroup: 'missingA' } }));
+    registry.assign(operation({ annotations: { breakerGroup: 'missingB' } }));
+    registry.assign(operation({ annotations: { breakerGroup: 'missingA' } }));
+
+    expect(warns).toHaveLength(2);
+    expect(warns.map((w) => (w.fields as { breakerGroup: string }).breakerGroup)).toEqual([
+      'missingA',
+      'missingB',
+    ]);
+  });
+
+  it('stays quiet when the annotated group IS configured', () => {
+    const { warns, logger } = recordingLogger();
+    const registry = createBreakerRegistry({ config: CONFIG, logger });
+
+    expect(registry.assign(operation({ annotations: { breakerGroup: 'ordersApi' } }))).toBe(
+      'ordersApi',
+    );
+    expect(warns).toHaveLength(0);
+  });
+
+  it('stays quiet for operations that never asked for a group', () => {
+    const { warns, logger } = recordingLogger();
+    const registry = createBreakerRegistry({ config: CONFIG, logger });
+
+    // Falls back to `default` for a reason that is NOT a mis-annotation, so
+    // there is nothing to warn about — this is the ordinary unannotated path.
+    expect(registry.assign(operation({ executor: { type: 'unregistered' } }))).toBe('default');
+    expect(warns).toHaveLength(0);
+  });
+
+  it('does not throw when there is no logger at all', () => {
+    const registry = createBreakerRegistry({ config: CONFIG });
+
+    expect(() =>
+      registry.assign(operation({ annotations: { breakerGroup: 'nope' } })),
+    ).not.toThrow();
+  });
+
+  it('detects the mismatch directly, independently of the registry', () => {
+    expect(
+      unmatchedBreakerGroup(operation({ annotations: { breakerGroup: 'nope' } }), CONFIG),
+    ).toBe('nope');
+    expect(
+      unmatchedBreakerGroup(operation({ annotations: { breakerGroup: 'ordersApi' } }), CONFIG),
+    ).toBeUndefined();
+    expect(unmatchedBreakerGroup(operation(), CONFIG)).toBeUndefined();
+    // Malformed shapes must stay silent rather than warn about a non-group.
+    expect(
+      unmatchedBreakerGroup(
+        { id: 'op', annotations: { breakerGroup: 7 } } as unknown as OperationDefinition,
+        CONFIG,
+      ),
+    ).toBeUndefined();
   });
 });

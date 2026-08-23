@@ -72,6 +72,30 @@ export function assignBreaker(
   return 'default';
 }
 
+/**
+ * The breaker group an operation explicitly asked for and did NOT get.
+ *
+ * `assignBreaker` treats an annotation naming a group that is absent from the
+ * config exactly like no annotation at all: it returns `default`. That is the
+ * right *routing* answer — see the never-throw note above — but it is a poor
+ * silence. The operator wrote `breakerGroup: 'ordersApi'`, which is an explicit
+ * request for isolation, and a typo or an un-wired config entry gives them
+ * shared fate with every other operation instead, with nothing to notice.
+ *
+ * This is deliberately separate from assignment so the routing decision stays
+ * total and side-effect-free; the registry uses it to warn once per group.
+ */
+export function unmatchedBreakerGroup(
+  operation: OperationDefinition,
+  config: BreakersConfig,
+): string | undefined {
+  const annotated = operation.annotations?.['breakerGroup'];
+  if (typeof annotated === 'string' && annotated.length > 0 && !(annotated in config)) {
+    return annotated;
+  }
+  return undefined;
+}
+
 function effectiveBaseUrl(operation: OperationDefinition): string | undefined {
   const config = operation.executor?.config;
   if (config === undefined || config === null) return undefined;
@@ -136,8 +160,26 @@ export function createBreakerRegistry(
     // `default` is required by the type, so this is total.
     breakers.get(name) ?? (breakers.get('default') as Breaker);
 
+  // Warn ONCE per distinct unconfigured group, not once per call. Assignment
+  // runs on every dispatch, so warning unconditionally would put a line in the
+  // log for every request to a mis-annotated operation — the kind of volume
+  // that gets a logger turned down and takes the real signal with it. Same
+  // reasoning as the transition log above: once per fault, not once per call.
+  const warnedGroups = new Set<string>();
+
   return {
-    assign: (operation) => assignBreaker(operation, config),
+    assign: (operation) => {
+      const unmatched = unmatchedBreakerGroup(operation, config);
+      if (unmatched !== undefined && !warnedGroups.has(unmatched)) {
+        warnedGroups.add(unmatched);
+        logger?.warn('breaker group is not configured; falling back to the shared default breaker', {
+          breakerGroup: unmatched,
+          operation: operation.id,
+          configured: Object.keys(config),
+        });
+      }
+      return assignBreaker(operation, config);
+    },
 
     tryAcquire: (name): BreakerAdmission => resolve(name).tryAcquire(),
 

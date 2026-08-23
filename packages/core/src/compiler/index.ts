@@ -179,3 +179,12 @@ export type {
 };
 
 export { COMPILER_PASSES };
+
+/**
+ * Re-exported for consumers that need to build a snapshot without running a
+ * full compile — notably the reliability suite (#51), which constructs
+ * snapshots to drive reload scenarios and needs the REAL hash rather than a
+ * hand-written one, since snapshot identity is exactly what those scenarios
+ * assert on.
+ */
+export { createSnapshot } from './passes/freeze-and-hash.js';

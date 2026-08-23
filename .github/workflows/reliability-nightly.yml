@@ -1,0 +1,69 @@
+# Reliability tier at load (#51).
+#
+# Separate from test.yml on purpose. §51 asks for load and chaos on merge
+# rather than on every pull request because they are slow, and puts the full
+# figures on a nightly job — a suite that made every PR wait ten minutes is
+# one that gets skipped, which costs more coverage than it buys.
+#
+# The PR job runs the same scenarios at PR scale, so the SHAPE of every
+# assertion is verified on each change; this run carries the load figures.
+name: Reliability (nightly)
+
+on:
+  schedule:
+    # 03:00 UTC — after the day's merges have landed, before the next morning.
+    - cron: '0 3 * * *'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/reliability/**'
+      - 'packages/core/**'
+      - 'packages/transports/**'
+  workflow_dispatch:
+    inputs:
+      scale:
+        description: 'nightly (full) or pr (scaled)'
+        required: false
+        default: 'nightly'
+
+jobs:
+  reliability:
+    runs-on: ubuntu-latest
+    # Generous, but bounded: a hung scenario must fail the job rather than
+    # occupy a runner until the platform's own limit.
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      # sources-openapi is required by the reference-Petstore layer, and must
+      # come after core, which it depends on: `npm run build -w` builds in the
+      # order given rather than in dependency order.
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/reliability
+
+      # --expose-gc is what makes the heap assertion real. Without it the
+      # suite REPORTS heap growth and declines to assert on it, because
+      # heapUsed moves with GC scheduling and a memory check that fires on
+      # timing is one that gets disabled.
+      - name: Run reliability suite at load
+        env:
+          RELIABILITY_SCALE: ${{ github.event.inputs.scale || 'nightly' }}
+        run: node --expose-gc packages/reliability/bin/run.mjs
+
+      # Evidence, not just pass/fail. A regression that is still inside its
+      # threshold is invisible to a green check, and that is exactly how a
+      # slow degradation ships.
+      - name: Capture evidence
+        if: always()
+        env:
+          RELIABILITY_SCALE: ${{ github.event.inputs.scale || 'nightly' }}
+        run: node --expose-gc packages/reliability/bin/run.mjs --json > reliability-evidence.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reliability-evidence
+          path: reliability-evidence.json
+          retention-days: 30

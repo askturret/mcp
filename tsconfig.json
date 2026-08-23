@@ -8,6 +8,7 @@
       "@askturret/mcp-adapters-express": ["./packages/adapters-express/src"],
       "@askturret/mcp-adapters-fastify": ["./packages/adapters-fastify/src"],
       "@askturret/mcp-adapter-conformance": ["./packages/adapter-conformance/src"],
+      "@askturret/mcp-reliability": ["./packages/reliability/src"],
       "@askturret/mcp-observability": ["./packages/observability/src"],
       "@askturret/mcp-explorer": ["./packages/explorer/src"],
       "@askturret/mcp-cli": ["./packages/cli/src"]
@@ -20,6 +21,7 @@
     { "path": "./packages/adapters-express" },
     { "path": "./packages/adapters-fastify" },
     { "path": "./packages/adapter-conformance" },
+    { "path": "./packages/reliability" },
     { "path": "./packages/observability" },
     { "path": "./packages/explorer" },
     { "path": "./packages/cli" }

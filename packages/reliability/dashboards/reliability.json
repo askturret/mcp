@@ -1,0 +1,376 @@
+{
+  "title": "AskTurret MCP — reliability",
+  "uid": "askturret-mcp-reliability",
+  "schemaVersion": 39,
+  "panels": [
+    {
+      "title": "mcp_requests_total",
+      "type": "timeseries",
+      "description": "MCP requests by method and outcome.",
+      "targets": [
+        {
+          "expr": "sum by (method, outcome) (rate(mcp_requests_total[5m]))",
+          "legendFormat": "{{method}} / {{outcome}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1
+    },
+    {
+      "title": "mcp_request_duration_seconds",
+      "type": "timeseries",
+      "description": "End-to-end MCP request duration.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, method, outcome) (rate(mcp_request_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{method}} / {{outcome}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2
+    },
+    {
+      "title": "mcp_tool_calls_total",
+      "type": "timeseries",
+      "description": "Tool invocations by tool and outcome.",
+      "targets": [
+        {
+          "expr": "sum by (tool, outcome) (rate(mcp_tool_calls_total[5m]))",
+          "legendFormat": "{{tool}} / {{outcome}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "id": 3
+    },
+    {
+      "title": "mcp_tool_duration_seconds",
+      "type": "timeseries",
+      "description": "Tool invocation duration.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, tool, outcome) (rate(mcp_tool_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{tool}} / {{outcome}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "id": 4
+    },
+    {
+      "title": "mcp_tool_errors_total",
+      "type": "timeseries",
+      "description": "Tool errors broken down by error code.",
+      "targets": [
+        {
+          "expr": "sum by (tool, error_code) (rate(mcp_tool_errors_total[5m]))",
+          "legendFormat": "{{tool}} / {{error_code}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "id": 5
+    },
+    {
+      "title": "mcp_tool_inflight",
+      "type": "stat",
+      "description": "Tool invocations currently in flight.",
+      "targets": [
+        {
+          "expr": "max by (tool) (mcp_tool_inflight)",
+          "legendFormat": "{{tool}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "id": 6
+    },
+    {
+      "title": "mcp_tool_queue_depth",
+      "type": "stat",
+      "description": "Queue depth per bulkhead. Real values since #43; every configured bulkhead publishes zero at startup so an idle group shows an idle panel rather than a blank one.",
+      "targets": [
+        {
+          "expr": "max by (bulkhead) (mcp_tool_queue_depth)",
+          "legendFormat": "{{bulkhead}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "id": 7
+    },
+    {
+      "title": "mcp_policy_decisions_total",
+      "type": "timeseries",
+      "description": "Policy decisions by phase and decision.",
+      "targets": [
+        {
+          "expr": "sum by (phase, decision) (rate(mcp_policy_decisions_total[5m]))",
+          "legendFormat": "{{phase}} / {{decision}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "id": 8
+    },
+    {
+      "title": "mcp_upstream_duration_seconds",
+      "type": "timeseries",
+      "description": "Upstream call duration by executor type.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, executor_type, outcome) (rate(mcp_upstream_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{executor_type}} / {{outcome}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 32
+      },
+      "id": 9
+    },
+    {
+      "title": "mcp_circuit_breaker_state",
+      "type": "stat",
+      "description": "Circuit breaker state. v0.2 emits a placeholder \"default\" breaker; Epic #3 populates real ones.",
+      "targets": [
+        {
+          "expr": "max by (breaker) (mcp_circuit_breaker_state)",
+          "legendFormat": "{{breaker}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 32
+      },
+      "id": 10
+    },
+    {
+      "title": "mcp_output_bytes",
+      "type": "timeseries",
+      "description": "Serialized output size per tool.",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.99, sum by (le, tool) (rate(mcp_output_bytes_bucket[5m])))",
+          "legendFormat": "{{tool}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 40
+      },
+      "id": 11
+    },
+    {
+      "title": "mcp_registry_reload_total",
+      "type": "timeseries",
+      "description": "Registry reloads by outcome. `error_class` splits a benign superseded reload from a real failure (#37 QA note).",
+      "targets": [
+        {
+          "expr": "sum by (outcome, error_class) (rate(mcp_registry_reload_total[5m]))",
+          "legendFormat": "{{outcome}} / {{error_class}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 40
+      },
+      "id": 12
+    },
+    {
+      "title": "mcp_registry_operations",
+      "type": "stat",
+      "description": "Operation count in the live registry, labelled by short registry hash.",
+      "targets": [
+        {
+          "expr": "max by (registry_hash) (mcp_registry_operations)",
+          "legendFormat": "{{registry_hash}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "id": 13
+    },
+    {
+      "title": "mcp_bulkhead_rejected_total",
+      "type": "timeseries",
+      "description": "Calls rejected because a bulkhead queue was full (#43). Counts QUEUE_FULL only — a caller that cancelled while queued is not load being shed, and folding the two together would invert the diagnosis during a burst of client disconnects.",
+      "targets": [
+        {
+          "expr": "sum by (bulkhead) (rate(mcp_bulkhead_rejected_total[5m]))",
+          "legendFormat": "{{bulkhead}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "id": 14
+    },
+    {
+      "title": "mcp_retry_attempts_total",
+      "type": "timeseries",
+      "description": "Retried attempts by tool and the outcome of that retry (#45). Counts RETRIES only, not the initial attempt — every call already has an initial attempt in mcp_tool_calls_total, so counting it again here would make the retry rate unreadable against a baseline of 1.",
+      "targets": [
+        {
+          "expr": "sum by (tool, outcome) (rate(mcp_retry_attempts_total[5m]))",
+          "legendFormat": "{{tool}} / {{outcome}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 56
+      },
+      "id": 15
+    },
+    {
+      "title": "mcp_retry_exhausted_total",
+      "type": "timeseries",
+      "description": "Calls that ran out of retry budget, labelled by the error finally returned (#45). Distinguishes \"retried and still failed\" from \"failed once and was not eligible\", which look identical in mcp_tool_errors_total.",
+      "targets": [
+        {
+          "expr": "sum by (tool, terminal_error) (rate(mcp_retry_exhausted_total[5m]))",
+          "legendFormat": "{{tool}} / {{terminal_error}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 56
+      },
+      "id": 16
+    },
+    {
+      "title": "mcp_audit_appends_total",
+      "type": "timeseries",
+      "description": "Audit records written, by sink and whether the write succeeded (#48).",
+      "targets": [
+        {
+          "expr": "sum by (sink, outcome) (rate(mcp_audit_appends_total[5m]))",
+          "legendFormat": "{{sink}} / {{outcome}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 64
+      },
+      "id": 17
+    },
+    {
+      "title": "mcp_audit_buffer_size",
+      "type": "stat",
+      "description": "Events buffered in memory per sink (#48). A gauge sitting near the configured bound means dispatch is being back-pressured by audit — intended behaviour, but not a state to leave running.",
+      "targets": [
+        {
+          "expr": "max by (sink) (mcp_audit_buffer_size)",
+          "legendFormat": "{{sink}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 64
+      },
+      "id": 18
+    },
+    {
+      "title": "mcp_audit_dropped_total",
+      "type": "timeseries",
+      "description": "Audit records DISCARDED because the buffer overflowed in drop mode (#48). Any non-zero value means the deployment is configured to violate the audit delivery guarantee — §48 requires this to be alertable and its loudness un-suppressable.",
+      "targets": [
+        {
+          "expr": "sum by (sink) (rate(mcp_audit_dropped_total[5m]))",
+          "legendFormat": "{{sink}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 72
+      },
+      "id": 19
+    },
+    {
+      "title": "mcp_redaction_hits_total",
+      "type": "timeseries",
+      "description": "Redactions applied, by rule and observable surface (#49). Lets an operator see which rules are firing and where — a rule that never fires is either dead or guarding something that stopped happening, and both are worth knowing.",
+      "targets": [
+        {
+          "expr": "sum by (rule, surface) (rate(mcp_redaction_hits_total[5m]))",
+          "legendFormat": "{{rule}} / {{surface}}"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 72
+      },
+      "id": 20
+    }
+  ],
+  "tags": [
+    "askturret",
+    "mcp",
+    "generated"
+  ],
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  }
+}

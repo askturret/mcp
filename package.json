@@ -39,7 +39,8 @@
     "build": "tsc -b",
     "test": "npm test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:conformance": "node packages/adapter-conformance/bin/run.mjs"
   },
   "keywords": [
     "mcp",

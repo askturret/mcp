@@ -101,6 +101,17 @@ const ALLOWLIST = [
   // ONLY when the user passes an http(s) URL, and never for a file path, so
   // the address the user typed is itself the opt-in.
   'packages/cli/src/commands/diff.ts',
+
+  // The adapter conformance bank (#42). It starts a server on 127.0.0.1 and
+  // then speaks JSON-RPC to it, which is the whole design: the suite proves
+  // Express and Fastify behave identically AT THE WIRE, and it cannot do that
+  // by importing them.
+  //
+  // A weaker entry than the CLI ones above, not a stronger one: this package
+  // is `private: true`, is never published, ships in nothing an adopter
+  // installs, and its requests go only to a loopback port it opened itself.
+  // There is no user-supplied address involved at all.
+  'packages/adapter-conformance/src/',
 ];
 
 const isAllowlisted = (relPosix) => ALLOWLIST.some((frag) => relPosix.includes(frag));

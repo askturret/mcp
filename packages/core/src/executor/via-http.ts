@@ -123,6 +123,16 @@ class HttpExecutor implements OperationExecutor {
         method: built.method,
         headers: {
           'Content-Type': 'application/json',
+          // Propagated so the UPSTREAM can deduplicate a replay (§8.4). This
+          // runtime deliberately does not persist keys — the executor's job is
+          // to carry it, not to interpret it.
+          //
+          // Spread BEFORE credentials so a resolver that supplies its own
+          // idempotency header still wins; credentials are operator config and
+          // outrank a value carried in from the wire.
+          ...(context.idempotencyKey === undefined
+            ? {}
+            : { 'Idempotency-Key': context.idempotencyKey }),
           ...credentialHeaders,
         },
         body: built.body,
@@ -252,6 +262,30 @@ class HttpExecutor implements OperationExecutor {
             code: 'RATE_LIMITED',
             message: 'Rate limit exceeded',
             ...(retryAfter !== undefined && { retryAfter }),
+          },
+        };
+      }
+
+      // "Certain 5xx" are retryable (§8.4) — but only through a code that
+      // MEANS transient. 502/503/504 are infrastructure telling us it could
+      // not reach or serve the backend right now, which is the textbook
+      // retry-after-backoff case.
+      //
+      // 500 is NOT in this set, and that is the whole point of "certain".
+      // A 500 is an application fault: the request reached the backend and the
+      // backend broke on it, so replaying the identical request reproduces the
+      // identical fault. It stays INTERNAL_ERROR, which the retry policy
+      // treats as terminal.
+      //
+      // Retry safety does not rest on this mapping — the effects matrix still
+      // gates every retry, so a non-idempotent operation is not replayed
+      // whatever status came back.
+      if (response.status === 502 || response.status === 503 || response.status === 504) {
+        return {
+          ok: false,
+          error: {
+            code: 'UPSTREAM_UNAVAILABLE',
+            message: 'Upstream service unavailable',
           },
         };
       }

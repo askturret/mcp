@@ -442,6 +442,52 @@ describe('viaHttp', () => {
 
       expect(result.ok).toBe(false);
       if (!result.ok) {
+        // OUTCOME_UNKNOWN, not TIMEOUT — and this assertion was CHANGED (#44).
+        //
+        // `createTestOperation()` is `idempotent: false`, and the request was
+        // already in flight when the deadline fired. TIMEOUT reads as "it did
+        // not happen", so a caller retries — and the upstream may have applied
+        // the first request perfectly well. For a non-idempotent operation
+        // that is a double-apply.
+        //
+        // The old expectation pinned exactly that dangerous answer, which is
+        // why this fix had to change a PASSING test rather than only add one.
+        // The idempotent complement below still asserts TIMEOUT.
+        expect(result.error.code).toBe('OUTCOME_UNKNOWN');
+      }
+    });
+
+    it('returns TIMEOUT — not OUTCOME_UNKNOWN — for an IDEMPOTENT operation', async () => {
+      // The complement, and what makes the change above a refinement rather
+      // than a blanket downgrade. Retrying an idempotent operation is safe, so
+      // the caller should be told plainly that it timed out.
+      //
+      // Nothing covered this branch before: the suite asserted only the
+      // non-idempotent case and, by expecting TIMEOUT there, implied this one.
+      const mockClient: HttpClient = {
+        async request(_url: string, options: HttpRequestOptions): Promise<HttpResponse> {
+          await new Promise((resolve, reject) => {
+            options.signal?.addEventListener('abort', () => reject(new Error('Aborted')));
+            setTimeout(resolve, 5000);
+          });
+          return { status: 200, headers: {}, body: '{}' };
+        },
+      };
+
+      const executor = viaHttp({
+        baseUrl: 'https://api.example.com',
+        client: mockClient,
+        timeoutMs: 10000,
+      });
+
+      const base = createTestOperation();
+      const idempotent = { ...base, effects: { ...base.effects, idempotent: true } };
+      const context = createTestContext({ deadline: new Date(Date.now() + 100) });
+
+      const result = await executor.execute(idempotent, {}, context);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
         expect(result.error.code).toBe('TIMEOUT');
       }
     });

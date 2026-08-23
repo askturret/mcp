@@ -133,6 +133,17 @@ class HttpExecutor implements OperationExecutor {
       let requestSent = false;
 
       try {
+        // Set BEFORE the await, so it means "we attempted to send", not "bytes
+        // reached the server". Deliberately optimistic, and it is what both
+        // OUTCOME_UNKNOWN branches key on.
+        //
+        // The imprecision only ever errs toward declaring uncertainty: a
+        // connection that failed before a single byte left the process is
+        // reported as uncertain rather than as a clean failure. That is the
+        // right direction — over-reporting uncertainty costs a caller one
+        // manual check, whereas under-reporting it invites a retry that
+        // double-applies a non-idempotent effect. Flagged for QA rather than
+        // presented as precise.
         requestSent = true;
         response = await this.client.request(url, requestOptions);
       } catch (error) {
@@ -149,6 +160,33 @@ class HttpExecutor implements OperationExecutor {
               },
             };
           }
+
+          // The deadline fired. WHICH error depends on whether retrying is
+          // safe, and that is the whole point of the distinction (§44, §8.3).
+          //
+          // This branch previously returned TIMEOUT unconditionally. For a
+          // non-idempotent operation whose request was already in flight, that
+          // is the dangerous answer: TIMEOUT reads as "it did not happen", so
+          // a caller retries — and the upstream may have processed the first
+          // request perfectly well. The retry then charges the card twice.
+          //
+          // OUTCOME_UNKNOWN says the one true thing: we stopped waiting, and
+          // we do not know what the server did. It is explicitly documented as
+          // do-NOT-retry.
+          //
+          // The socket-reset path below already made this distinction; the
+          // deadline path did not, so the same uncertainty produced different
+          // advice depending on how the wait ended.
+          if (requestSent && !operation.effects.idempotent) {
+            return {
+              ok: false,
+              error: {
+                code: 'OUTCOME_UNKNOWN',
+                message: 'Deadline exceeded after the request was sent; outcome uncertain',
+              },
+            };
+          }
+
           return {
             ok: false,
             error: {

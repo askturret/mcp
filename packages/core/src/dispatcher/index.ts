@@ -28,6 +28,29 @@ import type { AuthorizationEngine } from '../policy/authorization.js';
 import { omitUndefined } from '../utils.js';
 import { createLogger } from '../logging/logger.js';
 import type { StructuredLogger } from '../logging/types.js';
+import { noopTracer } from '../telemetry/tracer.js';
+import { noopMetricRecorder, emitPlaceholderSeries } from '../telemetry/metrics.js';
+import {
+  METRIC,
+  SPAN_ATTR,
+  type MetricRecorder,
+  type Observability,
+  type Span,
+  type SpanOutcome,
+  type Tracer,
+} from '../telemetry/types.js';
+
+/**
+ * MCP protocol version stamped onto every span (§9.1 `mcp.protocol.version`).
+ *
+ * A constant rather than a negotiated value because v0.2 speaks exactly one
+ * version; when negotiation lands this becomes a per-session field, and the
+ * attribute name will not have to change.
+ */
+const MCP_PROTOCOL_VERSION = '2025-06-18';
+
+/** The single MCP method v0.2 instruments end-to-end. */
+const MCP_METHOD = 'tools/call';
 
 /**
  * Command dispatcher interface
@@ -86,6 +109,16 @@ export interface DispatcherOptions {
    * audit channel; nothing logged here carries a delivery guarantee.
    */
   readonly logger?: StructuredLogger;
+
+  /**
+   * Span tree and metrics (#39, §9.1 / §9.2).
+   *
+   * Absent means no-op tracer and no-op recorder — telemetry is opt-in per
+   * § Delivery ("default: no exporter configured"). The dispatcher therefore
+   * always has something to call and never needs a null-check on the request
+   * path.
+   */
+  readonly observability?: Observability;
 }
 
 /**
@@ -115,6 +148,11 @@ const STAGE_NAMES: Readonly<Record<number, string>> = {
 class DefaultCommandDispatcher implements CommandDispatcher {
   private readonly authorization: AuthorizationEngine | undefined;
   private readonly logger: StructuredLogger;
+  private readonly tracer: Tracer;
+  private readonly metrics: MetricRecorder;
+
+  /** In-flight count per tool, backing `mcp_tool_inflight` (§9.2). */
+  private readonly inflight = new Map<string, number>();
 
   constructor(
     private readonly registry: RegistryReference,
@@ -124,37 +162,134 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   ) {
     this.authorization = options?.authorization;
     this.logger = options?.logger ?? createLogger();
+    this.tracer = options?.observability?.tracer ?? noopTracer;
+    this.metrics = options?.observability?.metrics ?? noopMetricRecorder;
+
+    // The v0.2 placeholder series, emitted once at construction so the two
+    // Epic-#3 metrics exist on a dashboard before their behaviour does.
+    emitPlaceholderSeries(this.metrics);
   }
 
   /**
    * Emit the per-stage operational log.
    *
-   * ## Level: info, as specified - with a reservation flagged for QA (#38)
+   * ## Level: DEBUG since #39 — a deliberate revision of #38's criterion
    *
-   * The issue's test section requires "every dispatcher stage emits at least
-   * one INFO-level log", so info is what ships. It is worth saying plainly
-   * that this means TWELVE info lines per request, which is a lot of volume
-   * for a level most deployments ship to long-term storage, and it sits
-   * awkwardly beside §9.3's framing of logs as "why is the service
-   * unhealthy?" - stage-by-stage progress is debug-shaped information.
+   * #38 shipped these at INFO because its acceptance test said so, and I
+   * flagged at the time that twelve info lines per request is debug-shaped
+   * volume. QA agreed it was a reservation worth revisiting once a real span
+   * tree existed.
    *
-   * The conventional split is debug per stage plus one info per outcome. That
-   * is a one-line change here if QA agrees, but it would fail the issue's
-   * stated acceptance test, so it is raised rather than taken unilaterally.
+   * That span tree now exists, and it represents stage-by-stage progress
+   * better than repeated log lines do: spans carry duration and parentage,
+   * they are sampled, and they do not multiply a request into twelve
+   * long-retention records. Keeping both would mean paying twice for the same
+   * information — the specific duplication QA called out.
+   *
+   * So: SPANS carry progress, LOGS carry outcome. Stage detail drops to debug
+   * (still there when an operator turns it up), and one INFO line per request
+   * reports the result. Reversing this is a one-line change, and #38's test
+   * has been updated in the same commit rather than left to fail silently.
    */
   private logStage(
     log: StructuredLogger,
     stage: number,
     extra?: Readonly<Record<string, string | number | boolean | null>>,
   ): void {
-    log.info('dispatch stage', {
+    log.debug('dispatch stage', {
       stage,
       stageName: STAGE_NAMES[stage] ?? 'unknown',
       ...(extra ?? {}),
     });
   }
 
+  /**
+   * Instrumentation wrapper around the sealed 12-stage envelope.
+   *
+   * Wrapping rather than threading spans through all eight return paths keeps
+   * the diff reviewable AND derives the outcome from the RESULT the dispatcher
+   * actually produced, instead of from whichever branch remembered to set it.
+   * A branch that forgets to record its outcome is the likeliest way for
+   * telemetry and reality to drift apart.
+   */
   async dispatch(command: OperationCommand): Promise<MCPResult> {
+    const tool = command.operationId;
+    const requestSpan = this.tracer.startSpan('mcp.request', {
+      attributes: {
+        [SPAN_ATTR.method]: MCP_METHOD,
+        [SPAN_ATTR.protocolVersion]: MCP_PROTOCOL_VERSION,
+        ...(command.clientInfo?.name === undefined
+          ? {}
+          : { [SPAN_ATTR.clientName]: command.clientInfo.name }),
+      },
+    });
+    const toolSpan = requestSpan.startChild('mcp.tool.call', {
+      attributes: { [SPAN_ATTR.toolName]: tool },
+    });
+
+    const startedAt = Date.now();
+    this.bumpInflight(tool, 1);
+
+    let result: MCPResult;
+    try {
+      result = await this.dispatchInstrumented(command, toolSpan);
+    } finally {
+      this.bumpInflight(tool, -1);
+    }
+
+    const durationSeconds = (Date.now() - startedAt) / 1000;
+    const outcome: SpanOutcome = result.isError ? 'error' : 'success';
+    const errorCode = result.error?.code;
+
+    toolSpan.setOutcome(outcome, errorCode);
+    requestSpan.setOutcome(outcome, errorCode);
+    toolSpan.end();
+    requestSpan.end();
+
+    this.metrics.add(METRIC.requestsTotal, 1, { method: MCP_METHOD, outcome });
+    this.metrics.record(METRIC.requestDurationSeconds, durationSeconds, {
+      method: MCP_METHOD,
+      outcome,
+    });
+    this.metrics.add(METRIC.toolCallsTotal, 1, { tool, outcome });
+    this.metrics.record(METRIC.toolDurationSeconds, durationSeconds, { tool, outcome });
+
+    if (errorCode !== undefined) {
+      this.metrics.add(METRIC.toolErrorsTotal, 1, { tool, error_code: errorCode });
+    }
+
+    if (!result.isError) {
+      // Size of the SERIALIZED payload, never its content.
+      this.metrics.record(METRIC.outputBytes, byteLength(result.content), { tool });
+    }
+
+    // The one INFO line per request: the outcome, which is what an operator
+    // paging at 3am needs. Stage detail lives in spans and in debug.
+    this.logger.info('dispatch complete', {
+      requestId: command.requestId,
+      operationId: tool,
+      outcome,
+      durationSeconds,
+      ...(errorCode === undefined ? {} : { errorCode }),
+    });
+
+    return result;
+  }
+
+  private bumpInflight(tool: string, delta: number): void {
+    const next = (this.inflight.get(tool) ?? 0) + delta;
+    if (next <= 0) {
+      this.inflight.delete(tool);
+    } else {
+      this.inflight.set(tool, next);
+    }
+    this.metrics.set(METRIC.toolInflight, Math.max(0, next), { tool });
+  }
+
+  private async dispatchInstrumented(
+    command: OperationCommand,
+    toolSpan: Span,
+  ): Promise<MCPResult> {
     try {
       // STAGE 1: Resolve snapshot and operation
       // CRITICAL: Capture snapshot ONCE at dispatch entry, never re-read
@@ -183,6 +318,12 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       }
 
       this.logStage(log, 1, { operationCount: snapshot.operations.size });
+
+      // Short form (§9.1, Epic #1 #12): the full hash would be a high-
+      // cardinality attribute, and the short one is what `mcp_registry_
+      // operations` is already labelled with, so traces and metrics join.
+      toolSpan.setAttribute(SPAN_ATTR.registryHash, snapshot.hash.slice(0, 12));
+      toolSpan.setAttribute(SPAN_ATTR.executorType, operation.executor.type);
 
       // Build dispatch context (immutable for entire pipeline)
       //
@@ -220,12 +361,22 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       // to pre-empt a policy denial: if it could, configuring a permissive
       // hook would silently disable the security boundary, which is the one
       // thing a hook must never be able to do.
+      const policySpan = toolSpan.startChild('policy.evaluate');
       const policyOutcome = await this.authorizeByPolicy(
         contextWithPrincipal,
         operation,
         command,
       );
       if (policyOutcome !== null) {
+        // `mcp.policy.decision` is span-only per §9.1 ("only on policy.evaluate
+        // spans"); the metric carries the same decision under its own labels.
+        policySpan.setAttribute(SPAN_ATTR.policyDecision, 'deny');
+        policySpan.setOutcome('error', policyOutcome.ok ? undefined : policyOutcome.error.code);
+        policySpan.end();
+        this.metrics.add(METRIC.policyDecisionsTotal, 1, {
+          phase: 'invocation',
+          decision: 'deny',
+        });
         this.logStage(log, 3, { outcome: 'policy-denied' });
         // Denials are audited. Stage 11 only ever ran on the success path, so
         // without this a refusal left no trace — the one event an audit log
@@ -237,23 +388,42 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
       const authDecision = await this.authorize(contextWithPrincipal, command.input);
       if ('shortCircuit' in authDecision) {
+        policySpan.setAttribute(SPAN_ATTR.policyDecision, 'deny');
+        policySpan.setOutcome('error');
+        policySpan.end();
+        this.metrics.add(METRIC.policyDecisionsTotal, 1, {
+          phase: 'invocation',
+          decision: 'deny',
+        });
         this.logStage(log, 3, { outcome: 'hook-short-circuit' });
         await this.audit(contextWithPrincipal, authDecision.result);
         this.logStage(log, 11, { outcome: 'hook-short-circuit' });
         return this.mapResult(authDecision.result);
       }
 
+      policySpan.setAttribute(SPAN_ATTR.policyDecision, 'allow');
+      policySpan.setOutcome('success');
+      policySpan.end();
+      this.metrics.add(METRIC.policyDecisionsTotal, 1, {
+        phase: 'invocation',
+        decision: 'allow',
+      });
       this.logStage(log, 3, { outcome: 'allowed' });
 
       // STAGE 4: Validate input
+      const inputSpan = toolSpan.startChild('schema.validate.input');
       const inputValidation = this.validateInput(command.input, operation);
       if (!inputValidation.ok) {
         // The validation ERROR CODE, never the offending input - raw input is
         // on the §9.4 never-include list.
+        inputSpan.setOutcome('error', inputValidation.error.code);
+        inputSpan.end();
         this.logStage(log, 4, { outcome: 'invalid-input' });
         return this.mapError(inputValidation.error);
       }
 
+      inputSpan.setOutcome('success');
+      inputSpan.end();
       this.logStage(log, 4, { outcome: 'valid' });
 
       // STAGE 5: Verify confirmation
@@ -269,8 +439,13 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       this.logStage(log, 5, { outcome: 'satisfied' });
 
       // STAGE 6: Acquire bulkhead permit
-      // v0.1: no-op (real bulkheads in Epic #3)
+      // v0.1: no-op (real bulkheads in Epic #3). The span is emitted anyway,
+      // per §9.1's "no-op span in v0.2" - a trace whose shape changes when
+      // Epic #3 lands is a trace nobody can write a stable query against.
+      const bulkheadSpan = toolSpan.startChild('bulkhead.wait');
       await this.acquireBulkhead(contextWithPrincipal);
+      bulkheadSpan.setOutcome('success');
+      bulkheadSpan.end();
       this.logStage(log, 6, { outcome: 'acquired' });
 
       // STAGE 7: Apply deadline + AbortSignal to executor
@@ -282,27 +457,50 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       this.logStage(log, 7, { deadline: command.deadline.toISOString() });
 
       // STAGE 8: Execute
+      const executorType = operation.executor.type;
+      const executorSpan = toolSpan.startChild('executor.invoke', {
+        attributes: { [SPAN_ATTR.executorType]: executorType },
+      });
+      const executorStartedAt = Date.now();
       const executionResult = await this.execute(
         operation,
         command.input,
         contextWithPrincipal,
       );
+      const upstreamSeconds = (Date.now() - executorStartedAt) / 1000;
 
       // If execution failed, skip output validation and go straight to mapping
       if (!executionResult.ok) {
+        executorSpan.setOutcome('error', executionResult.error.code);
+        executorSpan.end();
+        this.metrics.record(METRIC.upstreamDurationSeconds, upstreamSeconds, {
+          executor_type: executorType,
+          outcome: 'error',
+        });
         this.logStage(log, 8, { outcome: 'execution-failed' });
         return this.mapResult(executionResult);
       }
 
+      executorSpan.setOutcome('success');
+      executorSpan.end();
+      this.metrics.record(METRIC.upstreamDurationSeconds, upstreamSeconds, {
+        executor_type: executorType,
+        outcome: 'success',
+      });
       this.logStage(log, 8, { outcome: 'executed' });
 
       // STAGE 9: Validate output
+      const outputSpan = toolSpan.startChild('schema.validate.output');
       const outputValidation = this.validateOutput(executionResult.value, operation);
       if (!outputValidation.ok) {
+        outputSpan.setOutcome('error', outputValidation.error.code);
+        outputSpan.end();
         this.logStage(log, 9, { outcome: 'invalid-output' });
         return this.mapError(outputValidation.error);
       }
 
+      outputSpan.setOutcome('success');
+      outputSpan.end();
       this.logStage(log, 9, { outcome: 'valid' });
 
       // STAGE 10: Redact observable data
@@ -310,8 +508,15 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       this.logStage(log, 10, { outcome: 'redacted' });
 
       // STAGE 11: Audit
+      //
+      // Span emitted in v0.2 even though the mandatory-delivery sink ships in
+      // Epic #3 (#48), for the same reason as bulkhead.wait: the tree shape
+      // must not change under existing queries when the behaviour lands.
       const finalResult: OperationResult = { ok: true, value: redacted };
+      const auditSpan = toolSpan.startChild('audit.append');
       await this.audit(contextWithPrincipal, finalResult);
+      auditSpan.setOutcome('success');
+      auditSpan.end();
       this.logStage(log, 11, { outcome: 'audited' });
 
       // STAGE 12: Map to MCP result
@@ -511,6 +716,22 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         retryAfter: error.retryAfter,
       }),
     };
+  }
+}
+
+/**
+ * Serialized size of a result payload, for `mcp_output_bytes` (§9.2).
+ *
+ * Measures the CONTENT only, never inspects or emits it. A payload that
+ * cannot be serialized records 0 rather than throwing: a metrics call must
+ * not be able to fail a request that already succeeded.
+ */
+function byteLength(content: unknown): number {
+  if (content === undefined) return 0;
+  try {
+    return Buffer.byteLength(JSON.stringify(content) ?? '', 'utf8');
+  } catch {
+    return 0;
   }
 }
 

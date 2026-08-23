@@ -2,28 +2,22 @@
 /**
  * AskTurret MCP - Observability Adapters
  *
- * OpenTelemetry integration, structured logging, and audit hooks.
- */
-
-/**
- * OpenTelemetry integration factory
+ * OpenTelemetry integration for the span tree and metric set defined by
+ * `@askturret/mcp-core`'s telemetry ports (#39, §9.1 / §9.2).
  *
- * @param options - Telemetry configuration
- * @returns Telemetry adapter
+ * The v0.1 `openTelemetry()` stub threw "Not yet implemented"; it now returns
+ * a real `Observability`. Called with no config it returns an INERT one
+ * rather than throwing, because § Delivery makes no-exporter the default and
+ * a default that throws is not a default.
  */
-export function openTelemetry(_options?: unknown): unknown {
-  // Stub implementation for v0.1
-  return {
-    trace: () => {
-      throw new Error('Not yet implemented');
-    },
-    metrics: () => {
-      throw new Error('Not yet implemented');
-    },
-  };
-}
 
-/**
- * Re-export utilities (to be implemented)
- */
+export {
+  openTelemetry,
+  type OpenTelemetryConfig,
+  type OtelInstrumentLike,
+  type OtelMeterLike,
+  type OtelSpanLike,
+  type OtelTracerLike,
+} from './otel.js';
+
 export * from './types.js';

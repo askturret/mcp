@@ -1,11 +1,25 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * Dispatcher stage logging (§ Tests, "every dispatcher stage emits at least
- * one info-level log with the expected field set").
+ * Dispatcher stage logging.
  *
  * Drives the REAL dispatcher rather than asserting against the logger alone -
  * the claim is about the dispatcher's coverage, and a logger-only test would
  * pass while a stage quietly stopped logging.
+ *
+ * ## Level changed from info to debug in #39
+ *
+ * #38 shipped stage logs at INFO because its acceptance criterion said so,
+ * with a recorded reservation that twelve info lines per request is
+ * debug-shaped volume. #39 added a real span tree, which represents
+ * stage-by-stage progress with duration and parentage, sampled, without
+ * multiplying one request into twelve long-retention records.
+ *
+ * Keeping both would pay twice for the same information - the duplication QA
+ * flagged. So spans carry PROGRESS and logs carry OUTCOME: stage detail is
+ * still emitted, at debug, and one info line per request reports the result.
+ *
+ * These assertions were updated deliberately in the same commit as the
+ * behaviour, rather than left to fail.
  */
 
 import { describe, it, expect } from '@jest/globals';
@@ -57,6 +71,9 @@ function harness() {
       logger: createLogger({
         sink: (record) => records.push(record),
         now: () => new Date('2026-08-23T01:00:00.000Z'),
+        // Stage detail is debug since #39; the default `info` threshold would
+        // filter it out entirely.
+        level: 'debug',
       }),
     },
   );
@@ -77,16 +94,44 @@ function command(overrides?: Partial<Parameters<ReturnType<typeof harness>['disp
 }
 
 describe('dispatcher stage logging', () => {
-  it('emits an info log for all 12 stages on the success path', async () => {
+  it('emits a debug log for all 12 stages on the success path', async () => {
     const { records, dispatcher } = harness();
 
     await dispatcher.dispatch(command());
 
     const stages = records
-      .filter((r) => r.level === 'info' && r.message === 'dispatch stage')
+      .filter((r) => r.level === 'debug' && r.message === 'dispatch stage')
       .map((r) => r.fields['stage']);
 
     expect(stages).toEqual(ALL_STAGES);
+  });
+
+  it('emits exactly ONE info line per request, carrying the outcome', async () => {
+    // The other half of the #39 split: progress went to spans and debug, so
+    // info must now be the outcome and nothing else. If stage logs regressed
+    // to info, this count would jump from 1 to 13.
+    const { records, dispatcher } = harness();
+
+    await dispatcher.dispatch(command());
+
+    const infoRecords = records.filter((r) => r.level === 'info');
+
+    expect(infoRecords).toHaveLength(1);
+    expect(infoRecords[0]?.message).toBe('dispatch complete');
+    expect(infoRecords[0]?.fields['outcome']).toBe('success');
+    expect(infoRecords[0]?.fields['operationId']).toBe('listPets');
+    expect(typeof infoRecords[0]?.fields['durationSeconds']).toBe('number');
+  });
+
+  it('reports the error code on the info outcome line when the call fails', async () => {
+    const { records, dispatcher } = harness();
+
+    await dispatcher.dispatch(command({ operationId: 'noSuchOperation' }));
+
+    const infoRecords = records.filter((r) => r.level === 'info');
+    expect(infoRecords).toHaveLength(1);
+    expect(infoRecords[0]?.fields['outcome']).toBe('error');
+    expect(infoRecords[0]?.fields['errorCode']).toBe('INVALID_INPUT');
   });
 
   it('labels every stage with a name, never `unknown`', () => {

@@ -290,7 +290,10 @@ class DefaultReloadController implements ReloadController {
       `(v${live.version}) while it was compiling. Discarded rather than published ` +
       `over the newer state.`;
 
-    this.metrics.recordReload('error');
+    // The `superseded` class is what lets a consumer exclude this from a
+    // reload-error alert (#39, closing a QA note on #37). Without it a benign
+    // rollback race is indistinguishable from a real compile failure.
+    this.metrics.recordReload('error', 'superseded');
 
     this.logger.info('Registry reload superseded - candidate discarded', {
       candidateHash: candidate.hash,
@@ -376,7 +379,7 @@ class DefaultReloadController implements ReloadController {
       since: new Date(),
     };
 
-    this.metrics.recordReload(outcome);
+    this.metrics.recordReload(outcome, errorClass);
 
     this.logger.warn('Registry reload rejected - retaining previous snapshot', {
       outcome,

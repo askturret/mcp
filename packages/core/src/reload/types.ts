@@ -144,8 +144,22 @@ export interface ReadinessState {
  * depends on a metrics backend and adopters wire their own.
  */
 export interface ReloadMetrics {
-  /** `mcp_registry_reload_total{outcome="success|invalid|error"}` - counter. */
-  recordReload(outcome: ReloadOutcome): void;
+  /**
+   * `mcp_registry_reload_total{outcome="success|invalid|error"}` - counter.
+   *
+   * `errorClass` is OPTIONAL and present only when the reload did not publish
+   * (#39, closing a QA note on #37). Without it a `superseded` reload — the
+   * benign outcome of an operator rollback winning a race against an in-flight
+   * compile — lands in the same `error` bucket as a genuine compile or
+   * validation failure, so anyone alerting on reload errors pages on a
+   * harmless rollback.
+   *
+   * A SECOND argument rather than a fourth `outcome` value, because the
+   * outcome label set is the metric's wire contract: adding a value breaks
+   * existing queries, whereas an extra optional label lets a consumer split
+   * the series only if they want to.
+   */
+  recordReload(outcome: ReloadOutcome, errorClass?: ReloadErrorClass): void;
 
   /**
    * `mcp_registry_operations{registry_hash=<short>}` - gauge.

@@ -82,3 +82,4 @@ export type { DispatcherOptions } from './dispatcher/index.js';
 export * from './preset/index.js';
 export * from './reload/index.js';
 export * from './logging/index.js';
+export * from './telemetry/index.js';

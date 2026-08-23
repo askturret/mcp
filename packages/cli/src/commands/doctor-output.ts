@@ -3,6 +3,7 @@
  * Doctor command output formatters
  */
 
+import type { PresetDescription } from '@askturret/mcp-core';
 import type { AnalysisResult, Finding, OperationAnalysis } from './doctor-types.js';
 
 /**
@@ -89,6 +90,11 @@ export function formatHumanReadable(result: AnalysisResult): string {
       }
     }
     lines.push('');
+  }
+
+  // Preset expansion (ADR-007 inspectability)
+  if (result.preset) {
+    lines.push(...formatPresetExpansion(result.preset));
   }
 
   // Footer
@@ -190,4 +196,38 @@ function colorize(value: string | number, color: 'red' | 'yellow' | 'green', con
   };
 
   return `${codes[color]}${value}${codes.reset}`;
+}
+
+/**
+ * Render a preset expansion.
+ *
+ * ADR-007's requirement is that an operator can inline the expansion and
+ * change one field. So this prints the configuration as readable JSON rather
+ * than a prose summary — a summary reads better and cannot be pasted back,
+ * which is the only thing the requirement actually asks for.
+ *
+ * The `pending` list is printed separately and deliberately prominently:
+ * controls the preset DECLARES but v0.2 does not yet ENFORCE are exactly what
+ * an operator would otherwise discover from behaviour.
+ */
+function formatPresetExpansion(preset: PresetDescription): string[] {
+  const lines: string[] = [];
+
+  lines.push(`Preset '${preset.preset}' expands to:`);
+  lines.push('');
+  for (const line of JSON.stringify(preset.configuration, null, 2).split('\n')) {
+    lines.push(`  ${line}`);
+  }
+  lines.push('');
+
+  if (preset.pending.length > 0) {
+    lines.push('  Declared but not yet enforced in this version:');
+    for (const item of preset.pending) {
+      lines.push(`  • ${item.control} (tracked by #${item.trackedBy})`);
+      lines.push(`    ${item.detail}`);
+    }
+    lines.push('');
+  }
+
+  return lines;
 }

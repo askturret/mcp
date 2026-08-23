@@ -3,6 +3,8 @@
  * Doctor command types
  */
 
+import type { PresetDescription } from '@askturret/mcp-core';
+
 /**
  * Severity level for findings
  */
@@ -95,4 +97,16 @@ export interface AnalysisResult {
     version?: string;
     openApiVersion: string;
   };
+
+  /**
+   * The expansion of a requested preset, when `--preset` was passed.
+   *
+   * ADR-007: presets expand to ordinary configuration and can be inspected.
+   * This is that inspection surface — an operator can read the expansion,
+   * copy it, and change a single field without re-deriving the whole preset.
+   *
+   * Must stay JSON-safe and deterministic: `formatJson` stringifies this whole
+   * result, and a test pins that two runs produce identical output.
+   */
+  preset?: PresetDescription;
 }

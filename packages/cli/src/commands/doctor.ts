@@ -6,13 +6,24 @@
 import SwaggerParser from '@apidevtools/swagger-parser';
 import type { OpenAPIV3, OpenAPIV3_1 } from 'openapi-types';
 import { resolve } from 'path';
-import { omitUndefined } from '@askturret/mcp-core';
+import { describePreset, omitUndefined } from '@askturret/mcp-core';
 import type {
   Finding,
   OperationAnalysis,
   AnalysisResult,
 } from './doctor-types.js';
 import { formatHumanReadable, formatJson } from './doctor-output.js';
+
+/**
+ * Presets that expand to configuration today.
+ *
+ * `PresetName` also admits 'light' and 'regulated', but neither is a
+ * composition yet — Light is hardcoded inside the Express adapter, and
+ * Regulated ships in Epic #3. Typing this narrowly means `--preset light`
+ * cannot silently produce a Production expansion, and widening it later is a
+ * one-word change at the point the other two become real.
+ */
+type ExpandablePreset = 'production';
 
 type OpenAPIDocument = OpenAPIV3.Document | OpenAPIV3_1.Document;
 type OpenAPIOperation = OpenAPIV3.OperationObject | OpenAPIV3_1.OperationObject;
@@ -33,7 +44,15 @@ export async function doctorCommand(args: string[]): Promise<void> {
 
   try {
     const spec = await loadSpec(flags.input, flags.url);
-    const result = await analyzeSpec(spec);
+    const analysis = await analyzeSpec(spec);
+
+    // ADR-007: the expansion is attached to the result rather than printed
+    // separately, so `--json` carries it for free and an operator can pipe the
+    // whole thing into whatever reads their config.
+    const result =
+      flags.preset === undefined
+        ? analysis
+        : { ...analysis, preset: describePreset(flags.preset) };
 
     if (flags.json) {
       console.log(formatJson(result));
@@ -56,11 +75,13 @@ function parseArgs(args: string[]): {
   input?: string;
   url: boolean;
   json: boolean;
+  preset?: ExpandablePreset;
 } {
   const flags: {
     input?: string;
     url: boolean;
     json: boolean;
+    preset?: ExpandablePreset;
   } = {
     url: false,
     json: false,
@@ -77,6 +98,14 @@ function parseArgs(args: string[]): {
       }
     } else if (arg === '--json') {
       flags.json = true;
+    } else if (arg === '--preset') {
+      // Only 'production' expands today. An unknown value is left unset rather
+      // than guessed at, so the caller sees no preset section instead of a
+      // confidently wrong one.
+      const value = args[++i];
+      if (value === 'production') {
+        flags.preset = value;
+      }
     } else if (!arg.startsWith('--')) {
       flags.input = arg;
     }

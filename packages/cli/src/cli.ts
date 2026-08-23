@@ -53,8 +53,13 @@ function printHelp() {
   console.log('  inspect --url <url>     Inspect a running MCP server (live)');
   console.log('  help                    Show this help message');
   console.log('');
+  console.log('Options:');
+  console.log('  --json                  Machine-readable output');
+  console.log("  --preset production     Also print the preset's configuration expansion");
+  console.log('');
   console.log('Examples:');
   console.log('  npx @askturret/mcp doctor ./openapi.yaml');
+  console.log('  npx @askturret/mcp doctor ./openapi.yaml --preset production');
   console.log('  npx @askturret/mcp doctor --url http://localhost:7000/mcp');
   console.log('  npx @askturret/mcp inspect --url http://localhost:7000/mcp');
   console.log('  npx @askturret/mcp inspect --url ... --tool createOrder --dry-run');

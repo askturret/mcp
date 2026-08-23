@@ -89,8 +89,22 @@ export interface ProvenanceEntry {
 
   /**
    * Source kind that contributed this value.
+   *
+   * `x-mcp` was added by #55. §5.3's chain has six LEVELS, and level 3 is
+   * source-native `x-mcp` metadata — which had no representation here, since
+   * `openapi` and `framework` are both level 4 (the source definition itself).
+   * Without a distinct kind, a value an adopter wrote in `x-mcp` and one the
+   * spec merely implied were indistinguishable in the provenance record, which
+   * is the question §5.3 exists to answer.
    */
-  readonly kind: 'openapi' | 'framework' | 'overlay' | 'code' | 'inference' | 'preset';
+  readonly kind:
+    | 'openapi'
+    | 'framework'
+    | 'overlay'
+    | 'code'
+    | 'x-mcp'
+    | 'inference'
+    | 'preset';
 
   /**
    * Optional source location (file path, line, or URL).

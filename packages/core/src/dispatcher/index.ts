@@ -38,6 +38,7 @@ import {
   type BulkheadsConfig,
 } from '../bulkhead/index.js';
 import { buildAuditEvent, type AuditSink } from '../audit/index.js';
+import { redactAuditEvent, redactSerializedError } from '../redaction/surfaces.js';
 import {
   createBreakerRegistry,
   type BreakerRegistry,
@@ -445,7 +446,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
     if (!audit.audited && this.auditSink !== undefined) {
       await this.auditSink.append(
-        buildAuditEvent({
+        redactAuditEvent(buildAuditEvent({
           requestId: command.requestId,
           ...(command.traceId === undefined ? {} : { traceId: command.traceId }),
           ...(command.principal === undefined ? {} : { principalId: command.principal.id }),
@@ -455,7 +456,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
           input: command.input,
           outcome: result.isError ? (result.error?.code ?? 'INTERNAL_ERROR') : 'success',
           durationMs: Date.now() - audit.startedAt,
-        }),
+        })),
       );
     }
 
@@ -1180,7 +1181,10 @@ class DefaultCommandDispatcher implements CommandDispatcher {
       durationMs: Date.now() - details.startedAt,
     });
 
-    await this.auditSink.append(event);
+    // Surface 4 of §9.4, applied immediately before the sink. AFTER the
+    // digest was computed in `buildAuditEvent` — reversing that would make
+    // #48's cross-run digest stability depend on the rule set.
+    await this.auditSink.append(redactAuditEvent(event));
   }
 
   // ============================================================================
@@ -1197,13 +1201,30 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     return this.mapError(result.error);
   }
 
+  /**
+   * Surface 6 of §9.4 — the OperationError-to-wire mapping.
+   *
+   * `details` is the field that matters: it is free-form and is the only
+   * channel a CONFIRMATION_REQUIRED challenge has, so it carries whatever a
+   * policy chose to put there. `message` is redacted too, because an upstream
+   * error string is a common way a token ends up quoted back at a client.
+   *
+   * `code` and `retryAfter` are left alone: both are closed vocabularies that
+   * cannot carry a payload, and redacting an error code would leave the client
+   * unable to branch on the failure at all.
+   */
   private mapError(error: OperationError): MCPResult {
+    const safe = redactSerializedError({
+      message: error.message,
+      details: error.details,
+    });
+
     return {
       isError: true,
       error: omitUndefined({
         code: error.code,
-        message: error.message,
-        details: error.details,
+        message: safe.message,
+        details: safe.details,
         retryAfter: error.retryAfter,
       }),
     };

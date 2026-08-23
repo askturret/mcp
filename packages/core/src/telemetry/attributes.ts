@@ -8,6 +8,7 @@
  * and span attributes are not reviewed the way log lines are.
  */
 
+import { redactSpanAttributes } from '../redaction/surfaces.js';
 import type { SpanAttributeValue, SpanAttributes } from './types.js';
 
 export const REDACTED = '[REDACTED]';
@@ -170,7 +171,16 @@ function maskPath(pathname: string): string {
 export function sanitizeAttributes(attributes: SpanAttributes): SpanAttributes {
   const out: Record<string, SpanAttributeValue> = {};
 
-  for (const [key, value] of Object.entries(attributes)) {
+  // Surface 2 of §9.4, applied at the ONE function every attribute write
+  // funnels through — `setAttribute` deliberately routes a single key through
+  // here too, so a one-key set cannot bypass what a bulk set enforces.
+  //
+  // The span-specific rules below still run: they mask by KEY (§9.1's denied
+  // attribute names) and shorten URLs, which is orthogonal to the central
+  // pipeline's value-shape rules. Neither subsumes the other.
+  const piped = redactSpanAttributes(attributes);
+
+  for (const [key, value] of Object.entries(piped)) {
     if (isDeniedAttributeKey(key)) {
       out[key] = REDACTED;
       continue;

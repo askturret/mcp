@@ -235,6 +235,15 @@ describe('§9.2 metric coverage', () => {
     //    audit series (#48).
     await driveAuditSinks(metrics);
 
+    // 7. A redaction, which is the only thing that produces
+    //    mcp_redaction_hits_total (#49). Driven through the real pipeline
+    //    against a real secret rather than by touching the counter.
+    const { createRedactionPipeline } = await import('../../redaction/index.js');
+    createRedactionPipeline({ metrics }).redact(
+      { token: 'sk_live_should_not_appear' },
+      { surface: 'log', path: [] },
+    );
+
     const emitted = new Set<MetricName>(metrics.samples().map((sample) => sample.metric));
     const missing = (Object.values(METRIC) as MetricName[]).filter((name) => !emitted.has(name));
 

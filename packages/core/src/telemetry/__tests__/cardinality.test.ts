@@ -86,10 +86,11 @@ describe('declared metric set', () => {
     expect(findCardinalityViolations()).toEqual([]);
   });
 
-  it('declares all 13 required metrics', () => {
+  it('declares all 14 required metrics', () => {
     // §9.2 lists thirteen. A missing one is a dashboard an operator cannot
     // build, so the count is asserted rather than left implicit.
-    expect(METRIC_DEFINITIONS).toHaveLength(13);
+    // 13 from §9.2 plus mcp_bulkhead_rejected_total (#43).
+    expect(METRIC_DEFINITIONS).toHaveLength(14);
   });
 
   it('gives every metric a kind, at least one label, and a description', () => {

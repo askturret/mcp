@@ -31,6 +31,13 @@ import type { StructuredLogger } from '../logging/types.js';
 import { noopTracer } from '../telemetry/tracer.js';
 import { noopMetricRecorder, emitPlaceholderSeries } from '../telemetry/metrics.js';
 import {
+  BulkheadRejection,
+  createBulkheadRegistry,
+  type BulkheadPermit,
+  type BulkheadRegistry,
+  type BulkheadsConfig,
+} from '../bulkhead/index.js';
+import {
   METRIC,
   SPAN_ATTR,
   type MetricRecorder,
@@ -119,6 +126,22 @@ export interface DispatcherOptions {
    * path.
    */
   readonly observability?: Observability;
+
+  /**
+   * Bulkhead configuration (#43, §8.2, ADR-013).
+   *
+   * §43 shows this under a `runtime: { bulkheads: ... }` wrapper. No `runtime`
+   * config object exists in this codebase — `DispatcherOptions` is the seam
+   * stage 6 actually reads from — so it is accepted here instead, with the
+   * same shape. Flagged for QA rather than a `runtime` key invented to match
+   * the prose.
+   *
+   * Absent means DEFAULT_BULKHEADS, not "unbounded". A dispatcher with no
+   * bulkhead limits is the failure mode §8.2 exists to prevent, and making
+   * that the default for anyone who did not configure it would mean the
+   * protection only protects people who already knew to ask.
+   */
+  readonly bulkheads?: BulkheadsConfig;
 }
 
 /**
@@ -150,6 +173,7 @@ class DefaultCommandDispatcher implements CommandDispatcher {
   private readonly logger: StructuredLogger;
   private readonly tracer: Tracer;
   private readonly metrics: MetricRecorder;
+  private readonly bulkheads: BulkheadRegistry;
 
   /** In-flight count per tool, backing `mcp_tool_inflight` (§9.2). */
   private readonly inflight = new Map<string, number>();
@@ -164,6 +188,10 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     this.logger = options?.logger ?? createLogger();
     this.tracer = options?.observability?.tracer ?? noopTracer;
     this.metrics = options?.observability?.metrics ?? noopMetricRecorder;
+    this.bulkheads = createBulkheadRegistry({
+      ...(options?.bulkheads === undefined ? {} : { config: options.bulkheads }),
+      metrics: this.metrics,
+    });
 
     // The v0.2 placeholder series, emitted once at construction so the two
     // Epic-#3 metrics exist on a dashboard before their behaviour does.
@@ -290,6 +318,13 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     command: OperationCommand,
     toolSpan: Span,
   ): Promise<MCPResult> {
+    // Declared out here so the `finally` can release it on EVERY exit path —
+    // success, mapped error, and the internal-error catch alike. A slot leaked
+    // on an exception is worse than one never taken: the bulkhead's effective
+    // concurrency drops permanently, and the symptom is unrelated calls
+    // queueing for a group that looks idle.
+    let permit: BulkheadPermit | undefined;
+
     try {
       // STAGE 1: Resolve snapshot and operation
       // CRITICAL: Capture snapshot ONCE at dispatch entry, never re-read
@@ -438,15 +473,40 @@ class DefaultCommandDispatcher implements CommandDispatcher {
 
       this.logStage(log, 5, { outcome: 'satisfied' });
 
-      // STAGE 6: Acquire bulkhead permit
-      // v0.1: no-op (real bulkheads in Epic #3). The span is emitted anyway,
-      // per §9.1's "no-op span in v0.2" - a trace whose shape changes when
-      // Epic #3 lands is a trace nobody can write a stable query against.
-      const bulkheadSpan = toolSpan.startChild('bulkhead.wait');
-      await this.acquireBulkhead(contextWithPrincipal);
+      // STAGE 6: Acquire bulkhead permit (#43 — real since this issue).
+      //
+      // The span was already emitted while this was a no-op, per §9.1, so the
+      // trace SHAPE is unchanged by bulkheads landing. Only its duration and
+      // outcome become meaningful: `bulkhead.wait` is now where a saturated
+      // group's queueing time actually shows up.
+      const bulkheadName = this.bulkheads.assign(operation);
+      const bulkheadSpan = toolSpan.startChild('bulkhead.wait', {
+        attributes: { 'mcp.bulkhead': bulkheadName },
+      });
+
+      try {
+        permit = await this.bulkheads.acquire(bulkheadName, command.signal);
+      } catch (error) {
+        // Overflow and cancellation are ordinary, EXPECTED outcomes here, not
+        // internal faults — shedding load is the bulkhead working. Mapped to
+        // their own codes rather than falling through to the catch below,
+        // which would report INTERNAL_ERROR and make a healthy rejection look
+        // like a bug in the server.
+        const rejection =
+          error instanceof BulkheadRejection
+            ? error
+            : new BulkheadRejection('QUEUE_FULL', bulkheadName, 'bulkhead acquisition failed');
+
+        bulkheadSpan.setOutcome('error', rejection.code);
+        bulkheadSpan.end();
+        this.logStage(log, 6, { outcome: 'rejected', bulkhead: bulkheadName, code: rejection.code });
+
+        return this.mapError({ code: rejection.code, message: rejection.message });
+      }
+
       bulkheadSpan.setOutcome('success');
       bulkheadSpan.end();
-      this.logStage(log, 6, { outcome: 'acquired' });
+      this.logStage(log, 6, { outcome: 'acquired', bulkhead: bulkheadName });
 
       // STAGE 7: Apply deadline + AbortSignal to executor
       // (Already present in command, passed to executor)
@@ -529,6 +589,8 @@ class DefaultCommandDispatcher implements CommandDispatcher {
         code: 'INTERNAL_ERROR',
         message: 'An internal error occurred',
       });
+    } finally {
+      permit?.release();
     }
   }
 
@@ -614,11 +676,6 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     }
     // v0.1: no-op (pass-through)
     return { continue: true };
-  }
-
-  private async acquireBulkhead(_context: DispatchContext): Promise<void> {
-    // v0.1: no-op (real bulkheads in Epic #3)
-    return;
   }
 
   private async execute(

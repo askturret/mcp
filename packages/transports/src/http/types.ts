@@ -3,6 +3,7 @@
  * HTTP transport types - MCP Streamable HTTP server configuration
  */
 
+import type { BulkheadsConfig } from '@askturret/mcp-core';
 import type {
   RegistryReference,
   DispatcherHooks,
@@ -60,6 +61,19 @@ export interface SessionData {
  * HTTP transport configuration
  */
 export interface HttpTransportOptions {
+  /**
+   * Bulkhead configuration, forwarded to the dispatcher (#43, §8.2).
+   *
+   * Without this the option would exist on `DispatcherOptions` and be
+   * unreachable from any adapter — the transport is what constructs the
+   * dispatcher — so bulkheads would ship configurable only in theory.
+   *
+   * Reachable from the facades for free: `McpFacadeOptions.transport` is
+   * spread into these options, so `transport: { bulkheads: { ... } }` works on
+   * both Express and Fastify without either adapter changing.
+   */
+  readonly bulkheads?: BulkheadsConfig;
+
   /**
    * Registry reference (snapshot provider)
    */

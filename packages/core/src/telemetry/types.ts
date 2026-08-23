@@ -139,6 +139,7 @@ export const METRIC = {
   outputBytes: 'mcp_output_bytes',
   registryReloadTotal: 'mcp_registry_reload_total',
   registryOperations: 'mcp_registry_operations',
+  bulkheadRejectedTotal: 'mcp_bulkhead_rejected_total',
 } as const;
 
 export type MetricName = (typeof METRIC)[keyof typeof METRIC];
@@ -202,7 +203,8 @@ export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
     kind: 'gauge',
     labels: ['bulkhead'],
     description:
-      'Queue depth per bulkhead. v0.2 emits a single "default" bulkhead; Epic #3 populates real ones.',
+      'Queue depth per bulkhead. Real values since #43; every configured bulkhead publishes ' +
+      'zero at startup so an idle group shows an idle panel rather than a blank one.',
   },
   {
     name: METRIC.policyDecisionsTotal,
@@ -241,6 +243,15 @@ export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
     kind: 'gauge',
     labels: ['registry_hash'],
     description: 'Operation count in the live registry, labelled by short registry hash.',
+  },
+  {
+    name: METRIC.bulkheadRejectedTotal,
+    kind: 'counter',
+    labels: ['bulkhead'],
+    description:
+      'Calls rejected because a bulkhead queue was full (#43). Counts QUEUE_FULL only — ' +
+      'a caller that cancelled while queued is not load being shed, and folding the two ' +
+      'together would invert the diagnosis during a burst of client disconnects.',
   },
 ];
 

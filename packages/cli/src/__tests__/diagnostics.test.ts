@@ -604,6 +604,47 @@ describe('argument parsing', () => {
   });
 });
 
+describe('--regulated bundle (§52)', () => {
+  it('is off by default, so existing bundles are unchanged', () => {
+    expect(parseDiagnosticsArgs([]).regulated).toBe(false);
+    expect(parseDiagnosticsArgs(['--full-schemas']).fullSchemas).toBe(true);
+  });
+
+  it('withholds config paths, and says so rather than emitting an ambiguous empty list', async () => {
+    const collected = await collectBundleInputs(
+      parseDiagnosticsArgs(['--regulated', '--config', '/etc/askturret/config.json']),
+    );
+
+    expect(collected.paths).toEqual([]);
+    // The load-bearing half. An empty `paths` meaning both "none supplied" and
+    // "deliberately removed" is exactly the ambiguity this bundle's contract
+    // forbids, so the reason has to be stated.
+    expect(collected.unavailable?.['paths']).toMatch(/withheld by --regulated/i);
+  });
+
+  it('still reports paths normally without the flag', async () => {
+    const collected = await collectBundleInputs(
+      parseDiagnosticsArgs(['--config', '/etc/askturret/config.json']),
+    );
+
+    expect(collected.paths).toEqual(['/etc/askturret/config.json']);
+    expect(collected.unavailable?.['paths']).toBeUndefined();
+  });
+
+  it('forces --full-schemas off, so the narrower flag wins a contradiction', async () => {
+    const flags = parseDiagnosticsArgs(['--regulated', '--full-schemas']);
+    expect(flags.fullSchemas).toBe(false);
+
+    // …and in the other order. This must not be last-flag-wins: the safe
+    // resolution of a contradiction about disclosure is the narrower one.
+    expect(parseDiagnosticsArgs(['--full-schemas', '--regulated']).fullSchemas).toBe(false);
+
+    const collected = await collectBundleInputs(flags);
+    expect(collected.fullSchemas).toBe(false);
+    expect(collected.unavailable?.['schemas']).toMatch(/withheld by --regulated/i);
+  });
+});
+
 describe('bundle helpers', () => {
   it('reduces paths to basenames, both separator styles', () => {
     expect(pathBasenames(['/a/b/c.ts', 'd.ts', 'C:\\Program Files\\x\\e.ts'])).toEqual([

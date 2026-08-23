@@ -261,14 +261,37 @@ Suitable for controlled environments and internal use.
 
 ### Regulated (Enterprise)
 
-Maximum governance for compliance and security-sensitive environments.
+Maximum governance for compliance and security-sensitive environments. Strictly
+stricter than Production on every control.
 
-- Mutual TLS or token authentication
-- Granular authorization policies
-- Mandatory confirmation and approval workflows
-- Comprehensive audit trail (immutable)
-- Typed effects and explicit side-effect declarations
-- Bounded execution (timeouts, bulkheads, circuit breakers)
+- Discovery is **explicit-only** on both reads and writes
+- Authentication required, with call-time authorization
+- **Signed-approval evidence** required for *every* guarded operation — not only
+  for operations whose effects happen to be classified
+- Durable audit sink **required**
+- Redaction required, plus an explicit review acknowledgement
+- Invalid reload **fails readiness** rather than degrading silently
+- Tighter bounds: 512 KiB request, 1 MiB response, 20s deadline
+
+```ts
+import { regulatedPreset } from '@askturret/mcp';
+
+const preset = regulatedPreset({
+  auditSink: { id: 'postgres-audit', durability: 'durable' },
+  customReviewAcknowledged: true,           // you have reviewed your redaction rules
+  verifyEvidence: (proof) => verify(proof), // your signature scheme
+  permissions: { listPets: ['pets:read'] },
+});
+```
+
+**Its refusals are boot-time.** A non-durable audit sink, a missing review
+acknowledgement, or a missing evidence verifier throws `RegulatedPresetRefusal`
+from expansion — so a misconfigured deployment does not start, rather than
+starting and being weakened later.
+
+Inspect the full expansion — including which controls are declared but not yet
+enforced — with `describePreset('regulated', options)`. For a tighter support
+bundle, `askturret-mcp diagnostics --regulated` omits schemas and config paths.
 
 ---
 

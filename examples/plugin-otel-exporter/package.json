@@ -1,0 +1,18 @@
+{
+  "name": "plugin-otel-exporter-example",
+  "version": "0.1.0",
+  "description": "Reference plugin example - loading a custom OpenTelemetry exporter plugin",
+  "type": "module",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@askturret/mcp-core": "*",
+    "@askturret/mcp-observability": "*"
+  },
+  "askturret": {
+    "testsNotRequired": "Runnable demo, not a library. The plugin it loads lives in packages/observability (otelExporterPlugin) and is covered by that package's tests, including the full load->setup->register lifecycle and the capability refusal this demo prints. Deliberately NOT the home of the reference implementation: an example nothing builds or tests rots, and a rotted reference is worse than none because authors copy it."
+  }
+}

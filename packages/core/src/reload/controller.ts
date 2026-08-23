@@ -89,6 +89,24 @@ export class ReloadFailedError extends Error {
  * an unconditional invariant in the issue, so the mode cannot be allowed to
  * weaken it. The mode selects how the caller LEARNS about the failure, never
  * what happens to live traffic.
+ *
+ * ### The name is narrower than the convention (#37 QA note)
+ *
+ * "fail-fast" conventionally implies refuse-to-start: the process aborts rather
+ * than run in a bad configuration. **This is not that.** Here BOTH modes
+ * retain-and-degrade, and `fail-fast` only changes `reload()` from resolving
+ * with a rejected result to rejecting its promise. A caller can build
+ * refuse-to-start ON TOP of it - `await controller.reload()` unguarded during
+ * boot will now propagate - but the controller never exits the process or
+ * stops serving on its own, and nothing here does so implicitly.
+ *
+ * The name comes from `ReloadMode` in the Production preset (§10.2), so it is
+ * not ours to rename unilaterally; whoever wires preset -> controller should
+ * decide whether to keep it. Flagged here so that follow-up inherits the
+ * discrepancy explicitly rather than discovering it from behaviour.
+ *
+ * Note also that `superseded` is exempt from the mode entirely: it is not a
+ * candidate failure, so `fail-fast` does not throw for it. See `supersede()`.
  */
 export function createReloadController(
   options: ReloadControllerOptions,
@@ -114,13 +132,21 @@ class DefaultReloadController implements ReloadController {
   private readinessState: ReadinessState;
 
   /**
-   * Serializes reload attempts.
+   * Serializes reload attempts against EACH OTHER.
    *
    * Without this, two overlapping reloads could both read `current()` as their
    * "previous", and the slower one would win the swap - publishing an older
    * candidate over a newer one, with the history recording a predecessor that
    * never actually served. Serializing is cheap because compilation is off the
    * request path anyway.
+   *
+   * This chain is NOT sufficient on its own, and assuming it was is what QA
+   * caught on #37. `rollback()` is a SECOND WRITER to the same two pieces of
+   * state (the reference and the history) and it does not run on this chain,
+   * so a rollback landing between a reload's capture and its publish produced
+   * exactly the failure described above - just with the operator, rather than
+   * another reload, as the other writer. The compare-and-swap in `publish()`
+   * is what actually closes it; this chain only orders reloads.
    */
   private tail: Promise<void> = Promise.resolve();
 
@@ -216,7 +242,71 @@ class DefaultReloadController implements ReloadController {
       );
     }
 
+    // COMPARE-AND-SWAP (#37 QA fix).
+    //
+    // `previous` was captured before the first await, so between then and now
+    // the reference may have moved. The tail chain rules out another RELOAD
+    // having moved it; it does not rule out `rollback()`, which is synchronous
+    // and does not run on that chain.
+    //
+    // Identity, not hash, is the right comparison: the question is "is the
+    // reference still holding the exact object I measured myself against",
+    // and two structurally identical snapshots are still distinct entries as
+    // far as history and rollback bookkeeping are concerned.
+    const live = this.reference.current();
+    if (live !== previous) {
+      return this.supersede(previous, live, candidate);
+    }
+
     return this.publish(previous, candidate);
+  }
+
+  /**
+   * A reload that lost a race with an operator rollback.
+   *
+   * Handled separately from `reject()` because it is NOT a fault:
+   *
+   * - Readiness is left ALONE. The snapshot now serving is one the operator
+   *   deliberately chose and that previously served successfully. Flipping
+   *   readiness to degraded would report the remedy as the problem.
+   * - `fail-fast` does NOT throw. That mode exists to make a BAD CANDIDATE
+   *   loud at startup; a supersede says nothing about the candidate.
+   * - Nothing is pushed to history and nothing is swapped, so the rollback's
+   *   own bookkeeping stands untouched.
+   *
+   * The candidate is discarded rather than retried. Retrying here would mean
+   * recompiling against a reference the operator is actively moving, which
+   * risks a livelock between a rollback loop and a reload loop; the caller (or
+   * the next watcher event) re-triggers instead.
+   */
+  private supersede(
+    expected: RegistrySnapshot,
+    live: RegistrySnapshot,
+    candidate: RegistrySnapshot,
+  ): ReloadResult {
+    const detail =
+      `Candidate ${shortHash(candidate.hash)} was superseded: the registry moved from ` +
+      `${shortHash(expected.hash)} (v${expected.version}) to ${shortHash(live.hash)} ` +
+      `(v${live.version}) while it was compiling. Discarded rather than published ` +
+      `over the newer state.`;
+
+    this.metrics.recordReload('error');
+
+    this.logger.info('Registry reload superseded - candidate discarded', {
+      candidateHash: candidate.hash,
+      expectedHash: expected.hash,
+      liveHash: live.hash,
+      liveVersion: live.version,
+    });
+
+    return {
+      outcome: 'error',
+      errorClass: 'superseded',
+      retainedHash: live.hash,
+      retainedVersion: live.version,
+      detail,
+      violations: [],
+    };
   }
 
   /**

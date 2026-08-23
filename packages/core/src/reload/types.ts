@@ -45,8 +45,18 @@ export type ReloadOutcome = 'success' | 'invalid' | 'error';
  * Kept separate from `ReloadOutcome` because readiness needs to say WHAT went
  * wrong, not merely that something did. A future health endpoint (Epic #3,
  * #47) surfaces this verbatim.
+ *
+ * `superseded` is the odd one out, deliberately: it is NOT a fault. It means
+ * the reference moved under an in-flight reload - in practice an operator
+ * called `rollback()` while a candidate was still compiling - so the candidate
+ * was discarded rather than published over the operator's action. Everything
+ * is healthy; the attempt simply lost a race it is supposed to lose. Readiness
+ * is left untouched for it, and `fail-fast` does not escalate it to a throw.
  */
-export type ReloadErrorClass = 'compile-failed' | 'validation-failed';
+export type ReloadErrorClass =
+  | 'compile-failed'
+  | 'validation-failed'
+  | 'superseded';
 
 /**
  * A single reason a candidate snapshot was rejected.

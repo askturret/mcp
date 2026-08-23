@@ -20,4 +20,10 @@ export {
   type OtelTracerLike,
 } from './otel.js';
 
+export {
+  otelExporterPlugin,
+  OTEL_EXPORTER_PLUGIN_VERSION,
+  type OtelExporterPluginOptions,
+} from './plugin.js';
+
 export * from './types.js';

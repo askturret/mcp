@@ -25,6 +25,7 @@ jobs:
       explorer: ${{ steps.filter.outputs.explorer }}
       cli: ${{ steps.filter.outputs.cli }}
       reliability: ${{ steps.filter.outputs.reliability }}
+      adapter-test: ${{ steps.filter.outputs.adapter-test }}
       workspace: ${{ steps.filter.outputs.workspace }}
     steps:
       - uses: actions/checkout@v4
@@ -68,6 +69,18 @@ jobs:
               # without touching anything above it.
               - 'packages/sources-openapi/**'
               - 'examples/petstore-light/**'
+            adapter-test:
+              # The kit RUNS the real adapters through the real bank, so it
+              # must re-run when any of them changes — not merely when its own
+              # directory does. Narrowing this to packages/adapter-test/**
+              # would let an adapter or bank change alter a published
+              # conformance result with nothing noticing.
+              - 'packages/adapter-test/**'
+              - 'packages/adapter-conformance/**'
+              - 'packages/adapters-express/**'
+              - 'packages/adapters-fastify/**'
+              - 'packages/core/**'
+              - 'packages/transports/**'
             sources-openapi:
               - 'packages/sources-openapi/**'
             transports:
@@ -139,6 +152,25 @@ jobs:
       - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-express -w packages/adapters-fastify -w packages/adapter-conformance
       # Prints the side-by-side parity table (§42 Acceptance).
       - run: npm run test:conformance
+
+  # The community conformance kit (#54). Separate from test-adapter-conformance:
+  # that job proves the in-repo adapters agree with each other, this one proves
+  # the PUBLIC kit reaches the same verdict through the public AdapterUnderTest
+  # shape a community author uses.
+  test-adapter-test:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.adapter-test == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      # Order matters: `npm run build -w` builds in the order given, not in
+      # dependency order.
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-express -w packages/adapters-fastify -w packages/adapter-conformance -w packages/adapter-test
+      - run: npm test --workspace=packages/adapter-test
 
   # Test sources-openapi package
   test-sources-openapi:
@@ -235,6 +267,26 @@ jobs:
       - run: npm test --workspace=packages/reliability
 
   # Status wrapper jobs for merge-coverage gate
+  adapter-test-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-adapter-test]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.adapter-test }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-adapter-test.result }}" == "success" ]; then
+              echo "Adapter conformance kit passed"
+              exit 0
+            else
+              echo "Adapter conformance kit failed or was cancelled"
+              exit 1
+            fi
+          else
+            echo "Adapter conformance kit skipped (no changes)"
+            exit 0
+          fi
+
   reliability-status:
     runs-on: ubuntu-latest
     needs: [changes, test-reliability]

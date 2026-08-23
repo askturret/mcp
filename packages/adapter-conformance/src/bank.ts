@@ -601,13 +601,37 @@ export interface CategoryResult {
   readonly note: string;
 }
 
+export interface RunBankOptions {
+  /**
+   * Category names to run. Absent means all of them.
+   *
+   * Added for the #54 kit's `--category` filter, and it lives HERE rather than
+   * in the kit deliberately. The alternative is a second runner loop, and two
+   * loops over the same categories drift — one would eventually catch an error
+   * differently, or record a note differently, and a community adapter would
+   * get a subtly different verdict from the same assertions. A single runner is
+   * what makes "reuses the bank verbatim" true rather than aspirational.
+   */
+  readonly categories?: readonly string[];
+}
+
+/** Names that are not categories in the bank. For rejecting a bad filter. */
+export function unknownCategories(names: readonly string[]): readonly string[] {
+  const known = new Set(CATEGORIES.map((c) => c.name));
+  return names.filter((name) => !known.has(name));
+}
+
 export async function runBank(
   adapter: string,
   factory: AdapterFactory,
+  options?: RunBankOptions,
 ): Promise<readonly CategoryResult[]> {
   const results: CategoryResult[] = [];
+  const wanted = options?.categories;
+  const selected =
+    wanted === undefined ? CATEGORIES : CATEGORIES.filter((c) => wanted.includes(c.name));
 
-  for (const category of CATEGORIES) {
+  for (const category of selected) {
     try {
       const note = await category.run({ adapter, start: factory });
       results.push({ adapter, category: category.name, id: category.id, passed: true, note });

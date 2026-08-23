@@ -175,4 +175,103 @@ describe('compareOutputSchemas', () => {
     );
     expect(narrowed.typesWidened).toHaveLength(0);
   });
+
+  // ── Array item schemas (#40 QA) ────────────────────────────────────────
+  //
+  // `walk` recursed only into `properties[key]`, so an array's element schema
+  // was never compared. Worse, `items` sits in KNOWN_KEYWORDS, so it was also
+  // excluded from `unrecognisedDifferences` — the net that errs toward breaking
+  // for constructs this comparator does not model. Unchecked AND exempt from
+  // the safety net, which turned a conservative false positive into a silent
+  // miss: dropping `pets[].name` reported no change at all and exited 0.
+
+  it('recurses into array item schemas', () => {
+    const withName = obj({
+      pets: { type: 'array', items: obj({ id: { type: 'string' }, name: { type: 'string' } }) },
+    });
+    const withoutName = obj({
+      pets: { type: 'array', items: obj({ id: { type: 'string' } }) },
+    });
+
+    const delta = compareOutputSchemas(withName, withoutName);
+
+    expect(delta.fieldsRemoved).toHaveLength(1);
+    expect(delta.fieldsRemoved[0]?.path).toBe('pets[].name');
+  });
+
+  it('recurses through arrays nested inside arrays', () => {
+    const before = obj({
+      grid: { type: 'array', items: { type: 'array', items: obj({ v: { type: 'string' } }) } },
+    });
+    const after = obj({ grid: { type: 'array', items: { type: 'array', items: obj({}) } } });
+
+    expect(compareOutputSchemas(before, after).fieldsRemoved[0]?.path).toBe('grid[][].v');
+  });
+
+  it('flags an element schema that appears or disappears', () => {
+    // Not walkable, but a real change either way: elements went from
+    // unconstrained to constrained, or the reverse.
+    const bare = obj({ pets: { type: 'array' } });
+    const constrained = obj({ pets: { type: 'array', items: { type: 'string' } } });
+
+    expect(compareOutputSchemas(bare, constrained).typesWidened).toHaveLength(1);
+    expect(compareOutputSchemas(constrained, bare).typesWidened).toHaveLength(1);
+  });
+
+  it('walks the TUPLE form positionally instead of mistaking it for one schema', () => {
+    // Drafts through 2019-09 allow `items: [schemaA, schemaB]`. Recursing into
+    // that as if it were a single schema compares a JS array against an object
+    // and silently finds nothing — the same class of miss, one level down.
+    const before = obj({
+      pair: {
+        type: 'array',
+        items: [obj({ a: { type: 'string' } }), obj({ b: { type: 'string' } })],
+      },
+    });
+    const after = obj({
+      pair: { type: 'array', items: [obj({}), obj({ b: { type: 'string' } })] },
+    });
+
+    const delta = compareOutputSchemas(before, after);
+
+    expect(delta.fieldsRemoved).toHaveLength(1);
+    expect(delta.fieldsRemoved[0]?.path).toBe('pair[0].a');
+  });
+
+  it('flags a changed tuple length, and a switch between tuple and single schema', () => {
+    const twoTuple = obj({ pair: { type: 'array', items: [obj({}), obj({})] } });
+    const oneTuple = obj({ pair: { type: 'array', items: [obj({})] } });
+    const single = obj({ pair: { type: 'array', items: obj({}) } });
+
+    expect(compareOutputSchemas(twoTuple, oneTuple).typesWidened).toHaveLength(1);
+    expect(compareOutputSchemas(twoTuple, single).typesWidened).toHaveLength(1);
+  });
+
+  it('reports NOTHING when array item schemas are unchanged', () => {
+    // The complement, and the reason the tests above are worth anything: a
+    // recursion that flagged every array would satisfy all of them and be
+    // useless.
+    const schema = obj({
+      pets: { type: 'array', items: obj({ id: { type: 'string' }, name: { type: 'string' } }) },
+    });
+
+    const delta = compareOutputSchemas(schema, JSON.parse(JSON.stringify(schema)) as typeof schema);
+
+    expect(delta.fieldsRemoved).toHaveLength(0);
+    expect(delta.typesWidened).toHaveLength(0);
+    expect(delta.fieldsAdded).toHaveLength(0);
+    expect(delta.unrecognisedChanges).toHaveLength(0);
+  });
+
+  it('applies items recursion on the INPUT side too, with input variance', () => {
+    // Input and output share the helper but not the direction. An item field
+    // becoming required tightens; the same edit on output would not.
+    const before = obj({ lines: { type: 'array', items: obj({ sku: { type: 'string' } }) } });
+    const after = obj({ lines: { type: 'array', items: obj({ sku: { type: 'string' } }, ['sku']) } });
+
+    const delta = compareInputSchemas(before, after);
+
+    expect(delta.requiredFieldsAdded).toHaveLength(1);
+    expect(delta.requiredFieldsAdded[0]?.path).toBe('lines[].sku');
+  });
 });

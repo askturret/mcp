@@ -166,9 +166,16 @@ async function loadSnapshot(reference: string, flag: string): Promise<RegistrySn
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') {
+      // The store hint is attached here rather than behind a hash-shape test.
+      // A content hash is just an opaque token — any pattern tight enough to
+      // recognise one would also reject legitimate filenames, and any pattern
+      // loose enough not to would fire on ordinary typos. Since a hash and a
+      // mistyped path are indistinguishable at this point, say both (#40 QA).
       throw new Error(
         `${flag}: no such file '${reference}'. ` +
-          'Expected a path to a snapshot JSON file, or an http(s) URL.',
+          'Expected a path to a snapshot JSON file, or an http(s) URL. ' +
+          'If you meant a content hash or a version tag, resolving one needs a ' +
+          'snapshot store, and none exists yet.',
       );
     }
     throw new Error(`${flag}: could not read '${reference}': ${String(error)}`);

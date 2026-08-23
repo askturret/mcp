@@ -94,6 +94,30 @@
       "codes": {
         "effects-classification-added": "non-breaking"
       }
+    },
+    {
+      "name": "changes INSIDE array item schemas are caught, on both input and output",
+      "_why": [
+        "#40 QA. `walk` recursed only into `properties[key]`, so an array's element",
+        "schema was never compared — and because `items` sits in KNOWN_KEYWORDS it",
+        "was ALSO excluded from unrecognisedDifferences, the net that errs toward",
+        "breaking for anything this comparator does not understand. Unchecked and",
+        "exempt from the safety net at the same time.",
+        "",
+        "Dropping pets[].name produced changes=[], hasBreaking=false, exit 0 — a",
+        "clean bill of health for a removed promise.",
+        "",
+        "No fixture caught it because not one of them had an `items` schema: the",
+        "old petstore-v1 `pets` was a bare {type: array}. That is why this case",
+        "exists and why the baseline now carries arrays on BOTH sides."
+      ],
+      "before": "petstore-v1.json",
+      "after": "petstore-array-items.json",
+      "hasBreaking": true,
+      "codes": {
+        "output-field-removed": "breaking",
+        "input-enum-reduced": "breaking"
+      }
     }
   ]
 }

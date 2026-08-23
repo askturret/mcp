@@ -137,6 +137,23 @@ describe('diff command', () => {
     expect(stderr()).toMatch(/no such file/);
   });
 
+  it('points a content hash at the missing snapshot store, not at a typo', async () => {
+    // A hash is an opaque token, so it lands on the same ENOENT path as a
+    // mistyped filename and the two are indistinguishable there — any pattern
+    // tight enough to recognise a hash would reject legitimate filenames. So
+    // the hint names both possibilities rather than guessing (#40 QA).
+    const before = write('before.json', snapshot([{ id: 'a' }]));
+
+    const code = await run([
+      '--before', before,
+      '--after', 'a3f9b2c4d5e6f70819a2b3c4d5e6f7081920a3b4',
+    ]);
+
+    expect(code).toBe(EXIT_USAGE);
+    expect(stderr()).toMatch(/content hash or a version tag/);
+    expect(stderr()).toMatch(/snapshot store/);
+  });
+
   it('exits 2 on malformed JSON and on a non-snapshot document', async () => {
     const valid = write('valid.json', snapshot([{ id: 'a' }]));
 

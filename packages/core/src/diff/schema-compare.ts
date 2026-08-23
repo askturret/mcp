@@ -188,6 +188,115 @@ function boundTightened(
   return out;
 }
 
+/** A pair of element schemas to recurse into, with the path to report under. */
+type ItemsPair = readonly [Record<string, unknown>, Record<string, unknown>, string];
+
+interface ItemsComparison {
+  readonly pairs: readonly ItemsPair[];
+  /** Set when the element contract changed SHAPE rather than content. */
+  readonly shapeChange: SchemaFieldChange | null;
+}
+
+/**
+ * Resolve an array's element schemas into pairs to compare.
+ *
+ * ## Why this exists (#40 QA)
+ *
+ * `walk` originally recursed only into `properties[key]`, so an array's element
+ * schema was never compared — and because `items` is in `KNOWN_KEYWORDS`, it was
+ * also excluded from `unrecognisedDifferences`, the net that would otherwise have
+ * caught the difference and erred toward breaking. It was simultaneously
+ * unchecked AND exempt from the safety net: the worst of both, because the
+ * result was a silent miss rather than a conservative false positive.
+ *
+ * Concretely, an output schema dropping `pets[].name` produced `changes: []`,
+ * `hasBreaking: false`, exit 0 — a clean bill of health for exactly the kind of
+ * change this tool exists to catch.
+ *
+ * ## The tuple form
+ *
+ * `items` is a single schema in the common case, but drafts through 2019-09 also
+ * allow an ARRAY of schemas for positional (tuple) validation. Recursing into a
+ * tuple as if it were one schema would compare a JS array against an object and
+ * silently find nothing, reintroducing the same class of miss one level down. So
+ * the two forms are handled separately, and a change BETWEEN them — or a change
+ * in tuple length — is reported rather than walked.
+ *
+ * `prefixItems` (2020-12's replacement for the tuple form) is deliberately not
+ * modelled here. It is absent from `KNOWN_KEYWORDS`, so a difference in it is
+ * already caught by `unrecognisedDifferences` and errs toward breaking, which is
+ * the correct default for a construct this comparator does not understand.
+ */
+function itemsComparison(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  path: string,
+): ItemsComparison {
+  const b = before['items'];
+  const a = after['items'];
+
+  if (b === undefined && a === undefined) return { pairs: [], shapeChange: null };
+
+  const bTuple = Array.isArray(b);
+  const aTuple = Array.isArray(a);
+
+  // Element contract appeared, disappeared, or switched between single-schema
+  // and tuple form. Any of these changes what the array accepts or promises.
+  if (b === undefined || a === undefined || bTuple !== aTuple) {
+    return {
+      pairs: [],
+      shapeChange: {
+        path: join(path, 'items'),
+        detail:
+          b === undefined
+            ? 'array element schema added where elements were previously unconstrained'
+            : a === undefined
+              ? 'array element schema removed; elements are no longer constrained'
+              : 'array element schema changed between a single schema and a tuple',
+      },
+    };
+  }
+
+  if (bTuple && aTuple) {
+    const bArr = b as unknown[];
+    const aArr = a as unknown[];
+    const pairs: ItemsPair[] = [];
+
+    for (let i = 0; i < Math.min(bArr.length, aArr.length); i++) {
+      const bc = asRecord(bArr[i]);
+      const ac = asRecord(aArr[i]);
+      if (bc && ac) pairs.push([bc, ac, `${path}[${i}]`]);
+    }
+
+    return {
+      pairs,
+      shapeChange:
+        bArr.length === aArr.length
+          ? null
+          : {
+              path: join(path, 'items'),
+              detail: `tuple length changed ${bArr.length} -> ${aArr.length}`,
+            },
+    };
+  }
+
+  const bc = asRecord(b);
+  const ac = asRecord(a);
+  if (bc && ac) return { pairs: [[bc, ac, `${path}[]`]], shapeChange: null };
+
+  // `items` can also be a boolean schema. Not walked, but a DIFFERENCE in it is
+  // still a change — reporting it beats the silent miss this function exists to
+  // remove.
+  if (JSON.stringify(b) !== JSON.stringify(a)) {
+    return {
+      pairs: [],
+      shapeChange: { path: join(path, 'items'), detail: 'array element schema changed' },
+    };
+  }
+
+  return { pairs: [], shapeChange: null };
+}
+
 function unrecognisedDifferences(
   before: Record<string, unknown>,
   after: Record<string, unknown>,
@@ -254,6 +363,18 @@ export function compareInputSchemas(before: JSONSchema, after: JSONSchema): Inpu
 
     constraintsTightened.push(...boundTightened(b, a, path));
     unrecognisedChanges.push(...unrecognisedDifferences(b, a, path));
+
+    // Array elements. Without this, a tightened `lines[].sku` is invisible —
+    // the property `lines` itself is unchanged, so nothing above notices (#40 QA).
+    const items = itemsComparison(b, a, path);
+    if (items.shapeChange) {
+      // No dedicated code: the element schema is part of the array's TYPE, so a
+      // change to its shape narrows or widens what the array accepts. Reported
+      // through the type channel rather than inventing vocabulary, and erring
+      // toward breaking as this comparator does everywhere it cannot be sure.
+      typesNarrowed.push(items.shapeChange);
+    }
+    for (const [bItem, aItem, itemPath] of items.pairs) walk(bItem, aItem, itemPath);
 
     const bProps = properties(b);
     const aProps = properties(a);
@@ -326,6 +447,12 @@ export function compareOutputSchemas(before: JSONSchema, after: JSONSchema): Out
     }
 
     unrecognisedChanges.push(...unrecognisedDifferences(b, a, path));
+
+    // Array elements. A dropped `pets[].name` is a broken promise exactly as a
+    // dropped `pets` is, and before #40's QA pass it produced no change at all.
+    const items = itemsComparison(b, a, path);
+    if (items.shapeChange) typesWidened.push(items.shapeChange);
+    for (const [bItem, aItem, itemPath] of items.pairs) walk(bItem, aItem, itemPath);
 
     const bProps = properties(b);
     const aProps = properties(a);

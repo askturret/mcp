@@ -17,6 +17,12 @@
           "tag": {
             "type": "string"
           },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "species": {
             "type": "string"
           }
@@ -64,7 +70,18 @@
         "type": "object",
         "properties": {
           "pets": {
-            "type": "array"
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       },

@@ -83,3 +83,11 @@ export * from './preset/index.js';
 export * from './reload/index.js';
 export * from './logging/index.js';
 export * from './telemetry/index.js';
+export * from './diff/index.js';
+export {
+  SNAPSHOT_FORMAT_VERSION,
+  SnapshotFormatError,
+  deserializeSnapshot,
+  serializeSnapshot,
+  type SerializedSnapshot,
+} from './snapshot-io.js';

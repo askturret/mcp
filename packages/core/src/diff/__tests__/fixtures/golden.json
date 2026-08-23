@@ -1,0 +1,99 @@
+{
+  "_comment": [
+    "Golden classifications (§13 'Golden fixtures').",
+    "Each case names a snapshot pair and the EXACT set of change codes diff must",
+    "produce, with the severity of each. Adding or changing a classification rule",
+    "requires editing this file, which is the point: the rubric is reviewed in a",
+    "PR diff rather than inferred from assertions scattered across a test file.",
+    "",
+    "`codes` is compared as a SET, not a list, so fixture order is not a hidden",
+    "part of the contract. `hasBreaking` is asserted separately because it is what",
+    "the CI exit code is derived from."
+  ],
+
+  "cases": [
+    {
+      "name": "added optional input field is non-breaking",
+      "before": "petstore-v1.json",
+      "after": "petstore-added-optional.json",
+      "hasBreaking": false,
+      "codes": {
+        "input-optional-field-added": "non-breaking"
+      }
+    },
+    {
+      "name": "removed operation is breaking",
+      "before": "petstore-v1.json",
+      "after": "petstore-removed-op.json",
+      "hasBreaking": true,
+      "codes": {
+        "operation-removed": "breaking"
+      }
+    },
+    {
+      "name": "renamed operation without a hint: breaking removal plus an ambiguous advisory",
+      "before": "petstore-v1.json",
+      "after": "petstore-renamed.json",
+      "hasBreaking": true,
+      "codes": {
+        "operation-removed": "breaking",
+        "operation-possibly-renamed": "ambiguous",
+        "operation-added": "non-breaking"
+      }
+    },
+    {
+      "name": "renamed operation WITH a hint: one rename, still breaking",
+      "before": "petstore-v1.json",
+      "after": "petstore-renamed.json",
+      "renames": { "listPets": "listAllPets" },
+      "hasBreaking": true,
+      "codes": {
+        "operation-renamed": "breaking",
+        "name-changed": "non-breaking"
+      }
+    },
+    {
+      "name": "tightened surface trips every input/output/effects rule",
+      "before": "petstore-v1.json",
+      "after": "petstore-tightened.json",
+      "hasBreaking": true,
+      "codes": {
+        "input-required-field-added": "breaking",
+        "input-constraint-tightened": "breaking",
+        "output-field-removed": "breaking",
+        "effects-tightened": "breaking"
+      }
+    },
+    {
+      "name": "loosened effects are double-check, cosmetic and additive changes are not",
+      "before": "petstore-v1.json",
+      "after": "petstore-loosened.json",
+      "hasBreaking": false,
+      "codes": {
+        "effects-loosened": "double-check",
+        "description-changed": "non-breaking",
+        "output-field-added": "non-breaking"
+      }
+    },
+    {
+      "name": "gaining a confirmation-triggering classification is breaking",
+      "before": "petstore-v1.json",
+      "after": "petstore-confirmation.json",
+      "hasBreaking": true,
+      "codes": {
+        "effects-classification-added": "non-breaking",
+        "confirmation-now-required": "breaking"
+      }
+    },
+    {
+      "name": "same classification is NOT breaking when the policy does not confirm for it",
+      "before": "petstore-v1.json",
+      "after": "petstore-confirmation.json",
+      "confirmFor": ["destructive"],
+      "hasBreaking": false,
+      "codes": {
+        "effects-classification-added": "non-breaking"
+      }
+    }
+  ]
+}

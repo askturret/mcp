@@ -1,0 +1,85 @@
+{
+  "formatVersion": 1,
+  "version": 2,
+  "hash": "hash-loosened",
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "operations": [
+    {
+      "id": "createPet",
+      "name": "createPet",
+      "description": "Create a pet in the store.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          }
+        }
+      },
+      "effects": {
+        "readOnly": true,
+        "idempotent": false,
+        "retryable": false,
+        "idempotencyKeyRequired": false,
+        "classifications": [
+          "state-change"
+        ]
+      },
+      "executor": {
+        "type": "http"
+      }
+    },
+    {
+      "id": "listPets",
+      "name": "listPets",
+      "description": "List pets.",
+      "input": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "number",
+            "maximum": 100
+          }
+        }
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "pets": {
+            "type": "array"
+          }
+        }
+      },
+      "effects": {
+        "readOnly": true,
+        "idempotent": true,
+        "retryable": true,
+        "idempotencyKeyRequired": false,
+        "classifications": []
+      },
+      "executor": {
+        "type": "http"
+      }
+    }
+  ]
+}

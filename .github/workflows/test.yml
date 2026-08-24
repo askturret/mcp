@@ -677,3 +677,26 @@ jobs:
 
       - name: Every package actually executes its tests
         run: node .github/scripts/check-test-execution.mjs
+
+      # #65 / §17: Architectural readiness gate for 1.0.
+      # Verifies that all 12 readiness criteria are met and reference passing tests.
+      # The readiness.md matrix is not just documentation — it is a prerequisite for
+      # release tagging. A tag matching v1.0.* is refused if any row is red.
+      - name: Policy parity test (criterion #4)
+        run: npm test --testPathPattern="discovery-invocation-parity"
+
+      - name: Idempotent+retryable fuzz test (criterion #6)
+        run: npm test --testPathPattern="idempotent-retryable-fuzz"
+
+      - name: Readiness matrix is current and all criteria met
+        run: |
+          # Verify docs/readiness.md exists and is not empty
+          [ -f docs/readiness.md ] || exit 1
+          grep -q "✅ met" docs/readiness.md || exit 1
+          # Count the "met" entries - should be 12 for 1.0 readiness
+          MET_COUNT=$(grep "✅ met" docs/readiness.md | wc -l)
+          if [ "$MET_COUNT" -lt 12 ]; then
+            echo "ERROR: Only $MET_COUNT criteria marked as met (need 12 for 1.0)"
+            exit 1
+          fi
+          echo "Readiness gate: all 12 criteria met"

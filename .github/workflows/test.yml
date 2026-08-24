@@ -41,6 +41,10 @@ jobs:
               # adapters-express serves the Explorer, so an explorer-only
               # change must re-run these tests too.
               - 'packages/explorer/**'
+              # petstore-example.test.ts compiles the example's REAL spec, so a
+              # change to the example must re-run these tests — otherwise the
+              # guard cannot fire on the thing it guards (#99).
+              - 'examples/petstore-light/**'
             adapters-fastify:
               - 'packages/adapters-fastify/**'
               # Same reasoning as adapters-express: this adapter serves the

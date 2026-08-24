@@ -409,6 +409,22 @@ jobs:
       - name: No network access outside the allowlist
         run: node .github/scripts/check-network-imports.mjs
 
+      # #188: a broken relative link is invisible in review — the diff shows a
+      # plausible path, and confirming it means leaving the diff. Two ad-hoc
+      # sweeps found eight on main, one of which had survived since 2026-08-21
+      # and every review since; human review caught none of them.
+      #
+      # Self-tested first, for the same reason as the guards below it: a guard
+      # that silently matches nothing is indistinguishable in a CI log from one
+      # that works. The self-test also pins the two false-positive shapes this
+      # repository actually contains — template content in a ```markdown fence,
+      # and TypeScript that parses as link syntax.
+      - name: Self-test the markdown link guard
+        run: node .github/scripts/check-markdown-links.test.mjs
+
+      - name: No broken markdown links
+        run: node .github/scripts/check-markdown-links.mjs .
+
       # #119: nothing else in CI reads source at the byte level, so a NUL byte
       # passes tsc, jest and every guard above it.
       #

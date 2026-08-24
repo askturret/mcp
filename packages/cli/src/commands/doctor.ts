@@ -124,18 +124,26 @@ type OpenAPISchema = OpenAPIV3.SchemaObject | OpenAPIV3_1.SchemaObject;
 export async function doctorCommand(args: string[]): Promise<void> {
   const flags = parseArgs(args);
 
+  // Help first: someone asking what the flags are should not be told they are
+  // missing an argument, which is what `doctor --help` used to answer (#256).
+  if (flags.help) {
+    printDoctorHelp();
+    process.exit(0);
+  }
+
+  // Before the missing-input check and before the spec is loaded (#169, #256).
+  // A malformed flag is the most actionable thing wrong with the command line,
+  // and reporting "Missing required argument" for `doctor --preset=regulated`
+  // would send the operator to fix the wrong thing.
+  if (flags.usageError !== undefined) {
+    console.error(flags.usageError);
+    process.exit(1);
+  }
+
   if (!flags.input) {
     console.error('Error: Missing required argument');
     console.error('Usage: npx @askturret/mcp doctor <path-to-spec>');
     console.error('       npx @askturret/mcp doctor --url <endpoint>');
-    process.exit(1);
-  }
-
-  // Before the spec is loaded (#169). A flag the operator can fix immediately
-  // should not cost them a parse first — and a refusal must never arrive
-  // alongside a clean score, which is the outcome this replaces.
-  if (flags.presetError !== undefined) {
-    console.error(flags.presetError);
     process.exit(1);
   }
 
@@ -165,59 +173,174 @@ export async function doctorCommand(args: string[]): Promise<void> {
   }
 }
 
+/** Flags `doctor` accepts, for the unknown-flag refusal to list (#256). */
+const ACCEPTED_FLAGS = ['--url <endpoint>', '--json', '--preset <name>', '--help'] as const;
+
 /**
- * Parse command-line arguments
+ * Parse command-line arguments.
+ *
+ * ## Why this is not a chain of `===` comparisons any more (#256)
+ *
+ * It used to be, with no final `else`, so any token starting with `--` that was
+ * not one of three literals was discarded without comment. Two consequences,
+ * both found by QA on #169:
+ *
+ *   --preset=regulated   silently ignored -> clean report, exit 0
+ *   --jsonn              silently ignored -> human output, exit 0
+ *
+ * The first is the serious one. #169 exists because an operator running a
+ * compliance-adjacent check could not tell "not supported" from "I typo'd it"
+ * from "I forgot the flag" — all produced a green report. The refusal added
+ * there was bypassable by `--preset=regulated`, a completely conventional
+ * spelling, landing on precisely the false green the issue was filed about.
+ *
+ * So the `=` form is split before dispatch and routed into the SAME
+ * `resolvePresetFlag`, which is what stops the two spellings drifting apart:
+ * there is one decision function, not two copies of a message.
+ *
+ * The second is closed by refusing unrecognised `--` tokens outright — the same
+ * "silence is the bug" principle, applied one level up, to flag NAMES rather
+ * than flag values.
+ *
+ * ## What deliberately still works
+ *
+ * A refusal that rejected something previously valid would trade one defect for
+ * another, so:
+ *
+ *   - `--` ends option parsing; everything after it is positional. That is the
+ *     conventional way to name a file that looks like a flag, and it must not
+ *     itself be refused as an unknown flag.
+ *   - A token that does not start with `--` is still positional, exactly as
+ *     before. `-x` is a (strange) file name today and stays one.
+ *   - `-h`/`--help` print usage instead of being refused. `doctor --help`
+ *     previously fell through to "Missing required argument"; refusing it would
+ *     have been worse still. `diff` already spells help this way.
  */
 function parseArgs(args: string[]): {
   input?: string;
   url: boolean;
   json: boolean;
+  help: boolean;
   preset?: ExpandablePreset;
-  presetError?: string;
+  usageError?: string;
 } {
   const flags: {
     input?: string;
     url: boolean;
     json: boolean;
+    help: boolean;
     preset?: ExpandablePreset;
-    presetError?: string;
+    usageError?: string;
   } = {
     url: false,
     json: false,
+    help: false,
   };
+
+  /** First problem wins: reporting one actionable error beats a pile. */
+  const refuse = (message: string): void => {
+    if (flags.usageError === undefined) flags.usageError = message;
+  };
+
+  let positionalOnly = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
-    if (!arg) continue;
-    if (arg === '--url') {
-      flags.url = true;
-      const urlValue = args[++i];
-      if (urlValue !== undefined) {
-        flags.input = urlValue;
-      }
-    } else if (arg === '--json') {
-      flags.json = true;
-    } else if (arg === '--preset') {
-      // Only 'production' expands today, but the others no longer pass in
-      // silence — see resolvePresetFlag (#169). A value that cannot be expanded
-      // is refused with its own reason rather than left unset.
-      const value = args[i + 1];
-      const resolved = resolvePresetFlag(value);
-      if (resolved.kind === 'expand') {
-        flags.preset = resolved.preset;
-        i++;
-      } else {
-        flags.presetError = resolved.message;
-        // Only consume the next token if it was actually the flag's value. A
-        // bad `--preset` must not also swallow `--json` or the spec path.
-        if (value !== undefined && !value.startsWith('--')) i++;
-      }
-    } else if (!arg.startsWith('--')) {
+    if (arg === undefined || arg === '') continue;
+
+    if (positionalOnly) {
       flags.input = arg;
+      continue;
+    }
+
+    if (arg === '--') {
+      positionalOnly = true;
+      continue;
+    }
+
+    if (arg === '-h') {
+      flags.help = true;
+      continue;
+    }
+
+    if (!arg.startsWith('--')) {
+      flags.input = arg;
+      continue;
+    }
+
+    // `--name=value` and `--name value` converge here, so every flag gets both
+    // spellings without each one remembering to handle them.
+    const equals = arg.indexOf('=');
+    const name = equals === -1 ? arg : arg.slice(0, equals);
+    // An empty inline value (`--preset=`) is a MISSING value, not the empty
+    // string as a value — otherwise it reports "unknown preset ''".
+    const inline = equals === -1 ? undefined : arg.slice(equals + 1) || undefined;
+
+    /** The flag's value, from `=` or the next token, without consuming a flag. */
+    const takeValue = (): string | undefined => {
+      if (inline !== undefined) return inline;
+      const next = args[i + 1];
+      if (next === undefined || next.startsWith('--')) return undefined;
+      i++;
+      return next;
+    };
+
+    switch (name) {
+      case '--help':
+        flags.help = true;
+        break;
+
+      case '--json':
+        // `--json=false` must not switch JSON ON, which is what ignoring the
+        // value would do. Refusing is the only reading that cannot mislead.
+        if (inline !== undefined) refuse(`error: \`--json\` takes no value (got \`${arg}\`).`);
+        flags.json = true;
+        break;
+
+      case '--url': {
+        const value = takeValue();
+        if (value === undefined) {
+          refuse('error: `--url` requires a value.');
+          break;
+        }
+        flags.url = true;
+        flags.input = value;
+        break;
+      }
+
+      case '--preset': {
+        const resolved = resolvePresetFlag(takeValue());
+        if (resolved.kind === 'expand') flags.preset = resolved.preset;
+        else refuse(resolved.message);
+        break;
+      }
+
+      default:
+        refuse(
+          `error: unknown flag \`${name}\`.\n` +
+            `  doctor accepts: ${ACCEPTED_FLAGS.join(', ')}.\n` +
+            '  Use `--` before a file name that starts with a dash.',
+        );
     }
   }
 
   return flags;
+}
+
+/** Usage for `doctor --help`. */
+function printDoctorHelp(): void {
+  console.log('Usage: npx @askturret/mcp doctor <path-to-spec> [options]');
+  console.log('       npx @askturret/mcp doctor --url <endpoint> [options]');
+  console.log('');
+  console.log('Options:');
+  console.log('  --url <endpoint>     Analyze a live MCP server instead of a spec file');
+  console.log('  --json               Machine-readable output');
+  console.log("  --preset <name>      Also print the preset's configuration expansion");
+  console.log('                       Only production expands from a flag; light and');
+  console.log('                       regulated are refused with the reason why');
+  console.log('  --help, -h           Show this message');
+  console.log('');
+  console.log('Both `--flag value` and `--flag=value` are accepted.');
 }
 
 /**

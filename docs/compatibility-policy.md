@@ -253,6 +253,7 @@ The policy version is independent of the package version, like the plugin API's.
 - [`compatibility.md`](compatibility.md) — which versions are supported today
 - [`plugin-api.md`](plugin-api.md) — the plugin surface and its `apiVersion`
 - [`../CHANGELOG.md`](../CHANGELOG.md) — every entry classifies its change against this policy
+- [`ownership.md`](ownership.md) — who reviews changes to each covered surface
 - [`../SECURITY.md`](../SECURITY.md) — which versions receive security fixes
 - [`../CONTRIBUTING.md`](../CONTRIBUTING.md) — what to check before changing a covered surface
 

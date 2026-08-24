@@ -14,6 +14,7 @@ import { createSnapshot } from '../../compiler/passes/freeze-and-hash.js';
 import { createRecordingTracer } from '../tracer.js';
 import { createRecordingMetricRecorder } from '../metrics.js';
 import { METRIC, SPAN_ATTR } from '../types.js';
+import { MCP_PROTOCOL_VERSION } from '../../protocol/versions.js';
 import type { OperationDefinition, OperationResult } from '../../types.js';
 import type { OperationExecutor } from '../../executor/index.js';
 
@@ -130,7 +131,15 @@ describe('golden trace', () => {
     const policy = spans.find((s) => s.name === 'policy.evaluate');
 
     expect(root?.attributes[SPAN_ATTR.method]).toBe('tools/call');
-    expect(root?.attributes[SPAN_ATTR.protocolVersion]).toBe('2025-06-18');
+    // Was `2025-06-18` — a version this server never spoke to anyone (#61). The
+    // transport announced `2024-11-05` and docs/compatibility.md published
+    // `2024-11-05`; only the dispatcher's constant said otherwise, so this
+    // golden trace was PINNING the defect rather than catching it.
+    //
+    // Asserted against the exported constant rather than a fresh literal: a
+    // literal here is how the two drifted apart, and re-typing today's correct
+    // value would only reset the clock on the same mistake.
+    expect(root?.attributes[SPAN_ATTR.protocolVersion]).toBe(MCP_PROTOCOL_VERSION);
     expect(root?.attributes[SPAN_ATTR.clientName]).toBe('claude-desktop');
     expect(root?.attributes[SPAN_ATTR.outcome]).toBe('success');
 

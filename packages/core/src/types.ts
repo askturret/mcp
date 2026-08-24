@@ -273,6 +273,19 @@ export interface OperationCommand {
   };
 
   /**
+   * MCP protocol version negotiated for this session (#61, §9.1).
+   *
+   * Propagated from the transport for the same reason as `clientInfo` above:
+   * session state the dispatcher reports but does not own. Stamped onto the
+   * `mcp.protocol.version` span attribute.
+   *
+   * Absent falls back to the announced default — which is what a caller
+   * dispatching directly gets, since without a transport there was no
+   * negotiation to record.
+   */
+  readonly protocolVersion?: string;
+
+  /**
    * Operation to execute.
    */
   readonly operationId: OperationId;

@@ -1,14 +1,26 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * MCP Streamable HTTP transport adapter
+ * MCP Streamable HTTP transport adapter.
  *
- * Wraps the official MCP TypeScript SDK's Streamable HTTP server.
- * Implements JSON-RPC endpoints with session management, host validation,
- * and integration with AskTurret's dispatcher.
+ * Implements the JSON-RPC endpoints directly — session management, host
+ * validation, protocol negotiation, and dispatch into AskTurret's own
+ * dispatcher.
  *
- * SDK import boundary: This is the ONLY package that imports from @modelcontextprotocol/sdk.
- * NOTE: Enforcement via dependency-cruiser/ESLint is planned but not yet configured.
- * For now, this boundary is maintained by convention and code review.
+ * ## The SDK boundary (#61, §12.3, §17 criterion 11)
+ *
+ * This package is the ONLY one permitted to import `@modelcontextprotocol/sdk`,
+ * and that is now ENFORCED rather than observed: see
+ * `.github/scripts/check-sdk-boundary.mjs`, which fails CI on an import from
+ * anywhere else and on any SDK type reaching a published `.d.ts`. The previous
+ * note here said enforcement was "planned but not yet configured" and that the
+ * boundary was "maintained by convention and code review" — it is not any more.
+ *
+ * A correction while we are here: an earlier version of this header said this
+ * module "wraps the official MCP TypeScript SDK's Streamable HTTP server". It
+ * does not. The JSON-RPC handling below is written by hand, and the SDK is not
+ * called at runtime at all. That mattered enough to fix, because a reader
+ * trusting the old sentence would look for SDK behaviour that is not here — and
+ * would over-estimate how much an SDK upgrade actually touches.
  */
 
 import { randomUUID } from 'crypto';
@@ -34,6 +46,8 @@ import {
   createVisibilityEngine,
   evaluateLiveness,
   evaluateReadiness,
+  negotiateProtocolVersion,
+  SUPPORTED_MCP_PROTOCOL_VERSIONS,
 } from '@askturret/mcp-core';
 import type {
   HttpTransport,
@@ -43,9 +57,27 @@ import type {
 } from './types.js';
 import { createInMemorySessionStore } from './session-store.js';
 
-// MCP SDK imports - ONLY here, nowhere else in the codebase
-// @ts-expect-error - SDK is a peer dependency, may not be installed during development
-import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+// MCP SDK imports — ONLY here, nowhere else in the codebase.
+//
+// This single type import is currently the entire SDK surface the project
+// touches, and it is UNUSED: nothing below references `Server`. It is kept
+// deliberately rather than deleted, because it is what makes the boundary
+// guard's happy path a real assertion — with zero SDK imports anywhere, the
+// guard would pass on a repository that had simply removed the dependency, and
+// "the boundary holds" would be indistinguishable from "there is no boundary".
+//
+// Being honest about the consequence: the SDK is not exercised at runtime, so
+// the isolation this file claims is currently cheap to hold. See the upgrade
+// drill in docs/architecture-overview.md, which reports that fact rather than
+// implying a stronger result than the code supports.
+//
+// The `_` prefix is what exempts this from `noUnusedLocals`, and it replaces a
+// `@ts-expect-error` whose stated reason was wrong: the comment claimed the SDK
+// "may not be installed during development", but the directive was actually
+// suppressing "declared but never read". The SDK resolves fine — removing the
+// directive is what proved it, since TypeScript then reported the directive
+// itself as unused.
+import type { Server as _McpSdkServer } from '@modelcontextprotocol/sdk/server/index.js';
 
 /**
  * Create an HTTP transport adapter
@@ -448,13 +480,44 @@ class StreamableHttpTransport implements HttpTransport {
   }
 
   private async handleInitialize(id: any, params: any, sessionId: string | null): Promise<any> {
-    // Negotiate MCP protocol version
-    const protocolVersion = '2024-11-05'; // MCP SDK version 0.5.0
+    // Actually negotiate, rather than announce (#61). Before this the client's
+    // requested version was read and discarded: a client asking for a protocol
+    // we do not speak was told "2024-11-05" and allowed to proceed, which fails
+    // later as a confusing shape mismatch instead of here as a clear refusal.
+    const negotiation = negotiateProtocolVersion(params?.protocolVersion);
+
+    if (!negotiation.ok) {
+      // REFUSED, as a JSON-RPC error — never process.exit().
+      //
+      // This runs inside an adopter's own server process. Exiting would let a
+      // remote client halt every unrelated route in their application by
+      // sending one wrong field, which turns a compatibility check into a
+      // denial-of-service primitive. The session simply does not start.
+      return {
+        jsonrpc: '2.0',
+        id,
+        error: {
+          // -32602 "Invalid params": the request was well-formed JSON-RPC and
+          // one of its parameters is unacceptable, which is exactly this.
+          code: -32602,
+          message: negotiation.reason,
+          data: {
+            requested: negotiation.requested,
+            supported: [...SUPPORTED_MCP_PROTOCOL_VERSIONS],
+          },
+        },
+      };
+    }
+
+    const protocolVersion = negotiation.version;
 
     // Store session data if sessions enabled
     if (this.sessionStore && sessionId) {
       const sessionData: SessionData = {
         clientInfo: params.clientInfo,
+        // Recorded so every later call on this session can stamp the version
+        // the session actually negotiated (#61).
+        protocolVersion,
         createdAt: new Date(),
         lastActivityAt: new Date(),
       };
@@ -561,6 +624,7 @@ class StreamableHttpTransport implements HttpTransport {
   ): Promise<any> {
     // Update session activity and get client info if sessions enabled
     let clientInfo;
+    let protocolVersion: string | undefined;
     if (this.sessionStore && sessionId) {
       const session = await this.sessionStore.get(sessionId);
       if (session) {
@@ -569,6 +633,8 @@ class StreamableHttpTransport implements HttpTransport {
           lastActivityAt: new Date(),
         });
         clientInfo = session.clientInfo;
+        // The version THIS session negotiated, carried to the span (#61).
+        protocolVersion = session.protocolVersion;
       }
     }
 
@@ -603,6 +669,11 @@ class StreamableHttpTransport implements HttpTransport {
       requestId,
       traceId,
       ...(clientInfo !== undefined && { clientInfo }),
+      // Sessionless mode has no negotiation to report, so the dispatcher's
+      // announced default applies — which is the same value, from the same
+      // module. Left absent rather than filled in here so there is exactly one
+      // place that decides the fallback.
+      ...(protocolVersion !== undefined && { protocolVersion }),
       operationId: params.name,
       input: params.arguments || {},
       deadline,

@@ -63,13 +63,20 @@ import {
 } from '../telemetry/types.js';
 
 /**
- * MCP protocol version stamped onto every span (§9.1 `mcp.protocol.version`).
+ * Fallback for `mcp.protocol.version` when a command carries none (§9.1).
  *
- * A constant rather than a negotiated value because v0.2 speaks exactly one
- * version; when negotiation lands this becomes a per-session field, and the
- * attribute name will not have to change.
+ * The comment this replaces predicted its own obsolescence — *"when negotiation
+ * lands this becomes a per-session field, and the attribute name will not have
+ * to change."* Negotiation has landed (#61), so the value now comes from
+ * `command.protocolVersion`, and this is only the default for a caller that
+ * dispatches without going through a transport.
+ *
+ * The literal it replaces was also WRONG: it read `2025-06-18` while the
+ * transport announced `2024-11-05`, so every span in the system carried a
+ * version this server had never spoken to anyone. Importing it from the one
+ * module that defines it is what stops the two disagreeing again.
  */
-const MCP_PROTOCOL_VERSION = '2025-06-18';
+import { MCP_PROTOCOL_VERSION } from '../protocol/versions.js';
 
 /** The single MCP method v0.2 instruments end-to-end. */
 const MCP_METHOD = 'tools/call';
@@ -349,7 +356,9 @@ class DefaultCommandDispatcher implements CommandDispatcher {
     const requestSpan = this.tracer.startSpan('mcp.request', {
       attributes: {
         [SPAN_ATTR.method]: MCP_METHOD,
-        [SPAN_ATTR.protocolVersion]: MCP_PROTOCOL_VERSION,
+        // The version this SESSION negotiated, not a build-time constant. A
+        // constant is what let the attribute drift from reality (#61).
+        [SPAN_ATTR.protocolVersion]: command.protocolVersion ?? MCP_PROTOCOL_VERSION,
         ...(command.clientInfo?.name === undefined
           ? {}
           : { [SPAN_ATTR.clientName]: command.clientInfo.name }),

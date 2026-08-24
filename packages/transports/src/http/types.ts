@@ -58,6 +58,20 @@ export interface SessionData {
   };
 
   /**
+   * MCP protocol version negotiated at `initialize` (#61).
+   *
+   * Recorded per session rather than read from a constant at call time,
+   * because the whole point of negotiating is that two sessions may have
+   * agreed different things. It is what every later call on this session
+   * stamps onto `mcp.protocol.version`.
+   *
+   * Optional so a store persisted before #61 still loads — an old session
+   * record simply falls back to the announced default rather than failing to
+   * deserialize.
+   */
+  readonly protocolVersion?: string;
+
+  /**
    * Session creation timestamp
    */
   readonly createdAt: Date;

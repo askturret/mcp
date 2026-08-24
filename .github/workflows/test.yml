@@ -637,5 +637,21 @@ jobs:
       # Needs dist/ — packages resolve each other through their built entry points.
       - run: npm run build
 
+      # #61 / §17 criterion 11. Runs AFTER the build because half of it scans
+      # emitted .d.ts files for SDK types reaching the public surface — the leak
+      # that is invisible in source. Without dist/ it exits 2 ("did not run")
+      # rather than passing, so a missing build cannot look like a clean result.
+      - name: Self-test the SDK boundary guard
+        run: node .github/scripts/check-sdk-boundary.test.mjs
+
+      - name: MCP SDK stays behind the transport boundary
+        run: node .github/scripts/check-sdk-boundary.mjs
+
+      # The criterion is not "nothing imports it" but "an SDK change costs
+      # nothing outside the transport". Only breaking one and looking proves
+      # that, so the drill does exactly that and restores the file afterwards.
+      - name: Fake-SDK-upgrade drill
+        run: node .github/scripts/sdk-upgrade-drill.mjs
+
       - name: Every package actually executes its tests
         run: node .github/scripts/check-test-execution.mjs

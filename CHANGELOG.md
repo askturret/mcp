@@ -114,6 +114,29 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- The host-header allowlist can match an IPv6 host (#247). `isHostAllowed`
+  stripped the port with `host.split(':')[0]`, which assumes at most one colon —
+  so every IPv6 literal reduced to `'['`, and the shipped `[::1]` default could
+  never match. An allowlist row that read as coverage and routed nothing.
+  **Covered surface — adapter behaviour**, and strictly a repair: it failed
+  CLOSED, so this was a false-deny rather than a hole. An operator on IPv6
+  localhost got a 403 that no configuration could fix, because the mangling
+  happened before the lookup — adding `[::1]` or `::1` to `allowedHosts` did not
+  help either.
+  The authority is now parsed with `URL`, and both sides of the comparison are
+  canonicalised, so `::1`, `[::1]` and `[::0001]` in configuration all match the
+  request they should, and host names compare case-insensitively as DNS
+  requires. The default stays **bracketed** `[::1]`: the URL Standard's host
+  serializer emits IPv6 with its brackets, so `hostname` is `'[::1]'` —
+  unbracketing it would have left the entry dead in a new way that looked fixed.
+  `URL` alone would have loosened the mitigation while fixing IPv6, because it
+  reads `evil.com@localhost` as userinfo plus host and returns `localhost` — and
+  the same for a path, query or fragment. Authorities carrying any of those are
+  refused before parsing, which the previous `split` had rejected by accident.
+  An `allowedHosts` entry that cannot be parsed is now an error at construction
+  rather than silently discarded, since an entry that can never match is the
+  same defect this fixes arriving by another route.
+
 - `diagnostics --help` documents `--regulated`, and every command's help now
   agrees with its unknown-flag refusal by construction (#264). #261 generated
   the refusal list from each command's flag spec and left `--help`

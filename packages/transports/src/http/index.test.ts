@@ -298,6 +298,135 @@ describe('HTTP Transport', () => {
     });
   });
 
+  /**
+   * Every row of #247's table, in one place.
+   *
+   * `split(':')[0]` assumed at most one colon, so every IPv6 literal reduced to
+   * `'['` and the shipped `[::1]` default could never match — an allowlist row
+   * that read as coverage and routed nothing. It failed CLOSED, so this was a
+   * false-deny rather than a hole, but an operator on IPv6 localhost got a 403
+   * no configuration could fix.
+   *
+   * Table-driven ON PURPOSE, and the negative rows are the load-bearing ones. A
+   * test asserting only that `localhost` passes goes green over the bug AND the
+   * fix, and would not notice a "fix" that made IPv6 work by loosening the
+   * mitigation — the one trade this must not make.
+   */
+  describe('Host-header allowlist (#247)', () => {
+    const send = async (host: string | undefined) => {
+      const req = new MockRequest();
+      const res = new MockResponse();
+
+      if (host !== undefined) req.headers.host = host;
+      req.method = 'POST';
+      req.setBody(JSON.stringify({ jsonrpc: '2.0', id: '1', method: 'ping', params: {} }));
+
+      await transport.handler()(req, res);
+      return res;
+    };
+
+    it.each([
+      // Rows that already worked — kept so a regression here is visible.
+      ['localhost', true],
+      ['localhost:3000', true],
+      ['127.0.0.1:8080', true],
+      // The defect: both reduced to '[' before the lookup.
+      ['[::1]', true],
+      ['[::1]:8080', true],
+      // Canonicalised to the same address, so the default entry covers it.
+      ['[::0001]', true],
+      // Host names are case-insensitive; the old code compared raw bytes.
+      ['LOCALHOST', true],
+      // The negatives. Without these the suite would accept a fix that made
+      // IPv6 work by widening the allowlist.
+      ['evil.com', false],
+      ['evil.com:3000', false],
+      // `URL` reads these as userinfo / path / fragment / query and returns
+      // 'localhost' for all four. Accepting them would trade a false-deny for
+      // a real loosening.
+      ['evil.com@localhost', false],
+      ['localhost/../evil.com', false],
+      ['localhost#evil.com', false],
+      ['localhost?x=evil.com', false],
+      // Unparseable authorities: deny, exactly as before.
+      ['[::1', false],
+      ['local host', false],
+      ['', false],
+    ])('Host: %p -> allowed: %p', async (host, allowed) => {
+      const res = await send(host as string);
+
+      if (allowed) {
+        expect(res.statusCode).not.toBe(403);
+      } else {
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.body).error.message).toBe('Invalid Host header');
+      }
+    });
+
+    it('denies a request with no Host header at all', async () => {
+      const res = await send(undefined);
+
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('accepts the unbracketed ::1 spelling in CONFIGURATION', async () => {
+      // `::1` is not valid in a Host header, but it is what an operator writes
+      // in a config file — and #247 was filed partly because neither spelling
+      // worked. Both sides canonicalise, so the two agree.
+      const ipv6Transport = createHttpTransport({
+        registry,
+        basePath: '/mcp',
+        executors,
+        allowedHosts: ['::1'],
+      });
+
+      const req = new MockRequest();
+      const res = new MockResponse();
+      req.headers.host = '[::1]:8080';
+      req.method = 'POST';
+      req.setBody(JSON.stringify({ jsonrpc: '2.0', id: '1', method: 'ping', params: {} }));
+
+      await ipv6Transport.handler()(req, res);
+
+      expect(res.statusCode).not.toBe(403);
+    });
+
+    it('still denies a host outside a custom allowlist', async () => {
+      // The control for the row above: a custom allowlist must still exclude.
+      const ipv6Transport = createHttpTransport({
+        registry,
+        basePath: '/mcp',
+        executors,
+        allowedHosts: ['::1'],
+      });
+
+      const req = new MockRequest();
+      const res = new MockResponse();
+      req.headers.host = 'localhost';
+      req.method = 'POST';
+      req.setBody(JSON.stringify({ jsonrpc: '2.0', id: '1', method: 'ping', params: {} }));
+
+      await ipv6Transport.handler()(req, res);
+
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('refuses an allowlist entry that could never match, rather than dropping it', () => {
+      // An unparseable entry can match nothing — which IS the #247 defect. So
+      // it fails at construction rather than being silently discarded, which
+      // would rebuild the same "reads as coverage, routes nothing" shape by
+      // another route.
+      expect(() =>
+        createHttpTransport({
+          registry,
+          basePath: '/mcp',
+          executors,
+          allowedHosts: ['evil.com/x'],
+        }),
+      ).toThrow(/not a valid host/);
+    });
+  });
+
   describe('Host-header validation', () => {
     it('should reject request with unauthorized Host header', async () => {
       const req = new MockRequest();

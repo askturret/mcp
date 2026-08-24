@@ -74,4 +74,18 @@ when `1.0.0` ships.
   broken a published surface; the tooling ships first so the first breaking
   change arrives with its migration rather than after it.
 
+### Changed
+- A policy denial carrying `UNAUTHENTICATED` now reaches the caller as
+  `UNAUTHENTICATED` rather than being collapsed into `FORBIDDEN`. Every other
+  denial — unrecognised policy codes and the engine's own internal ones
+  included — still normalises to `FORBIDDEN`.
+  **Covered surface — error `code` values** (compatibility-policy §6). §6 makes
+  "changing which condition produces it" MAJOR, and this changes which condition
+  produces `FORBIDDEN`. It would therefore be a MAJOR change once `1.0.0` ships,
+  and lands now precisely because no guarantee is in force yet.
+  A client switching on `FORBIDDEN` to mean "any denial" needs an
+  `UNAUTHENTICATED` arm. The two call for different behaviour — obtain
+  credentials and retry, versus do not retry with this identity — which is the
+  distinction callers previously could not make.
+
 [Unreleased]: https://github.com/askturret/mcp/compare/main...HEAD

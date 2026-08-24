@@ -11,7 +11,7 @@ import { describe, it, expect } from '@jest/globals';
 import { createAuthorizationEngine, fingerprintInput } from '../authorization.js';
 import { createConfirmationRegistry } from '../confirmation.js';
 import { createVisibilityEngine } from '../visibility.js';
-import { allOf } from '../combinators.js';
+import { allOf, anyOf } from '../combinators.js';
 import { authenticated, confirmationForEffects } from '../builtins.js';
 import type { Policy, PolicyContext, PolicyDecision } from '../types.js';
 import type {
@@ -106,6 +106,7 @@ describe('decision handling', () => {
   });
 
   it('deny does NOT leak the evidence list to the caller', async () => {
+    // (see the #124 block below for how the CODE is chosen)
     // Evidence is for the audit trail and Explorer. safeReason is the field
     // its author marked as fit to cross a trust boundary; the rest is not.
     const chatty: Policy = {
@@ -121,6 +122,98 @@ describe('decision handling', () => {
 
     const outcome = await createAuthorizationEngine({ policy: chatty }).authorize(request());
     expect(JSON.stringify(outcome)).not.toContain('INTERNAL-DETAIL');
+  });
+
+  // -------------------------------------------------------------------------
+  // Deny-code normalisation (#124)
+  //
+  // The engine used to collapse EVERY policy denial to FORBIDDEN, so a client
+  // could not tell "obtain credentials and retry" from "do not retry with this
+  // identity". It now passes an ALLOWLIST of one extra code through.
+  //
+  // The tests that matter most here are the negative ones. Getting this wrong
+  // in the permissive direction hands a third-party policy author control of a
+  // transport-visible code that the retry classifier and the circuit breaker
+  // both key on.
+  // -------------------------------------------------------------------------
+
+  /** A policy that denies with whatever code the test names. */
+  const denyWithCode = (code: string): Policy => ({
+    id: `deny-${code}`,
+    evaluate: () => Promise.resolve({ effect: 'deny', code, safeReason: 'nope', evidence: [] }),
+  });
+
+  const codeFor = async (policy: Policy): Promise<string | false> => {
+    const outcome = await createAuthorizationEngine({ policy }).authorize(request());
+    return outcome.kind === 'deny' && outcome.error.code;
+  };
+
+  it('propagates UNAUTHENTICATED so a client can tell 401-shaped from 403-shaped', async () => {
+    expect(await codeFor(denyWithCode('UNAUTHENTICATED'))).toBe('UNAUTHENTICATED');
+  });
+
+  it('still returns FORBIDDEN for an ordinary permission denial', async () => {
+    expect(await codeFor(denyWithCode('FORBIDDEN'))).toBe('FORBIDDEN');
+  });
+
+  it('normalises an unrecognised policy code to FORBIDDEN', async () => {
+    // `PolicyDecision.code` is a free-form string and a policy is third-party
+    // code, so "not on the allowlist" has to mean FORBIDDEN rather than
+    // whatever the author typed.
+    expect(await codeFor(denyWithCode('TEAPOT'))).toBe('FORBIDDEN');
+  });
+
+  it('does NOT propagate a code merely because it is a valid OperationErrorCode', async () => {
+    // The discriminating case. An implementation that forwarded any code
+    // belonging to the OperationErrorCode union would pass this through, and
+    // would look correct until you noticed the consequences below.
+    expect(await codeFor(denyWithCode('INVALID_INPUT'))).toBe('FORBIDDEN');
+  });
+
+  it('does NOT let a policy forge a breaker-affecting code', async () => {
+    // UPSTREAM_UNAVAILABLE is in BREAKER_FAILURE_CODES. If a policy could emit
+    // it, repeated authorization denials would look like a sick dependency and
+    // trip a breaker on a perfectly healthy one — §8.5 in reverse.
+    expect(await codeFor(denyWithCode('UPSTREAM_UNAVAILABLE'))).toBe('FORBIDDEN');
+    expect(await codeFor(denyWithCode('TIMEOUT'))).toBe('FORBIDDEN');
+  });
+
+  it('normalises the engine’s own failure code, not just policy-authored ones', async () => {
+    // A policy that throws is denied with the synthetic `policy_failed`. A
+    // denial whose provenance the engine cannot vouch for should say the least.
+    const exploding: Policy = {
+      id: 'exploding',
+      evaluate: () => {
+        throw new Error('boom');
+      },
+    };
+    expect(await codeFor(exploding)).toBe('FORBIDDEN');
+  });
+
+  it('surfaces UNAUTHENTICATED through allOf when authentication is the first failure', async () => {
+    // This is the shape both shipped presets compose: allOf([authenticated(),
+    // permissionPolicy(...)]). allOf returns the first deny in declaration
+    // order, so an absent principal must reach the caller as UNAUTHENTICATED.
+    const engine = createAuthorizationEngine({
+      policy: allOf([authenticated(), denyWithCode('FORBIDDEN')]),
+    });
+    const outcome = await engine.authorize(request({ principal: undefined }));
+
+    expect(outcome.kind === 'deny' && outcome.error.code).toBe('UNAUTHENTICATED');
+  });
+
+  it('collapses to FORBIDDEN when anyOf branches denied for different reasons', async () => {
+    // anyOf only propagates a code when every branch agreed on (code, reason);
+    // a mixed set becomes the synthetic `anyOf_all_denied`. So a caller cannot
+    // learn "one of these branches was specifically an auth failure" — the
+    // conservative direction, and it falls out of the allowlist rather than
+    // needing a rule of its own.
+    const engine = createAuthorizationEngine({
+      policy: anyOf([denyWithCode('UNAUTHENTICATED'), denyWithCode('FORBIDDEN')]),
+    });
+    const outcome = await engine.authorize(request());
+
+    expect(outcome.kind === 'deny' && outcome.error.code).toBe('FORBIDDEN');
   });
 
   it('evaluates at phase "invocation" WITH the actual input', async () => {

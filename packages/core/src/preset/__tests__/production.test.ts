@@ -217,16 +217,20 @@ describe('authentication required', () => {
     expect(result.isError).toBe(true);
     expect(calls).toHaveLength(0);
 
-    // NOTE: the code is FORBIDDEN, not UNAUTHENTICATED, even though
-    // `authenticated()` produces the latter. #35 specified that every policy
-    // denial maps to FORBIDDEN, so the authorization engine collapses the
-    // policy's own code.
+    // This asserted FORBIDDEN until #124, and the flip IS that issue rather
+    // than a side effect of this one. The note it replaces said the collapse
+    // was worth surfacing because the two codes call for different client
+    // behaviour — obtain credentials and retry, versus do not retry with this
+    // identity. That is now what the caller sees.
     //
-    // Pinned as-is rather than "fixed" here: changing it means changing merged,
-    // QA'd behaviour from another issue. But it is worth surfacing, because the
-    // two codes call for different client behaviour — retry with credentials
-    // versus do not retry — and only the message currently distinguishes them.
-    expect(result.error?.code).toBe('FORBIDDEN');
+    // The preset composes `allOf([authenticated(), permissionPolicy(...)])`, so
+    // with no principal `authenticated()` denies first and its UNAUTHENTICATED
+    // reaches the caller intact.
+    //
+    // The neighbouring tests still expect FORBIDDEN, deliberately: those denials
+    // are statements about the SYSTEM (no grant configured, permissions
+    // missing), which is the distinction #124 preserved rather than erased.
+    expect(result.error?.code).toBe('UNAUTHENTICATED');
     expect(result.error?.message).toContain('authenticated caller');
   });
 

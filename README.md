@@ -473,6 +473,7 @@ const server = createMcpServer({
 - **[Compatibility Matrix](docs/compatibility.md)** — Supported Node, TypeScript, adapter, OpenAPI and MCP versions. A versioned contract.
 - **[Compatibility & Deprecation Policy](docs/compatibility-policy.md)** — Which surfaces are under semver, what a MAJOR means, and the deprecation process. What the 1.0 label will actually promise.
 - **[Changelog](CHANGELOG.md)** — Every entry classified against the policy above.
+- **[Migrations](docs/migrations/README.md)** — Version-to-version migration guides, generated from the rules `migrate` executes.
 - **[Generated-Output Licensing](docs/generated-output-license.md)** — Who owns the output AskTurret produces. A versioned contract.
 - **[Telemetry Policy](docs/telemetry-policy.md)** — Zero telemetry by default; any future collection is opt-in only. A versioned contract.
 - **[Repository Ownership](docs/ownership.md)** — Who reviews what, why the boundaries are drawn there, and how to become a maintainer. Routing lives in [`.github/CODEOWNERS`](.github/CODEOWNERS).

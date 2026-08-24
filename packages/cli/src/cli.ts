@@ -8,6 +8,7 @@ import { doctorCommand } from './commands/doctor.js';
 import { inspectCommand } from './commands/inspect.js';
 import { diffCommand } from './commands/diff.js';
 import { diagnosticsCommand } from './commands/diagnostics.js';
+import { migrateCommand } from './commands/migrate/index.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -34,6 +35,10 @@ async function main() {
 
     case 'diagnostics':
       await diagnosticsCommand(args.slice(1));
+      break;
+
+    case 'migrate':
+      await migrateCommand(args.slice(1));
       break;
 
     case 'help':
@@ -65,6 +70,9 @@ function printHelp() {
   console.log('                          Compare two registry snapshots and classify');
   console.log('                          changes as breaking or non-breaking');
   console.log('  diagnostics --url <url> Produce a redacted support bundle');
+  console.log('  migrate --check         Report version migrations this project needs');
+  console.log('  migrate --from <a> --to <b>');
+  console.log('                          Apply the migration for a version pair');
   console.log('  help                    Show this help message');
   console.log('');
   console.log('Options:');

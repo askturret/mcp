@@ -690,13 +690,29 @@ jobs:
 
       - name: Readiness matrix is current and all criteria met
         run: |
-          # Verify docs/readiness.md exists and is not empty
-          [ -f docs/readiness.md ] || exit 1
-          grep -q "✅ met" docs/readiness.md || exit 1
-          # Count the "met" entries - should be 12 for 1.0 readiness
-          MET_COUNT=$(grep "✅ met" docs/readiness.md | wc -l)
-          if [ "$MET_COUNT" -lt 12 ]; then
-            echo "ERROR: Only $MET_COUNT criteria marked as met (need 12 for 1.0)"
+          [ -f docs/readiness.md ] || { echo "ERROR: docs/readiness.md is missing"; exit 1; }
+
+          # Count only NUMBERED MATRIX ROWS ('| 4 | ...'), never a bare
+          # occurrence of the marker. A plain `grep "✅ met" | wc -l` also counts
+          # the prose line that DESCRIBES the gate ("verifies all rows are
+          # ✅ met"), so 11 met rows plus that sentence summed to 12 and the gate
+          # passed with a criterion still unmet — a false pass that reads exactly
+          # like a real one in the CI log.
+          TOTAL=$(grep -cE '^\| [0-9]+ \|' docs/readiness.md)
+          MET_COUNT=$(grep -cE '^\| [0-9]+ \|.*✅ met' docs/readiness.md)
+
+          # Anti-vacuity: an empty or restructured table must FAIL, not pass by
+          # having nothing to disagree with.
+          if [ "$TOTAL" -ne 12 ]; then
+            echo "ERROR: expected 12 criterion rows in the readiness matrix, found $TOTAL"
             exit 1
           fi
-          echo "Readiness gate: all 12 criteria met"
+
+          # Equality, not '-lt': the gate must not be satisfiable by adding rows.
+          if [ "$MET_COUNT" -ne "$TOTAL" ]; then
+            echo "ERROR: only $MET_COUNT of $TOTAL criteria marked '✅ met' (all $TOTAL required for 1.0)"
+            grep -nE '^\| [0-9]+ \|' docs/readiness.md | grep -v '✅ met' || true
+            exit 1
+          fi
+
+          echo "Readiness gate: $MET_COUNT/$TOTAL criteria met"

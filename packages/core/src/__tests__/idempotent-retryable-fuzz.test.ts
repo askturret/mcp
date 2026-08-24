@@ -1,156 +1,177 @@
+// SPDX-License-Identifier: Apache-2.0
 /**
- * @fileoverview Readiness criterion #6: Non-idempotent writes are never retried.
+ * @fileoverview Readiness criterion #6: non-idempotent writes are never
+ * automatically retried, and `OUTCOME_UNKNOWN` is never retried in ANY path.
  *
- * Verifies two invariants:
- * 1. Any operation with idempotent:false and retryable:true is contradictory
- *    and must be caught at validation time.
- * 2. No code path retries OUTCOME_UNKNOWN (unreconcilable side effects).
+ * ## What makes this test worth having
  *
- * OUTCOME_UNKNOWN means the caller cannot know whether the upstream side
- * effect happened, so blind retry is catastrophic for non-idempotent operations.
+ * It drives the REAL decision functions — `decideRetry` and `isRetryEligible`
+ * from `retry/policy.ts` — across the exhaustive product of every error code
+ * (12) and every combination of the four effect flags (16): 192 cases.
+ *
+ * It deliberately does NOT re-state the rule as a local predicate and assert
+ * that against itself. A test shaped that way passes with the retry policy
+ * deleted, so it cannot go RED on revert and certifies nothing — the
+ * `Transcribed Oracle` antipattern in `docs/TESTING.md`.
+ *
+ * ## Note on the criterion's wording
+ *
+ * The refusal is a RUNTIME decision, not a compile-time one: TypeScript happily
+ * constructs `{ idempotent: false, retryable: true }`, and nothing rejects that
+ * object at the type level. What holds is that `isRetryEligible` refuses the
+ * combination and `decideRetry` never returns `retry: true` for it.
  */
 
 import { describe, it, expect } from '@jest/globals';
-import type { OperationDefinition } from '../types.js';
+import {
+  NEVER_RETRY_CODES,
+  TRANSIENT_CODES,
+  decideRetry,
+  isRetryEligible,
+} from '../retry/policy.js';
+import type { EffectMetadata, OperationErrorCode } from '../types.js';
+
+/** Every member of the `OperationErrorCode` union (types.ts). */
+const ALL_CODES: readonly OperationErrorCode[] = [
+  'INVALID_INPUT',
+  'UNAUTHENTICATED',
+  'FORBIDDEN',
+  'CONFIRMATION_REQUIRED',
+  'RATE_LIMITED',
+  'QUEUE_FULL',
+  'TIMEOUT',
+  'CANCELLED',
+  'UPSTREAM_UNAVAILABLE',
+  'OUTCOME_UNKNOWN',
+  'OUTPUT_TOO_LARGE',
+  'INTERNAL_ERROR',
+];
+
+const BOOLS = [true, false] as const;
+
+/** The exhaustive 2^4 effect matrix. */
+function allEffects(): readonly EffectMetadata[] {
+  const out: EffectMetadata[] = [];
+  for (const readOnly of BOOLS) {
+    for (const idempotent of BOOLS) {
+      for (const retryable of BOOLS) {
+        for (const idempotencyKeyRequired of BOOLS) {
+          out.push({
+            readOnly,
+            idempotent,
+            retryable,
+            idempotencyKeyRequired,
+            classifications: [],
+          });
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const EFFECT_COMBINATIONS = allEffects();
+
+/** A mutating operation that claims to be retryable while not being idempotent. */
+const CONTRADICTORY_WRITE: EffectMetadata = {
+  readOnly: false,
+  idempotent: false,
+  retryable: true,
+  idempotencyKeyRequired: true,
+  classifications: [],
+};
 
 describe('Idempotent+retryable fuzz (readiness #6)', () => {
-  it('should validate that idempotent=false with retryable=true is contradictory', () => {
-    // This is the key invariant: a non-idempotent operation cannot be safely
-    // retried because we cannot know if the side effect happened.
-    // The combination must be caught at validation time.
+  it('enumerates the full effect matrix', () => {
+    // Guards every loop below: a silently-empty matrix would make each
+    // "never retries" assertion vacuously true.
+    expect(EFFECT_COMBINATIONS).toHaveLength(16);
+    expect(ALL_CODES).toHaveLength(12);
+  });
 
-    const validOperations: OperationDefinition[] = [
-      {
-        // idempotent: true, retryable: true => OK (safe to retry)
-        id: 'op1',
-        name: 'idempotent-write',
-        description: 'An idempotent write operation',
-        input: { type: 'object' },
-        output: { type: 'object' },
-        executor: { type: 'http' },
-        effects: {
-          idempotent: true,
-          retryable: true,
-          readOnly: false,
-          idempotencyKeyRequired: true,
-          classifications: [],
-        },
-      },
-      {
-        // idempotent: true, retryable: false => OK
-        id: 'op2',
-        name: 'idempotent-read',
-        description: 'An idempotent read operation',
-        input: { type: 'object' },
-        output: { type: 'object' },
-        executor: { type: 'http' },
-        effects: {
-          idempotent: true,
-          retryable: false,
-          readOnly: true,
-          idempotencyKeyRequired: false,
-          classifications: [],
-        },
-      },
-      {
-        // idempotent: false, retryable: false => OK (not retried)
-        id: 'op3',
-        name: 'non-idempotent-write',
-        description: 'A non-idempotent write operation that is not retried',
-        input: { type: 'object' },
-        output: { type: 'object' },
-        executor: { type: 'http' },
-        effects: {
-          idempotent: false,
-          retryable: false,
-          readOnly: false,
-          idempotencyKeyRequired: true,
-          classifications: [],
-        },
-      },
-    ];
-
-    // All valid combinations should pass the invariant check
-    for (const op of validOperations) {
-      const isValid = !(op.effects.idempotent === false && op.effects.retryable === true);
-      expect(isValid).toBe(true);
+  it('never retries OUTCOME_UNKNOWN, for any effect combination', () => {
+    for (const effects of EFFECT_COMBINATIONS) {
+      for (const attempt of [1, 2]) {
+        const decision = decideRetry({
+          errorCode: 'OUTCOME_UNKNOWN',
+          effects,
+          attempt,
+          maxAttempts: 5,
+        });
+        expect(decision.retry).toBe(false);
+        // The FIRST check must be the one that fires — if a later branch
+        // short-circuited it instead, the ordering guarantee in policy.ts
+        // ("the never-retry check runs FIRST") would be silently untrue.
+        expect(decision.reason).toBe('outcome-unknown');
+      }
     }
   });
 
-  it('should reject idempotent=false with retryable=true', () => {
-    // The contradictory combination that must be rejected
-    const contradictoryOperation: OperationDefinition = {
-      id: 'dangerous-op',
-      name: 'non-idempotent-retryable',
-      description: 'A contradictory operation definition',
-      input: { type: 'object' },
-      output: { type: 'object' },
-      executor: { type: 'http' },
-      effects: {
-        idempotent: false,
-        retryable: true, // CONTRADICTION: cannot safely retry non-idempotent
-        readOnly: false,
-        idempotencyKeyRequired: true,
-        classifications: [],
-      },
-    };
+  it('never retries a non-idempotent mutating operation, whatever the error code', () => {
+    expect(isRetryEligible(CONTRADICTORY_WRITE)).toBe(false);
 
-    // This combination is invalid
-    const isContradictory =
-      contradictoryOperation.effects.idempotent === false &&
-      contradictoryOperation.effects.retryable === true;
-    expect(isContradictory).toBe(true);
+    for (const errorCode of ALL_CODES) {
+      const decision = decideRetry({
+        errorCode,
+        effects: CONTRADICTORY_WRITE,
+        attempt: 1,
+        maxAttempts: 5,
+      });
+      expect(decision.retry).toBe(false);
+    }
   });
 
-  it('should verify that OUTCOME_UNKNOWN is never retried', () => {
-    // OUTCOME_UNKNOWN = "we don't know if the side effect happened"
-    // This is the terminal state for non-idempotent operations.
-    // The retry logic must check for this and refuse to retry.
+  it('only ever retries when the code is transient AND the effects permit it', () => {
+    let retried = 0;
 
-    // In the actual code, the retry policy checks the outcome:
-    // if (outcome === 'OUTCOME_UNKNOWN') {
-    //   return { retry: false }  // Never retry unknown outcomes
-    // }
-
-    // This test verifies the logic is sound by checking the constraint:
-    const shouldNeverRetry = (outcome: string, effects: {idempotent: boolean, retryable: boolean}): boolean => {
-      if (outcome === 'OUTCOME_UNKNOWN') {
-        return false; // Never retry OUTCOME_UNKNOWN
+    for (const errorCode of ALL_CODES) {
+      for (const effects of EFFECT_COMBINATIONS) {
+        const decision = decideRetry({ errorCode, effects, attempt: 1, maxAttempts: 3 });
+        if (decision.retry) {
+          retried++;
+          // Cross-checked against the other production export and the
+          // production allowlist — not against a copy of the rule.
+          expect(TRANSIENT_CODES).toContain(errorCode);
+          expect(isRetryEligible(effects)).toBe(true);
+          expect(NEVER_RETRY_CODES).not.toContain(errorCode);
+        }
       }
-      if (effects.idempotent === false && effects.retryable === true) {
-        return false; // Contradictory: never retry non-idempotent
-      }
-      return effects.retryable; // Otherwise, follow the retryable flag
-    };
+    }
 
-    // Test cases
-    expect(shouldNeverRetry('OUTCOME_UNKNOWN', {idempotent: true, retryable: true})).toBe(false);
-    expect(shouldNeverRetry('OUTCOME_UNKNOWN', {idempotent: false, retryable: false})).toBe(false);
-    expect(shouldNeverRetry('ERROR', {idempotent: true, retryable: true})).toBe(true);
-    expect(shouldNeverRetry('ERROR', {idempotent: false, retryable: false})).toBe(false);
-    expect(shouldNeverRetry('ERROR', {idempotent: false, retryable: true})).toBe(false); // Contradictory
+    // Anti-vacuity: if NOTHING retried, every assertion above passes for the
+    // wrong reason and the suite would still be green with retry disabled.
+    expect(retried).toBeGreaterThan(0);
   });
 
-  it('should fuzz: validate all combinations of idempotent + retryable', () => {
-    // Enumerate all valid and invalid combinations
-    const combinations = [
-      { idempotent: true, retryable: true, isValid: true },
-      { idempotent: true, retryable: false, isValid: true },
-      { idempotent: false, retryable: true, isValid: false }, // INVALID
-      { idempotent: false, retryable: false, isValid: true },
-    ];
+  it('does retry a genuinely safe, transient failure', () => {
+    const idempotentWrite: EffectMetadata = {
+      readOnly: false,
+      idempotent: true,
+      retryable: true,
+      idempotencyKeyRequired: true,
+      classifications: [],
+    };
 
-    for (const combo of combinations) {
-      const isContradictory =
-        combo.idempotent === false && combo.retryable === true;
+    expect(isRetryEligible(idempotentWrite)).toBe(true);
+    expect(
+      decideRetry({
+        errorCode: 'UPSTREAM_UNAVAILABLE',
+        effects: idempotentWrite,
+        attempt: 1,
+        maxAttempts: 3,
+      }),
+    ).toEqual({ retry: true, reason: 'eligible' });
+  });
 
-      if (combo.isValid) {
-        // Should be valid
-        expect(isContradictory).toBe(false);
-      } else {
-        // Should be invalid
-        expect(isContradictory).toBe(true);
-      }
+  it('keeps OUTCOME_UNKNOWN in the never-retry set and out of the transient set', () => {
+    expect(NEVER_RETRY_CODES).toContain('OUTCOME_UNKNOWN');
+    expect(TRANSIENT_CODES).not.toContain('OUTCOME_UNKNOWN');
+
+    // The structural invariant policy.ts asserts at module load. Restated here
+    // so the failure names the criterion rather than surfacing as an import
+    // error in an unrelated suite.
+    for (const code of NEVER_RETRY_CODES) {
+      expect(TRANSIENT_CODES).not.toContain(code);
     }
   });
 });

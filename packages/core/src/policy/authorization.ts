@@ -145,6 +145,72 @@ export function fingerprintInput(input: unknown): InputFingerprint {
 
 const deny = (code: OperationError['code'], message: string): OperationError => ({ code, message });
 
+/**
+ * Policy deny codes that reach the caller unchanged. Everything else becomes
+ * `FORBIDDEN` (#124).
+ *
+ * ## Why an allowlist, and not "propagate whatever the policy said"
+ *
+ * `PolicyDecision.code` is typed `string`, and a policy is ordinary third-party
+ * code. Forwarding it verbatim would let any policy author choose the
+ * transport-visible error code — and these codes are not merely cosmetic. The
+ * retry classifier keys on them (`NEVER_RETRY_CODES`), the circuit breaker keys
+ * on them (`BREAKER_FAILURE_CODES`), and a policy that answered
+ * `UPSTREAM_UNAVAILABLE` would make repeated denials look like a sick
+ * dependency and open a breaker on a healthy one.
+ *
+ * So the engine still normalises. The change is that it now normalises to an
+ * enumerated set of two rather than to a set of one.
+ *
+ * ## Why `UNAUTHENTICATED` specifically is safe to distinguish
+ *
+ * The concern #35's QA settled is information disclosure: an error code must
+ * not tell a caller something about the SYSTEM they had not already earned.
+ * `UNAUTHENTICATED` is a statement about the caller's OWN credentials — that
+ * they presented none, or none that resolved to a principal. The caller knows
+ * what they sent. It describes nothing about the resource, the operation, or
+ * anyone else's access, so there is nothing here for it to disclose.
+ *
+ * `FORBIDDEN` continues to cover every other denial precisely because those
+ * ARE statements about the system: which permissions an operation needs, that
+ * a grant is missing, that a confirmation was refused.
+ *
+ * ## What this does NOT reopen (verified, not assumed)
+ *
+ *   - **Resource existence.** An unknown operation is refused at dispatcher
+ *     stage 1 with `INVALID_INPUT` ("Operation 'x' not found"), BEFORE any
+ *     policy runs. The exists/does-not-exist distinction is therefore already
+ *     drawn by a different code on a path this change does not touch — so
+ *     splitting `FORBIDDEN` cannot create an enumeration oracle, and did not
+ *     narrow one either.
+ *   - **Retry behaviour.** `UNAUTHENTICATED` and `FORBIDDEN` are BOTH already
+ *     in `NEVER_RETRY_CODES`, so a denial that changes code does not become
+ *     retryable.
+ *   - **Breaker accounting.** `BREAKER_FAILURE_CODES` is an allowlist of three
+ *     transient codes and contains neither, so §8.5's "100 denials must not
+ *     open the breaker" holds for both.
+ *   - **Composition.** `allOf` returns the first deny in declaration order and
+ *     `anyOf` propagates a code only when every branch denied for the same
+ *     (code, reason) — otherwise it synthesises `anyOf_all_denied`, which is
+ *     not on this list and so still surfaces as `FORBIDDEN`. Mixed denials
+ *     therefore stay collapsed, which is the conservative direction.
+ */
+const PROPAGATED_DENY_CODES: readonly string[] = ['UNAUTHENTICATED'];
+
+/**
+ * Map a policy's own deny code to the code the caller sees.
+ *
+ * Unrecognised codes — including the engine's own `policy_failed` and the
+ * combinators' `policy_threw` / `anyOf_*` — deliberately land on `FORBIDDEN`:
+ * a denial whose provenance the engine cannot vouch for is exactly the case
+ * that should say the least.
+ */
+function clientDenyCode(policyCode: string): OperationError['code'] {
+  return PROPAGATED_DENY_CODES.includes(policyCode)
+    ? (policyCode as OperationError['code'])
+    : 'FORBIDDEN';
+}
+
 export function createAuthorizationEngine(
   options: AuthorizationEngineOptions,
 ): AuthorizationEngine {
@@ -213,7 +279,11 @@ export function createAuthorizationEngine(
           kind: 'deny',
           // safeReason is the field the policy author marked as fit to cross a
           // trust boundary. The evidence list is NOT returned to the caller.
-          error: deny('FORBIDDEN', decision.safeReason),
+          //
+          // The code is normalised through an allowlist rather than forwarded
+          // (#124) — see PROPAGATED_DENY_CODES for why the set is enumerated
+          // and why `UNAUTHENTICATED` is the one entry that earns a place.
+          error: deny(clientDenyCode(decision.code), decision.safeReason),
         });
       }
 

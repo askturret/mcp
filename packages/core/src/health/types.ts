@@ -22,7 +22,8 @@ export type NotReadyReason =
   | 'no-registry-snapshot'
   | 'reload-degraded'
   | 'audit-sink-unreachable'
-  | 'all-breakers-open';
+  | 'all-breakers-open'
+  | 'registry-divergence';
 
 export interface HealthReport {
   readonly ready: boolean;
@@ -31,6 +32,20 @@ export interface HealthReport {
   readonly reason?: NotReadyReason;
   /** Human-readable elaboration; never a stack or a credential. */
   readonly detail?: string;
+
+  /**
+   * The registry hash this instance is serving (#64, §11.2).
+   *
+   * §64 requires the hash on a discoverable surface, and the readiness body is
+   * the one an operator already curls when something looks wrong. It is here
+   * even when the instance is READY — that is the point: comparing the hash
+   * across pods is how divergence is diagnosed by hand, and a field that only
+   * appeared on failure would be absent exactly when it was needed.
+   *
+   * Optional because liveness produces a report too, and liveness has no
+   * registry in scope.
+   */
+  readonly registryHash?: string;
 }
 
 /**
@@ -75,4 +90,29 @@ export interface ReadinessInputs {
    * dependency blip takes the whole service down instead of the dependency.
    */
   readonly enforceDependencies?: boolean;
+
+  /**
+   * Last known registry-divergence verdict (#64, §11.2), if Option B is wired.
+   *
+   * CACHED, like `auditSinkReachable` above and for the same reason: the
+   * monitor talks to a peer store over a network, and readiness is forbidden
+   * from doing that. What arrives here is what the monitor last concluded on
+   * its own timer.
+   *
+   * Absent means Option B is not configured — the overwhelmingly common case,
+   * since §64 makes the external Prometheus check the default.
+   */
+  readonly divergence?: DivergenceVerdict;
+}
+
+/**
+ * The slice of `DivergenceState` readiness is allowed to see.
+ *
+ * Deliberately NOT the full state: readiness needs a verdict and a sentence,
+ * not the peer list. Narrowing it here also keeps `health/` from importing
+ * `registry-consistency/`, so the two modules stay independently testable.
+ */
+export interface DivergenceVerdict {
+  readonly status: 'ok' | 'diverged' | 'unknown';
+  readonly detail?: string;
 }

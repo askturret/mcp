@@ -286,6 +286,32 @@ interface CompilerPass {
 
 ---
 
+## Multi-instance consistency
+
+Every instance compiles the same configuration into a registry snapshot and
+stamps it with a hash. Two instances serving **different** hashes serve
+different tool surfaces — so `tools/list` answers differ by which pod the load
+balancer picked, and a `tools/call` an agent was told would work is refused by
+its neighbour. Nothing is down; the symptom is an agent that "sometimes" cannot
+find a tool.
+
+Two detectors ship, and both tolerate a rolling update — which legitimately runs
+two hashes at once — by requiring divergence to **persist** for five minutes
+before it means anything:
+
+| | How | Cost |
+|---|---|---|
+| **A — external** (default) | Prometheus alerts when `count by (registry_hash)` exceeds one for longer than the debounce | A human's attention |
+| **B — internal** (opt-in) | Instances announce their hash to an operator-provided store; sustained divergence flips `/health/ready` to 503 | **Availability** — the deployment leaves rotation |
+
+Every instance reports its hash on `/mcp/health/ready` regardless, so the
+comparison can always be made by hand.
+
+Full detail, the store contract, and the alert runbook:
+[`registry-divergence.md`](registry-divergence.md).
+
+---
+
 ## The MCP SDK boundary
 
 §17 criterion 11: *"An MCP SDK upgrade can be completed inside the transport

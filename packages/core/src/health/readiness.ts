@@ -45,6 +45,24 @@ export function evaluateReadiness(inputs: ReadinessInputs): HealthReport {
     );
   }
 
+  // §11.2's last-line safety net. Checked BEFORE the dependency block because
+  // it is not a dependency condition: divergence means this instance's tool
+  // surface disagrees with its peers', which is a correctness problem rather
+  // than a degraded upstream, and it is true whether or not
+  // `enforceDependencies` is set — an operator who wired Option B has already
+  // opted in by wiring it.
+  //
+  // `unknown` is NOT treated as diverged. A peer store outage would otherwise
+  // pull every instance from rotation because the MONITOR's dependency failed,
+  // which is precisely the outage-amplification §8.7 forbids.
+  if (inputs.divergence?.status === 'diverged') {
+    return notReady(
+      'registry-divergence',
+      inputs.divergence.detail ??
+        'This instance is serving a different registry hash from its peers',
+    );
+  }
+
   if (inputs.enforceDependencies === true) {
     if (inputs.auditSinkReachable === false) {
       return notReady(

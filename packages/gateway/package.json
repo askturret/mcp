@@ -1,0 +1,38 @@
+{
+  "name": "@askturret/mcp-gateway",
+  "version": "0.1.0",
+  "description": "Standalone compatibility gateway - serves MCP from an OpenAPI spec and proxies to an existing API",
+  "type": "module",
+  "private": true,
+  "license": "Apache-2.0",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "askturret-mcp-gateway": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
+    "lint": "echo \"Linting not yet configured\""
+  },
+  "dependencies": {
+    "@askturret/mcp-core": "*",
+    "@askturret/mcp-observability": "*",
+    "@askturret/mcp-sources-openapi": "*",
+    "@askturret/mcp-transports": "*"
+  },
+  "devDependencies": {
+    "typescript": "*",
+    "@types/node": "^20.14.0",
+    "@jest/globals": "^29.7.0",
+    "@types/jest": "^29.5.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0"
+  }
+}

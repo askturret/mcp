@@ -133,6 +133,11 @@ class StreamableHttpTransport implements HttpTransport {
         ...(options.retry === undefined ? {} : { retry: options.retry }),
         ...(options.breakers === undefined ? {} : { breakers: options.breakers }),
         ...(options.auditSink === undefined ? {} : { auditSink: options.auditSink }),
+        // Without these two the dispatcher fell back to its no-op tracer and
+        // no-op recorder no matter what an adapter was handed — the option
+        // existed on DispatcherOptions with nothing routing to it (#57).
+        ...(options.observability === undefined ? {} : { observability: options.observability }),
+        ...(options.logger === undefined ? {} : { logger: options.logger }),
       },
     );
 

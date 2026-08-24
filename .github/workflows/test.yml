@@ -26,6 +26,7 @@ jobs:
       cli: ${{ steps.filter.outputs.cli }}
       reliability: ${{ steps.filter.outputs.reliability }}
       adapter-test: ${{ steps.filter.outputs.adapter-test }}
+      gateway: ${{ steps.filter.outputs.gateway }}
       workspace: ${{ steps.filter.outputs.workspace }}
     steps:
       - uses: actions/checkout@v4
@@ -55,6 +56,18 @@ jobs:
               - 'packages/adapters-fastify/**'
               - 'packages/core/**'
               - 'packages/transports/**'
+            gateway:
+              - 'packages/gateway/**'
+              # The gateway is assembled ENTIRELY from these packages and adds
+              # no runtime of its own, so a change to any of them can break it
+              # without touching a gateway file. Its own suite is also what
+              # covers the compose example's config and spec, so those count
+              # too — an example that stops working is a shipped defect.
+              - 'packages/core/**'
+              - 'packages/transports/**'
+              - 'packages/sources-openapi/**'
+              - 'packages/observability/**'
+              - 'examples/gateway-compose/**'
             reliability:
               # The suite asserts on INTERACTIONS between the resilience
               # primitives, so it must re-run when any of them changes — not
@@ -227,6 +240,23 @@ jobs:
       - run: npm ci
       - run: npm run build -w packages/core -w packages/explorer
       - run: npm test --workspace=packages/explorer
+
+  # Test standalone gateway package (#57)
+  test-gateway:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.gateway == 'true' || needs.changes.outputs.workspace == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      # The gateway's tests import its siblings through their BUILT dist, so an
+      # unbuilt dependency here fails as a module-resolution error rather than
+      # as the behaviour under test.
+      - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/observability -w packages/gateway
+      - run: npm test --workspace=packages/gateway
 
   # Test CLI package
   test-cli:
@@ -487,9 +517,29 @@ jobs:
             exit 0
           fi
 
+  gateway-status:
+    runs-on: ubuntu-latest
+    needs: [changes, test-gateway]
+    if: always()
+    steps:
+      - name: Check test result
+        run: |
+          if [ "${{ needs.changes.outputs.gateway }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
+            if [ "${{ needs.test-gateway.result }}" == "success" ]; then
+              echo "Gateway tests passed"
+              exit 0
+            else
+              echo "Gateway tests failed or were cancelled"
+              exit 1
+            fi
+          else
+            echo "Gateway tests skipped (no changes)"
+            exit 0
+          fi
+
   workspace-status:
     runs-on: ubuntu-latest
-    needs: [changes, test-core, test-adapters-express, test-sources-openapi, test-transports, test-observability, test-explorer, test-cli]
+    needs: [changes, test-core, test-adapters-express, test-sources-openapi, test-transports, test-observability, test-explorer, test-cli, test-gateway]
     if: always()
     steps:
       - name: Check workspace changes
@@ -502,7 +552,8 @@ jobs:
                [ "${{ needs.test-transports.result }}" == "success" ] && \
                [ "${{ needs.test-observability.result }}" == "success" ] && \
                [ "${{ needs.test-explorer.result }}" == "success" ] && \
-               [ "${{ needs.test-cli.result }}" == "success" ]; then
+               [ "${{ needs.test-cli.result }}" == "success" ] && \
+               [ "${{ needs.test-gateway.result }}" == "success" ]; then
               echo "All tests passed for workspace changes"
               exit 0
             else

@@ -99,6 +99,22 @@ const ALLOWLIST = [
   // Framework adapters: mounted into the adopter's own server.
   'packages/adapters-express/src/',
 
+  // The standalone gateway (#57, §11.3). It IS a server the operator chose to
+  // run: `node:http` here is `createServer` — an inbound listener on a port the
+  // operator named on the command line — not an outbound call.
+  //
+  // Same category as `packages/transports/src/` above, and for the same reason.
+  // The promise in docs/telemetry-policy.md is that this project makes no
+  // outbound call the adopter did not configure, and ACCEPTING a connection is
+  // not MAKING one. The gateway's only outbound traffic goes to `--upstream`,
+  // and it reaches there through core's already-allowlisted `via-http.ts` —
+  // nothing in this package opens a client socket.
+  //
+  // Scoped to `src/` rather than to `src/server.ts` so the entry does not have
+  // to be revisited if the listeners are split across files; anything under
+  // `packages/gateway/` outside `src/` still trips the guard.
+  'packages/gateway/src/',
+
   // CLI commands that fetch a URL the user typed on the command line. The user
   // supplying the address IS the opt-in.
   'packages/cli/src/commands/doctor.ts',

@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Gateway config for the compose example (#57).
+#
+# Every one of these can also be a CLI flag; the file is here because §57 asks
+# for full config-file support and because a compose `command:` with a dozen
+# flags is a worse thing to read than this.
+
+spec: /etc/askturret/openapi.yaml
+
+# The mock upstream, by compose service name. This OVERRIDES the `servers` entry
+# in the spec — which points at a public URL that does not exist — and is the
+# single most important line here: it is what makes the spec describe a shape
+# while the deployment decides the destination.
+upstream: http://upstream:8080
+
+host: 0.0.0.0
+port: 7000
+basePath: /mcp
+
+# Light is the default and the right one for an evaluation. Switching this to
+# `regulated` with the stdout sink below is a good thing to try: the gateway
+# refuses to boot, with core's own §10.2 message, before it opens a socket.
+preset: light
+
+audit:
+  sink: jsonl
+  # On the named volume, so records outlive `docker compose down`.
+  path: /var/lib/askturret/audit.jsonl
+
+metricsPort: 9464
+metricsPath: /metrics

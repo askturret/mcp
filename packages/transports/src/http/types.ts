@@ -9,9 +9,11 @@ import type {
   BreakersConfig,
   BulkheadsConfig,
   HealthReport,
+  Observability,
   ReloadController,
   RetryConfig,
   ShutdownResult,
+  StructuredLogger,
 } from '@askturret/mcp-core';
 import type {
   RegistryReference,
@@ -114,6 +116,37 @@ export interface HttpTransportOptions {
    * shutdown -- into behaviour rather than an aspiration.
    */
   readonly auditSink?: AuditSink;
+
+  /**
+   * Span tree and metrics, forwarded to the dispatcher (#39, §9.1 / §9.2).
+   *
+   * Same reason `bulkheads` is here: the option existed on `DispatcherOptions`
+   * and the transport is what constructs the dispatcher, so until now there was
+   * NO path from any adapter to the dispatcher's telemetry. `openTelemetry()`
+   * shipped in #39 and every caller that reached for it got a no-op tracer and
+   * a no-op recorder, silently — the wiring simply did not exist.
+   *
+   * Found while building the gateway (#57), whose Prometheus endpoint would
+   * otherwise have scraped an always-empty registry and reported a healthy zero
+   * for every metric. That is worse than no endpoint: it looks like a server
+   * with no traffic rather than one with no instrumentation.
+   *
+   * Absent still means no-op on both, so nothing changes for a caller that does
+   * not set it.
+   */
+  readonly observability?: Observability;
+
+  /**
+   * Structured logger for the dispatcher's stage-level logs (#38, §9.3).
+   *
+   * Unreachable from an adapter for the same reason as `observability`. Absent
+   * means SILENT, exactly as `DispatcherOptions` documents — importing this
+   * package must never write to an adopter's stdout uninvited.
+   *
+   * These are operational logs, NOT audit records. `auditSink` above remains
+   * the only channel carrying a delivery guarantee.
+   */
+  readonly logger?: StructuredLogger;
 
   /**
    * Reload controller, so `/health/ready` can report a degraded reload (§8.7).

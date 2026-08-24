@@ -1,0 +1,47 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Collector config for the gateway example (#57).
+#
+# Two inbound paths, because the gateway has two:
+#   - OTLP, for spans an operator's SDK exports from the gateway process.
+#   - a Prometheus SCRAPE of the gateway's own metrics endpoint, which is how
+#     §9.2's metric set actually leaves the process today.
+#
+# Everything is logged to the collector's stdout rather than forwarded onward.
+# An example that required an account somewhere is not one an evaluator can run
+# in one command.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: askturret-mcp-gateway
+          scrape_interval: 5s
+          static_configs:
+            - targets: ['gateway:9464']
+
+processors:
+  batch:
+    timeout: 5s
+
+exporters:
+  debug:
+    verbosity: detailed
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug]
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [batch]
+      exporters: [debug]

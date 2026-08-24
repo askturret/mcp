@@ -38,8 +38,8 @@ function check(desc, actual, expected) {
   }
 }
 
-function runGuard(script, dir) {
-  const r = spawnSync('node', [script, dir], { encoding: 'utf-8' });
+function runGuard(script, dir, ...extraArgs) {
+  const r = spawnSync('node', [script, dir, ...extraArgs], { encoding: 'utf-8' });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -579,6 +579,113 @@ check(
     ),
   );
   check('nul: reports the offending line number', r.out.includes('thing.ts:2') ? 'located' : r.out, 'located');
+}
+
+// ---------------------------------------------------------------------------
+// check-nul-bytes.mjs — scan coverage (#121)
+//
+// Two coverage gaps, both found during #119's QA rather than by the guard
+// itself. They are not bugs in what it checks; they are places it never looked.
+// ---------------------------------------------------------------------------
+
+const NUL_BYTES = (before, after) =>
+  Buffer.concat([Buffer.from(before), Buffer.from([0x00]), Buffer.from(after)]);
+
+/**
+ * A throwaway repo root with every REQUIRED scan root present.
+ *
+ * Each required root gets a real file, so a fixture never trips the
+ * empty-scan check or the missing-root check by accident — leaving whatever the
+ * test is actually about as the only reason it can fail.
+ */
+function scratchRepo(files = {}) {
+  const dir = mkdtempSync(join(tmpdir(), 'nulroots-'));
+  for (const root of ['packages', 'examples', 'docs', '.github']) {
+    mkdirSync(join(dir, root), { recursive: true });
+    writeFileSync(join(dir, root, 'placeholder.md'), `# ${root}\n`);
+  }
+  for (const [relPath, contents] of Object.entries(files)) {
+    const full = join(dir, relPath);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, contents);
+  }
+  tmpDirs.push(dir);
+  return dir;
+}
+
+// The headline gap: Tester demonstrated that a NUL in a root-level file exited
+// 0 while the same bytes under packages/ exited 1.
+check(
+  'nul: flags a NUL byte in a root-level package.json',
+  runGuard(NUL, scratchRepo({ 'package.json': NUL_BYTES('{"name":"a', 'b"}\n') })).code,
+  1,
+);
+
+check(
+  'nul: flags a NUL byte in a root-level README.md',
+  runGuard(NUL, scratchRepo({ 'README.md': NUL_BYTES('# Title\nbody ', ' more\n') })).code,
+  1,
+);
+
+check(
+  'nul: accepts clean root-level files',
+  runGuard(
+    NUL,
+    scratchRepo({ 'package.json': '{"name":"a"}\n', 'tsconfig.json': '{}\n', 'README.md': '# ok\n' }),
+  ).code,
+  0,
+);
+
+// The root scan is a GLOB, not a scan root. If it recursed, it would walk
+// node_modules — SKIP_DIRS only prunes by name, and an unlisted directory is
+// deliberately out of scope. This is the assertion that would go red if someone
+// "simplified" it into `walk(repoRoot)`.
+check(
+  'nul: does NOT recurse from the root into undeclared directories',
+  runGuard(NUL, scratchRepo({ 'unlisted/deep/thing.ts': NUL_BYTES('const a = ', '1;\n') })).code,
+  0,
+);
+
+// A missing REQUIRED root is visible by default, but not fatal — pointing the
+// guard at a fixture is a legitimate thing to do.
+{
+  const r = runGuard(NUL, scratchBytes('README.md', Buffer.from('# only a root file\n')));
+  check('nul: warns about a missing required root by default', r.code, 0);
+  check(
+    'nul: names the missing root in the warning',
+    r.out.includes('packages/') && r.out.includes('REQUIRED') ? 'named' : r.out,
+    'named',
+  );
+}
+
+// ...and fatal under --require-roots, which is how CI runs it. This is the
+// assertion that stops a renamed `packages/` from silently halving coverage
+// while the guard still reports success.
+{
+  const r = runGuard(
+    NUL,
+    scratchBytes('README.md', Buffer.from('# only a root file\n')),
+    '--require-roots',
+  );
+  check('nul: FAILS on a missing required root under --require-roots', r.code, 1);
+  check(
+    'nul: explains which required roots went missing',
+    r.out.includes('required scan root(s) missing') ? 'explained' : r.out,
+    'explained',
+  );
+}
+
+// `scripts` is declared but does not exist in this repository. Declared roots
+// marked optional must never fail, or CI could not run with --require-roots at
+// all — which is the whole point of keeping the declaration.
+{
+  const r = runGuard(NUL, scratchRepo({ 'README.md': '# ok\n' }), '--require-roots');
+  check('nul: a missing OPTIONAL root does not fail under --require-roots', r.code, 0);
+  check(
+    'nul: still reports the optional root as absent',
+    r.out.includes('scripts/') ? 'reported' : r.out,
+    'reported',
+  );
 }
 
 // ---------------------------------------------------------------------------

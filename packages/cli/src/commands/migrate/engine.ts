@@ -128,6 +128,122 @@ function moveKey(
 }
 
 /**
+ * Where an occurrence sits syntactically. Drives rewrite-or-refuse (#193).
+ *
+ * Only the first two are rewritten. Everything else is reported, because in
+ * those positions the identifier is either not the import at all, or renaming
+ * it would change something other than a reference to the import.
+ */
+type OccurrenceKind =
+  | 'import-specifier'
+  | 'reference'
+  | 'property-access'
+  | 'object-key'
+  | 'shorthand'
+  | 'binding';
+
+const REFUSAL_REASON: Readonly<Record<string, string>> = {
+  'property-access': 'property access — the object may be the adopter\'s own',
+  'object-key': 'object key — renaming it changes the emitted data shape',
+  shorthand: 'object shorthand — renaming it changes the emitted key',
+  binding: 'local binding — the tool does not edit adopter logic',
+};
+
+/** Innermost unclosed bracket at each index, so `{` can be told from `(`. */
+function bracketContexts(masked: string): readonly (string | null)[] {
+  const out: (string | null)[] = new Array(masked.length).fill(null);
+  const stack: string[] = [];
+
+  for (let k = 0; k < masked.length; k += 1) {
+    out[k] = stack.length > 0 ? (stack[stack.length - 1] as string) : null;
+    const c = masked[k];
+    if (c === '{' || c === '(' || c === '[') stack.push(c);
+    else if (c === '}' || c === ')' || c === ']') stack.pop();
+  }
+
+  return out;
+}
+
+function prevNonSpace(s: string, index: number): string {
+  for (let k = index - 1; k >= 0; k -= 1) {
+    if (!/\s/.test(s[k] as string)) return s[k] as string;
+  }
+  return '';
+}
+
+function nextNonSpace(s: string, index: number): string {
+  for (let k = index; k < s.length; k += 1) {
+    if (!/\s/.test(s[k] as string)) return s[k] as string;
+  }
+  return '';
+}
+
+/** The identifier immediately preceding `index`, if any. */
+function precedingWord(s: string, index: number): string {
+  const m = /([A-Za-z_$][A-Za-z0-9_$]*)\s*$/.exec(s.slice(0, index));
+  return m?.[1] ?? '';
+}
+
+const BINDING_KEYWORDS = new Set(['const', 'let', 'var', 'function', 'class']);
+
+/**
+ * Byte ranges of `import … from '…'` statements.
+ *
+ * Matched against the ORIGINAL text because the mask blanks string literals,
+ * which is where the module specifier lives. Each hit is then confirmed against
+ * the mask, so an `import` appearing inside a comment or a string is not
+ * mistaken for a statement.
+ */
+function importRanges(contents: string, masked: string): ReadonlyArray<readonly [number, number]> {
+  const ranges: [number, number][] = [];
+  const re = /\bimport\b[^;]*?\bfrom\b\s*['"][^'"]+['"]/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(contents)) !== null) {
+    if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
+    ranges.push([m.index, m.index + m[0].length]);
+  }
+
+  return ranges;
+}
+
+function classifyOccurrence(
+  masked: string,
+  index: number,
+  length: number,
+  brackets: readonly (string | null)[],
+  imports: ReadonlyArray<readonly [number, number]>,
+): OccurrenceKind {
+  // The import specifier is the one occurrence we can positively identify, and
+  // the whole point of the rule. Checked first because it also has the SHAPE of
+  // shorthand — `import { durability }` — and would otherwise be refused.
+  if (imports.some(([start, end]) => index >= start && index < end)) return 'import-specifier';
+
+  const prev = prevNonSpace(masked, index);
+  const next = nextNonSpace(masked, index + length);
+
+  // `cfg.durability` — `cfg` may be the adopter's own object, and nothing here
+  // can establish that it is not. This is #193's worst case: it type-checks.
+  if (prev === '.') return 'property-access';
+
+  // `{ durability: … }` — the key. Renaming it changes the data shape.
+  // Also catches type members. Over-refuses a ternary's `? durability :`,
+  // which is a false refusal in the safe direction and is reported.
+  if (next === ':') return 'object-key';
+
+  // `{ durability }` / `{ a, durability }` — shorthand, whose emitted key is
+  // the identifier itself. The bracket context is what separates this from
+  // `f(a, durability, b)` and `[a, durability, b]`, which are plain references.
+  if (brackets[index] === '{' && (prev === '{' || prev === ',') && (next === '}' || next === ',')) {
+    return 'shorthand';
+  }
+
+  if (BINDING_KEYWORDS.has(precedingWord(masked, index))) return 'binding';
+
+  return 'reference';
+}
+
+/**
  * Rewrite a renamed export at its import site and its call sites.
  *
  * ## Not an AST codemod, deliberately
@@ -145,28 +261,71 @@ function moveKey(
  * The failure modes are opposite and unequal: a missed rename is a compile
  * error the adopter sees immediately, and a wrong rewrite is a silent edit to
  * their source. Erring toward reporting is the only defensible direction.
+ *
+ * ## Syntactic position, not just whole-word (#193)
+ *
+ * The file gate above is sound, but it was the ONLY gate: once a file imported
+ * the identifier, every whole-word occurrence in it was rewritten regardless of
+ * where it sat. QA found two cases that corrupt adopter code AND COMPILE, so
+ * the compile-error backstop this design leans on does not see them:
+ *
+ *   const cfg = { durability: 'required' };
+ *   console.log(cfg.durability);          // → cfg.durable — a different object
+ *
+ *   const o = { durability };             // → { durable } — a different key
+ *
+ * The second is the more instructive one. `{ durability }` has key
+ * `"durability"`; the correct rename is `{ durability: durable }`, not
+ * `{ durable }`. Producing the wrong one silently is exactly what "reports what
+ * it cannot establish" promised not to do.
+ *
+ * So each occurrence is now classified before it is touched, and only two
+ * positions are rewritten: the import specifier, and a plain reference.
+ * Everything else becomes a `manual` finding with its line number.
+ *
+ * ## What refusing costs, and why it is still right
+ *
+ * If a refused occurrence really WAS the import — `{ durability }` where
+ * `durability` is the imported symbol — the import is renamed and this is not,
+ * so the file stops compiling and the adopter is told. That is the same failure
+ * mode #191 accepted for template literals, and the same one this whole design
+ * prefers: loud and wrong-way-safe rather than quiet and plausible.
+ *
+ * ## Known gap, stated rather than implied
+ *
+ * A shadowing PARAMETER — `function f(durability) { return durability; }` — is
+ * still rewritten. Distinguishing a parameter list from a call's argument list
+ * needs to look back past the `(` for a `function` keyword or forward past the
+ * `)` for `=>`, and doing it partially would be worse than not doing it: it
+ * would refuse some shadowed parameters and rewrite others, with nothing to
+ * tell them apart in the output. The rename stays consistent within the scope,
+ * so behaviour is unchanged — which is why #193 rates it lower severity and
+ * explicitly out of remit. Declaration bindings (`const durability = …`) ARE
+ * refused, because those are cheap to establish and unambiguous.
  */
 function rewriteSource(
   contents: string,
   rule: SourceRule,
   file: string,
-): { contents: string; finding: Finding | null; changed: boolean } {
+): { contents: string; findings: readonly Finding[]; changed: boolean } {
   const importsIt = new RegExp(
     `import[^;]*\\b${rule.from}\\b[^;]*from\\s*['"]${rule.module.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
   ).test(contents);
 
-  if (!importsIt) return { contents, finding: null, changed: false };
+  if (!importsIt) return { contents, findings: [], changed: false };
 
   if (rule.to === undefined) {
     return {
       contents,
-      finding: {
-        ruleId: rule.id,
-        kind: 'source',
-        file,
-        action: 'manual',
-        detail: `'${rule.from}' was removed from ${rule.module}. ${rule.reason}`,
-      },
+      findings: [
+        {
+          ruleId: rule.id,
+          kind: 'source',
+          file,
+          action: 'manual',
+          detail: `'${rule.from}' was removed from ${rule.module}. ${rule.reason}`,
+        },
+      ],
       changed: false,
     };
   }
@@ -183,24 +342,66 @@ function rewriteSource(
   let match;
   while ((match = word.exec(masked)) !== null) indices.push(match.index);
 
-  if (indices.length === 0) return { contents, finding: null, changed: false };
+  if (indices.length === 0) return { contents, findings: [], changed: false };
 
+  const brackets = bracketContexts(masked);
+  const imports = importRanges(contents, masked);
+  const lineOf = (index: number): number => contents.slice(0, index).split('\n').length;
+
+  const rewritable: number[] = [];
+  const refused: { line: number; kind: OccurrenceKind }[] = [];
+
+  for (const index of indices) {
+    const kind = classifyOccurrence(masked, index, rule.from.length, brackets, imports);
+    if (kind === 'import-specifier' || kind === 'reference') rewritable.push(index);
+    else refused.push({ line: lineOf(index), kind });
+  }
+
+  // Reverse order so an earlier replacement cannot shift a later index.
   let out = contents;
-  for (const index of [...indices].reverse()) {
+  for (const index of [...rewritable].reverse()) {
     out = out.slice(0, index) + rule.to + out.slice(index + rule.from.length);
   }
 
-  return {
-    contents: out,
-    finding: {
+  const findings: Finding[] = [];
+
+  if (rewritable.length > 0) {
+    findings.push({
       ruleId: rule.id,
       kind: 'source',
       file,
       action: 'rewrite',
-      detail: `${String(indices.length)} occurrence(s) of '${rule.from}' → '${rule.to}'. ${rule.reason}`,
-    },
-    changed: true,
-  };
+      detail: `${String(rewritable.length)} occurrence(s) of '${rule.from}' → '${rule.to}'. ${rule.reason}`,
+    });
+  }
+
+  if (refused.length > 0) {
+    // Grouped by position kind, with line numbers: an adopter needs to know
+    // WHICH occurrences were left and why, or the finding is just an apology.
+    const byKind = new Map<OccurrenceKind, number[]>();
+    for (const r of refused) {
+      const lines = byKind.get(r.kind) ?? [];
+      lines.push(r.line);
+      byKind.set(r.kind, lines);
+    }
+
+    const described = [...byKind.entries()]
+      .map(([kind, lines]) => `line(s) ${lines.join(', ')}: ${REFUSAL_REASON[kind] ?? kind}`)
+      .join('; ');
+
+    findings.push({
+      ruleId: rule.id,
+      kind: 'source',
+      file,
+      action: 'manual',
+      detail:
+        `${String(refused.length)} occurrence(s) of '${rule.from}' left alone because renaming ` +
+        `them could change something other than a reference to the import — ${described}. ` +
+        `Check each and rename by hand where it is the import. ${rule.reason}`,
+    });
+  }
+
+  return { contents: out, findings, changed: rewritable.length > 0 };
 }
 
 /**
@@ -288,7 +489,10 @@ export function applyMigrations(options: ApplyOptions): MigrationResult & {
 
         if (isSource) {
           const result = rewriteSource(file.contents, rule, file.path);
-          if (result.finding) findings.push(result.finding);
+          // Plural since #193: one file can now yield a `rewrite` for the
+          // occurrences it could establish AND a `manual` for the ones it
+          // refused, and dropping either would misreport what happened.
+          findings.push(...result.findings);
           if (result.changed) {
             (file as { contents: string }).contents = result.contents;
             changed.add(file.path);

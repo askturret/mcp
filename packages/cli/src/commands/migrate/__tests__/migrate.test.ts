@@ -275,6 +275,152 @@ describe('source rules', () => {
     expect(result.files[0]?.contents).toBe(contents);
     expect(result.findings[0]?.action).toBe('manual');
   });
+
+  // -------------------------------------------------------------------------
+  // Syntactic position: refuse rather than guess (#193)
+  //
+  // The file-level import gate was the ONLY gate — once a file imported the
+  // identifier, every whole-word occurrence was rewritten wherever it sat. QA
+  // found two shapes that corrupt adopter code AND still compile, so the
+  // compile-error backstop this design leans on cannot see them.
+  //
+  // The rename below is `durability` → `durable` deliberately: that is the
+  // reference migration, and `audit.durability` is a config key adopters
+  // plausibly have. These are not contrived collisions.
+  // -------------------------------------------------------------------------
+
+  const durability: Migration = {
+    from: '1.0',
+    to: '2.0',
+    status: 'published',
+    summary: 'test',
+    reference: 'test',
+    rules: [
+      {
+        kind: 'source',
+        id: 'durability-rename',
+        from: 'durability',
+        to: 'durable',
+        module: '@askturret/mcp-core',
+        reason: 'Renamed.',
+      },
+    ],
+  };
+
+  const runDurability = (contents: string) =>
+    run([{ path: 'src/app.ts', contents }], [durability]);
+
+  it('does NOT rename an unrelated property access on the adopter\'s own object', () => {
+    // #193's worst case. `cfg` has nothing to do with the import; renaming its
+    // key and its access is consistent, so it type-checks and ships a changed
+    // data shape.
+    const result = runDurability(
+      `import { durability } from '@askturret/mcp-core';\n` +
+        `const cfg = { durability: 'required' };\n` +
+        `console.log(cfg.durability, durability);\n`,
+    );
+    const out = result.files[0]?.contents ?? '';
+
+    // The adopter's object is untouched — key and access both.
+    expect(out).toContain(`const cfg = { durability: 'required' };`);
+    expect(out).toContain('cfg.durability');
+    // ...while the import and the genuine reference are renamed.
+    expect(out).toContain(`import { durable } from '@askturret/mcp-core';`);
+    expect(out).toContain('durable);');
+    // ...and the refusal is REPORTED, not silent. That is the whole point:
+    // a quiet correct answer and a quiet wrong one look identical.
+    const manual = result.findings.find((f) => f.action === 'manual');
+    expect(manual?.detail).toContain('property access');
+    expect(manual?.detail).toContain('object key');
+  });
+
+  it('does NOT rewrite object shorthand, whose emitted key is the identifier', () => {
+    // `{ durability }` has key "durability". The correct rename is
+    // `{ durability: durable }`, not `{ durable }` — so producing the latter
+    // silently changes the adopter's runtime data.
+    const result = runDurability(
+      `import { durability } from '@askturret/mcp-core';\nconst o = { durability };\n`,
+    );
+    const out = result.files[0]?.contents ?? '';
+
+    expect(out).toContain('const o = { durability };');
+    expect(out).toContain(`import { durable } from '@askturret/mcp-core';`);
+
+    const manual = result.findings.find((f) => f.action === 'manual');
+    expect(manual?.detail).toContain('shorthand');
+  });
+
+  it('does NOT rewrite a declaration binding that shadows the import', () => {
+    const result = runDurability(
+      `import { durability } from '@askturret/mcp-core';\n` +
+        `const durability2 = 1;\n` +
+        `const durability = 2;\n`,
+    );
+    const out = result.files[0]?.contents ?? '';
+
+    expect(out).toContain('const durability = 2;');
+    expect(result.findings.find((f) => f.action === 'manual')?.detail).toContain('local binding');
+  });
+
+  it('still rewrites the import specifier, which has the SAME SHAPE as shorthand', () => {
+    // `import { durability }` looks exactly like `{ durability }`. If the
+    // shorthand rule ran first the tool would refuse the one occurrence it
+    // exists to rewrite, and the rename would never happen at all.
+    const result = runDurability(
+      `import { durability } from '@askturret/mcp-core';\ndurability();\n`,
+    );
+
+    expect(result.files[0]?.contents).toBe(
+      `import { durable } from '@askturret/mcp-core';\ndurable();\n`,
+    );
+    expect(result.findings.some((f) => f.action === 'manual')).toBe(false);
+  });
+
+  it('rewrites plain references that merely LOOK like shorthand', () => {
+    // `f(a, durability, b)` and `[a, durability, b]` sit between commas exactly
+    // as a shorthand property does. The enclosing bracket is what separates
+    // them, and getting this wrong would make the tool refuse most real calls.
+    const result = runDurability(
+      `import { durability } from '@askturret/mcp-core';\n` +
+        `f(a, durability, b);\n` +
+        `const xs = [a, durability, b];\n`,
+    );
+    const out = result.files[0]?.contents ?? '';
+
+    expect(out).toContain('f(a, durable, b);');
+    expect(out).toContain('const xs = [a, durable, b];');
+    expect(result.findings.some((f) => f.action === 'manual')).toBe(false);
+  });
+
+  it('reports refusals with line numbers, so they can be found', () => {
+    // A finding that says "some occurrences were left" without saying which is
+    // an apology, not a report.
+    const result = runDurability(
+      `import { durability } from '@askturret/mcp-core';\n` +
+        `\n` +
+        `const cfg = { durability: 1 };\n` +
+        `console.log(cfg.durability);\n`,
+    );
+
+    const manual = result.findings.find((f) => f.action === 'manual');
+    expect(manual?.detail).toContain('line(s) 3');
+    expect(manual?.detail).toContain('line(s) 4');
+  });
+
+  it('emits BOTH a rewrite and a manual finding when a file has each', () => {
+    // The engine used to return one finding per file per rule. A file that is
+    // partly rewritten and partly refused needs both, or it misreports what
+    // happened in one direction or the other.
+    const result = runDurability(
+      `import { durability } from '@askturret/mcp-core';\n` +
+        `const cfg = { durability: 1 };\n` +
+        `durability();\n`,
+    );
+
+    const actions = result.findings.map((f) => f.action).sort();
+    expect(actions).toEqual(['manual', 'rewrite']);
+    expect(result.changed).toEqual(['src/app.ts']);
+  });
 });
 
 describe('overlay rules', () => {

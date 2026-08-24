@@ -132,7 +132,20 @@ describe('the YAML subset reader', () => {
     ['directives', '%YAML 1.2\na: 1'],
     ['merge keys', 'a:\n  <<: *base'],
     ['flow mappings', 'a: {b: 1}'],
-    ['flow sequences in a scalar position', 'a: [1, 2'],
+    // Relabelled in #182. This case is an UNTERMINATED flow sequence, refused
+    // for being unterminated — the old label, "flow sequences in a scalar
+    // position", read as though flow sequences were refused as a category. They
+    // are not: they are supported, and the two cases below pin that. The header
+    // in yaml.ts carried the identical misconception, which is what #182 filed.
+    ['an unterminated flow sequence', 'a: [1, 2'],
+    ['nested flow collections', 'a: [[1], [2]]'],
+    // Defended TWICE, which I only found by reverting: with the nested-collection
+    // guard removed this case still refuses, because `splitFlow` hands `{b: 1}`
+    // to the flow-MAPPING rule. So it does not discriminate that revert the way
+    // the `[[1], [2]]` case above does — it pins that the combination is refused
+    // by SOME path, not which one. Kept, and labelled, rather than presented as
+    // coverage of the nested guard.
+    ['a flow mapping nested inside a flow sequence', 'a: [{b: 1}]'],
     ['tab indentation', 'a:\n\tb: 1'],
   ])('REFUSES %s rather than guessing', (_label, text) => {
     // The load-bearing property. A partial YAML parser that silently
@@ -140,6 +153,28 @@ describe('the YAML subset reader', () => {
     // adopter wrote — and overlays change what an agent is told it may do, so
     // a mis-read `classifications` is a missing confirmation prompt.
     expect(() => parseYamlSubset(text)).toThrow(YamlParseError);
+  });
+
+  it('SUPPORTS a single-level flow sequence, which §55 overlays use', async () => {
+    // The other half of the refusal table above, and the reason "flow
+    // collections" was the wrong thing for the header to claim (#182).
+    //
+    // Flow sequences were already exercised INCIDENTALLY — the §55 fixture
+    // above writes `classifications: [financial]` — and removing support does
+    // redden those three tests. What was missing is a test that says so by
+    // NAME: the header's exception was checkable only as a side effect of
+    // fixtures that exist to assert something else, so a reader auditing the
+    // safety claim had nothing to point at. This is that test.
+    //
+    // The empty case genuinely had no coverage.
+    const parsed = parseYamlSubset(
+      ['classifications: [financial, destructive]', 'empty: []'].join('\n'),
+    ) as Record<string, unknown>;
+
+    expect(parsed['classifications']).toEqual(['financial', 'destructive']);
+    // An empty flow sequence is a sequence, not null — the distinction decides
+    // whether an overlay CLEARS classifications or leaves them untouched.
+    expect(parsed['empty']).toEqual([]);
   });
 
   it('names the line it refused on', () => {

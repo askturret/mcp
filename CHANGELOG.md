@@ -114,6 +114,17 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- `migrate` no longer rewrites an overlay as if it were a config because of how
+  it happens to be capitalised (#192). `askturret.MCP.json` and
+  `askturret.mcp.json` are **the same file** on macOS and Windows, whose
+  filesystems are case-insensitive by default — but the overlay pattern required
+  a lowercase `mcp` while the config pattern accepted any case, so one spelling
+  was protected and its own alias was silently rewritten. Both patterns are now
+  case-insensitive, the overlay alternation accepts `askturret-mcp` and a
+  trailing ordinal, and a config rule additionally refuses any document carrying
+  an `operations` key whatever the file is named. Not a covered surface —
+  `migrate`'s file classification is internal, and no shipped rule targets
+  overlays yet, so no adopter project changes behaviour today.
 - The architecture overview's type vocabulary now matches the code
   (#156). `OperationDefinition` documented `effects: Effect[]`,
   `executors: Executor[]` and a `policies` field — two types that do not exist

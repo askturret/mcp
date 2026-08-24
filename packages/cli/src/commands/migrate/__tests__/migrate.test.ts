@@ -464,6 +464,122 @@ describe('overlay rules', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// #192: an overlay must not be rewritten by a config rule, whatever it is named
+// ---------------------------------------------------------------------------
+
+describe('overlay/config classification (#192)', () => {
+  /**
+   * Carries the config rule's field at the root, so a file that reaches the
+   * config branch WILL be rewritten. That is what makes these assertions
+   * meaningful rather than vacuous: `toBe(contents)` only proves protection if
+   * the unprotected path would have changed the bytes.
+   */
+  const REWRITABLE = JSON.stringify({ audit: { durability: 'required' } }, null, 2);
+
+  /** The same, plus the `operations` key that makes it an overlay by shape. */
+  const REWRITABLE_OVERLAY = JSON.stringify(
+    { version: 1, operations: { listPets: {} }, audit: { durability: 'required' } },
+    null,
+    2,
+  );
+
+  it('CONTROL: the config rule really does rewrite a plain config', () => {
+    // Without this the whole describe block could pass by rewriting nothing.
+    const result = run([{ path: 'askturret.config.json', contents: REWRITABLE }]);
+
+    expect(result.changed).toEqual(['askturret.config.json']);
+    expect(result.files[0]?.contents).toContain('"durable"');
+  });
+
+  describe('by filename — shape cannot help, the name is the only signal', () => {
+    // Deliberately WITHOUT an `operations` key: if these pass, the filename
+    // patterns are doing the work on their own.
+    for (const path of [
+      'askturret.MCP.json', // the A/B case: same file as askturret.mcp.json on macOS
+      'askturret-mcp.json', // hyphen for dot — an ordinary naming choice
+      'askturret.mcp2.json', // a trailing ordinal
+      'AskTurret.mcp.json', // previously ignored; now recognised as an overlay
+      'overlays/askturret.MCP.json', // and in a subdirectory
+    ]) {
+      it(`does not rewrite '${path}' as a config`, () => {
+        const result = run([{ path, contents: REWRITABLE }]);
+
+        expect(result.files[0]?.contents).toBe(REWRITABLE);
+        expect(result.changed).toEqual([]);
+      });
+    }
+
+    it('still classifies a genuine config as a config', () => {
+      // The widened overlay alternation must not swallow `askturret.config.json`
+      // — over-refusing would break every real migration silently.
+      const result = run([{ path: 'askturret.config.json', contents: REWRITABLE }]);
+
+      expect(result.changed).toEqual(['askturret.config.json']);
+    });
+
+    it('protects a YAML overlay, where the shape check structurally cannot', () => {
+      // The case that justifies keeping BOTH layers. `parseJson` returns null
+      // for YAML, so there is no document to inspect and the name is the only
+      // signal there is. Before #192 this was classified as a config, and the
+      // engine told the adopter to hand-apply a config rule to an overlay.
+      const yaml = 'version: 1\noperations:\n  listPets: {}\naudit:\n  durability: required\n';
+      const result = run([{ path: 'askturret.MCP.yaml', contents: yaml }]);
+
+      expect(result.files[0]?.contents).toBe(yaml);
+      expect(result.findings.filter((f) => f.file === 'askturret.MCP.yaml')).toEqual([]);
+    });
+
+    it('reproduces the issue A/B: both spellings now agree', () => {
+      // The exact demonstration in #192 — identical content, two spellings that
+      // are the same file on a case-insensitive filesystem, diverging results.
+      const upper = run([{ path: 'askturret.MCP.json', contents: REWRITABLE }]);
+      const lower = run([{ path: 'askturret.mcp.json', contents: REWRITABLE }]);
+
+      expect(upper.files[0]?.contents).toBe(lower.files[0]?.contents);
+      expect(upper.changed).toEqual(lower.changed);
+    });
+  });
+
+  describe('by shape — the filename says config, the document says overlay', () => {
+    const PATH = 'askturret.config.json';
+
+    it('refuses to rewrite a document carrying an `operations` key', () => {
+      // Named unambiguously as a config, so ONLY the shape check can save it.
+      const result = run([{ path: PATH, contents: REWRITABLE_OVERLAY }]);
+
+      expect(result.files[0]?.contents).toBe(REWRITABLE_OVERLAY);
+      expect(result.changed).toEqual([]);
+    });
+
+    it('says why, rather than skipping silently', () => {
+      const result = run([{ path: PATH, contents: REWRITABLE_OVERLAY }]);
+      const finding = result.findings.find((f) => f.file === PATH);
+
+      expect(finding?.action).toBe('manual');
+      expect(finding?.detail).toContain('operations');
+    });
+
+    it('stays quiet when the rule had nothing to say about the file', () => {
+      // An overlay-shaped document without the rule's field must not produce a
+      // "apply this by hand" finding for a field it does not contain.
+      const unrelated = JSON.stringify({ version: 1, operations: { listPets: {} } });
+      const result = run([{ path: PATH, contents: unrelated }]);
+
+      expect(result.findings.filter((f) => f.file === PATH)).toEqual([]);
+    });
+
+    it('does not treat an `operations` ARRAY as an overlay', () => {
+      // `OverlayDocument.operations` is a keyed record. An array is a different
+      // shape, and guessing it is an overlay would refuse a legitimate config.
+      const arrayShaped = JSON.stringify({ operations: ['a'], audit: { durability: 'required' } });
+      const result = run([{ path: PATH, contents: arrayShaped }]);
+
+      expect(result.changed).toEqual([PATH]);
+    });
+  });
+});
+
 describe('registry', () => {
   it('hides prospective migrations by default', () => {
     // The whole point of the status field: an unreleased migration must not be

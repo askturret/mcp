@@ -653,5 +653,14 @@ jobs:
       - name: Fake-SDK-upgrade drill
         run: node .github/scripts/sdk-upgrade-drill.mjs
 
+      # #62: docs/migrations/README.md is GENERATED from the migration registry.
+      # A migration added without regenerating it would ship an index that
+      # silently omits it — the same failure docs/adapters.md is generated to
+      # avoid. Compares rather than rewrites, so CI reports instead of drifting.
+      - name: Migration index is up to date
+        run: |
+          node packages/cli/dist/commands/migrate/generate-docs.js /tmp/migrations.md
+          diff -u docs/migrations/README.md /tmp/migrations.md
+
       - name: Every package actually executes its tests
         run: node .github/scripts/check-test-execution.mjs

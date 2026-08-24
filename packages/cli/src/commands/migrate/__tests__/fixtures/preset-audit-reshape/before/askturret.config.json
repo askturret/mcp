@@ -1,0 +1,10 @@
+{
+  "preset": "regulated",
+  "audit": {
+    "enabled": true,
+    "durability": "required"
+  },
+  "transport": {
+    "session": "stateless"
+  }
+}

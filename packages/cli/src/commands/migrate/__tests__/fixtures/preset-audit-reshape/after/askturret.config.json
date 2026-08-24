@@ -1,0 +1,12 @@
+{
+  "preset": "regulated",
+  "audit": {
+    "enabled": true,
+    "sink": {
+      "durable": "required"
+    }
+  },
+  "transport": {
+    "session": "stateless"
+  }
+}

@@ -432,6 +432,19 @@ jobs:
       # keep. Self-tested first for the same reason as the guards above: a
       # guard that passes everything looks identical in a CI log to one that
       # works.
+      # #156: four separate issues each rediscovered that a name in a doc had
+      # never existed in the code, paying the same "find what was actually
+      # meant" cost every time. Prose drifts quietly because nothing compiles
+      # it — a wrong type in a ```typescript fence looks exactly as
+      # authoritative as a right one. Self-tested first: half this guard's
+      # value is in the false positives it must NOT raise, and a guard that
+      # fails on correct documentation is a guard someone switches off.
+      - name: Self-test the documentation type guard
+        run: node .github/scripts/check-doc-types.test.mjs
+
+      - name: Documented types exist in the code
+        run: node .github/scripts/check-doc-types.mjs
+
       - name: Self-test the dashboard metric guard
         run: node .github/scripts/check-dashboard-metrics.test.mjs
 

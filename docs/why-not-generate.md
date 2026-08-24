@@ -117,13 +117,16 @@ If you need to debug or update it later, you're left guessing.
 
 ```ts
 interface SourcedValue<T> {
-  value: T;
-  source: {
-    kind: 'openapi' | 'overlay' | 'inference' | 'preset';
-    location?: string;  // e.g., "askturret.overlays.yaml line 42"
-  };
+  readonly value: T;
+  readonly source: ProvenanceSource;  // { kind: ProvenanceKind; location?: string }
 }
 ```
+
+`location` records where the value came from — e.g.
+`"askturret.overlays.yaml line 42"`. The `ProvenanceKind` members and their
+precedence are defined once, in `packages/core/src/overlay/types.ts`, and
+explained in
+[the precedence chain](architecture-overview.md#4-provenance-aware-overlays).
 
 Explorer shows you exactly where each field came from and why it took its value. If you need to trace a bug or update something, the trail is clear.
 
@@ -214,6 +217,6 @@ The result: a development workflow that feels like a runtime, not a build tool.
 
 ## Next Steps
 
-- **[Quick Start](quick-start.md)** — Try AskTurret.
+- **[Quick Demo](../README.md#quick-demo)** — Try AskTurret.
 - **[Architecture Overview](architecture-overview.md)** — Understand the design.
 - **[Overlays and Customization](overlays.md)** — Non-invasive customization patterns.

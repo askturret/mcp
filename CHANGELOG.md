@@ -114,6 +114,20 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- Both adapters re-run in CI when the packages they are built from change
+  (#153). `adapters-express` and `adapters-fastify` triggered only on their own
+  directory plus `packages/explorer`, so a core-only or transports-only change
+  did not re-run either suite — even though both jobs already *build* those
+  packages, which is where the filters and the reality had drifted apart.
+  Not a covered surface — repository CI. Recorded because the gap was a
+  near-miss rather than a hypothetical: during #43 a real bulkhead bug reached
+  CI and was caught only because #42's `adapter-conformance` filter happens to
+  include those two packages. That is coverage by side effect, and it would have
+  disappeared the day that filter was narrowed.
+  Scoped to the two adapters #153 names; the broader gap across the other
+  filters is #213 and is deliberately left alone, with a test pinning that
+  boundary so a future widening is an explicit edit rather than a drive-by.
+
 - `doctor --preset` refuses what it cannot expand instead of ignoring it (#169).
   Four different situations previously produced one identical outcome — a clean
   score, exit 0, and no preset section: `--preset regulated` (supported but

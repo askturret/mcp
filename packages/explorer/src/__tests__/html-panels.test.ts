@@ -156,6 +156,8 @@ interface Page {
   /** Navigate as the page's own hashchange listener would see it. */
   go: (hash: string) => void;
   pendingTimers: () => number;
+  /** Run every recorded timer exactly once; returns how many ran. */
+  fireTimers: () => number;
   reloads: () => number;
   detailText: () => string;
   find: (predicate: (el: StubElement) => boolean) => StubElement | undefined;
@@ -211,8 +213,14 @@ function mount(html: string): Page {
       existing.push(fn);
       windowListeners.set(type, existing);
     },
-    // Timers are RECORDED, never fired: the refresh poll reloads the document,
-    // which in a test would be an infinite loop rather than a signal.
+    // Timers are RECORDED rather than run on a schedule: the refresh poll
+    // reloads the document and re-arms itself, so firing it REPEATEDLY would
+    // be an infinite loop rather than a signal.
+    //
+    // Firing once is not that hazard, and `fireTimers()` below does exactly
+    // that. The consequences of the poll — that it reloads, and whether it is
+    // still armed to — are only observable by running it, so "never fired"
+    // would leave the thing worth asserting untestable.
     setTimeout: (fn: Listener) => {
       timerSeq += 1;
       timers.set(timerSeq, fn);
@@ -254,6 +262,14 @@ function mount(html: string): Page {
       location.hash = hash;
     },
     pendingTimers: () => timers.size,
+    // Drained before running, so a callback that re-arms the poll records a
+    // NEW timer rather than being re-fired inside this pass.
+    fireTimers: () => {
+      const due = [...timers.values()];
+      timers.clear();
+      for (const fn of due) fn();
+      return due.length;
+    },
     reloads: () => reloads,
     detailText: () => detail.textContent,
     find: (predicate) => detail.flatten().find(predicate),
@@ -625,6 +641,112 @@ describe('auto-refresh', () => {
     toggle!.dispatch('change');
 
     expect(p.pendingTimers()).toBe(0);
+  });
+});
+
+// ===========================================================================
+// The poll does not destroy panel 6's selection (#178)
+// ===========================================================================
+
+describe('auto-refresh yields to the snapshot selector', () => {
+  const toggleOf = (p: Page) => p.find((el) => el.id === 'auto-refresh');
+  const reasonOf = (p: Page) => p.find((el) => el.id === 'auto-refresh-reason');
+
+  // The control for every assertion below. Without it, "no reload happened"
+  // would also be satisfied by a harness that cannot reload at all, and every
+  // test in this block would pass against an unfixed page.
+  it('an armed poll really does reload the document when it fires', () => {
+    const p = page();
+    p.go('#!diagnostics');
+    expect(p.pendingTimers()).toBe(1);
+
+    expect(p.fireTimers()).toBe(1);
+    expect(p.reloads()).toBe(1);
+  });
+
+  it('a selector change disarms the poll, so the selection is not reloaded away', () => {
+    const p = page();
+    p.go('#!diagnostics');
+
+    p.find((el) => el.id === 'diff-before')!.value = 'sha256:older';
+    p.find((el) => el.id === 'diff-before')!.dispatch('change');
+
+    expect(p.pendingTimers()).toBe(0);
+    // Fire whatever is left: the poll must not have re-armed itself.
+    expect(p.fireTimers()).toBe(0);
+    expect(p.reloads()).toBe(0);
+  });
+
+  it('disarms on the after selector too, not just the before one', () => {
+    const p = page();
+    p.go('#!diagnostics');
+
+    p.find((el) => el.id === 'diff-after')!.value = 'sha256:newer';
+    p.find((el) => el.id === 'diff-after')!.dispatch('change');
+
+    expect(p.pendingTimers()).toBe(0);
+    expect(p.reloads()).toBe(0);
+  });
+
+  it('unticks the box rather than leaving it claiming a refresh that stopped', () => {
+    const p = page();
+    p.go('#!diagnostics');
+    expect(toggleOf(p)!.checked).toBe(true);
+
+    p.find((el) => el.id === 'diff-before')!.dispatch('change');
+
+    expect(toggleOf(p)!.checked).toBe(false);
+  });
+
+  it('says why it paused, so the stop is not left unexplained', () => {
+    const p = page();
+    p.go('#!diagnostics');
+    expect(reasonOf(p)!.style['display']).toBe('none');
+
+    p.find((el) => el.id === 'diff-before')!.dispatch('change');
+
+    expect(reasonOf(p)!.style['display']).toBe('');
+    expect(reasonOf(p)!.textContent).toContain('you changed the snapshot selection');
+  });
+
+  it('re-ticking re-arms the poll and drops the reason', () => {
+    const p = page();
+    p.go('#!diagnostics');
+    p.find((el) => el.id === 'diff-before')!.dispatch('change');
+    expect(p.pendingTimers()).toBe(0);
+
+    toggleOf(p)!.checked = true;
+    toggleOf(p)!.dispatch('change');
+
+    expect(p.pendingTimers()).toBe(1);
+    expect(reasonOf(p)!.style['display']).toBe('none');
+    expect(reasonOf(p)!.textContent).toBe('');
+  });
+
+  it('does not blame the selector for a poll the operator had already stopped', () => {
+    const p = page();
+    p.go('#!diagnostics');
+    toggleOf(p)!.checked = false;
+    toggleOf(p)!.dispatch('change');
+
+    p.find((el) => el.id === 'diff-before')!.dispatch('change');
+
+    // Nothing was running, so the selector did not pause anything and the row
+    // must not claim it did.
+    expect(reasonOf(p)!.style['display']).toBe('none');
+    expect(toggleOf(p)!.checked).toBe(false);
+  });
+
+  it('still warns about the mismatched pair — disarming did not replace that', () => {
+    const p = page();
+    p.go('#!diagnostics');
+
+    p.find((el) => el.id === 'diff-before')!.value = 'sha256:older';
+    p.find((el) => el.id === 'diff-before')!.dispatch('change');
+
+    const warn = p.find((el) => el.className === 'panel-warn');
+    expect(warn?.style['display']).toBe('');
+    expect(warn?.textContent).toContain('NOT for the pair you selected');
   });
 });
 

@@ -188,6 +188,7 @@ table.panel-table tr.overlay-row td:first-child{box-shadow:inset 3px 0 0 var(--m
 .diff-controls select{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:4px;background:#fff;max-width:34ch}
 .panel-warn{color:var(--mut);font-size:12px;background:#fdf7ec;border:1px solid #f0dcb8;border-radius:6px;padding:8px 10px;margin-top:8px}
 .refresh-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-bottom:8px}
+.refresh-reason{color:var(--mut);background:#fdf1dc;border:1px solid #f0dcb8;border-radius:3px;padding:2px 6px}
 pre.attrs{background:var(--code);border:1px solid var(--line);border-radius:4px;padding:6px 8px;margin:4px 0 0;font-size:11px;max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 `;
 
@@ -211,6 +212,10 @@ const CLIENT_JS = `
   var diagLinkEl = document.getElementById('diagnostics-link');
   var current = null;
   var refreshTimer = null;
+  // Panel 6 shares a route with panel 5's poll and has to be able to disarm it,
+  // so the toggle and its reason line are held here rather than staying closed
+  // over by renderRuntime. Cleared by route(), which is the one teardown point.
+  var refreshControls = null;
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -682,10 +687,17 @@ const CLIENT_JS = `
     var label = el('label', null, 'Auto-refresh every ' + p.pollIntervalMs + 'ms (' +
       p.refreshStrategy + ')');
     label.setAttribute('for', 'auto-refresh');
+    var reason = el('span', 'refresh-reason');
+    reason.id = 'auto-refresh-reason';
+    reason.style.display = 'none';
     refresh.appendChild(toggle);
     refresh.appendChild(label);
+    refresh.appendChild(reason);
     frag.appendChild(refresh);
+    refreshControls = { toggle: toggle, reason: reason };
     toggle.addEventListener('change', function () {
+      // Whatever the reason said, the operator has now overridden it by hand.
+      clearRefreshReason();
       if (toggle.checked) { startRefresh(p.pollIntervalMs); } else { stopRefresh(); }
     });
     startRefresh(p.pollIntervalMs);
@@ -756,6 +768,35 @@ const CLIENT_JS = `
     if (refreshTimer !== null) { window.clearTimeout(refreshTimer); refreshTimer = null; }
   }
 
+  function clearRefreshReason() {
+    if (!refreshControls) { return; }
+    refreshControls.reason.textContent = '';
+    refreshControls.reason.style.display = 'none';
+  }
+
+  // An operator's in-progress work outranks a background refresh. route()
+  // already applies that rule when they navigate AWAY; this applies it when
+  // they start using the route the poll is already on. The mechanism above is
+  // location.reload(), so the poll does not merely refetch — it destroys every
+  // piece of client state on the route, a snapshot selection included.
+  //
+  // Unticking the box is part of the fix, not decoration: a control reading
+  // "Auto-refresh every 2000ms" while nothing refreshes is the page asserting
+  // something untrue about itself, which is the failure this file already
+  // argues against twice. The reason line makes the pause discoverable, since
+  // an unexplained stop is a smaller version of the unexplained revert.
+  function pauseRefresh(text) {
+    // Only claim to have paused something that was actually running. If the
+    // operator had already unticked the box, the selector change is not what
+    // stopped the poll and saying so would be its own small lie.
+    var wasArmed = refreshTimer !== null;
+    stopRefresh();
+    if (!refreshControls || !wasArmed) { return; }
+    refreshControls.toggle.checked = false;
+    refreshControls.reason.textContent = text;
+    refreshControls.reason.style.display = '';
+  }
+
   // ---- panel 6: version diff ----------------------------------------------
   function renderDiff() {
     var frag = document.createDocumentFragment();
@@ -808,8 +849,16 @@ const CLIENT_JS = `
         'Explorer has no private endpoint and never reclassifies a diff itself; ask the host to supply ' +
         'that pair.';
     }
-    selects.before.addEventListener('change', syncWarning);
-    selects.after.addEventListener('change', syncWarning);
+    // Touching either selector is the operator starting work on this route, so
+    // it disarms panel 5's poll. Without this, the selection and the warning
+    // above are both wiped by a reload about pollIntervalMs later, leaving the
+    // page showing one pair while the operator believes they chose another.
+    function onSelectionChange() {
+      syncWarning();
+      pauseRefresh('paused: you changed the snapshot selection');
+    }
+    selects.before.addEventListener('change', onSelectionChange);
+    selects.after.addEventListener('change', onSelectionChange);
     syncWarning();
 
     if (p.summary) {
@@ -929,6 +978,10 @@ const CLIENT_JS = `
     // diagnostics is where we landed. A timer that outlived its view would
     // reload the page out from under an operator filling in an invoke form.
     stopRefresh();
+    // The controls belong to the view being torn down. Dropping the reference
+    // here keeps a later pauseRefresh() from writing into a detached element
+    // when the next view has no panel 5 to re-register one.
+    refreshControls = null;
     var raw = location.hash.replace(/^#/, '');
     current = raw ? decodeURIComponent(raw) : null;
     renderList();

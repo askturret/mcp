@@ -114,6 +114,20 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- The Explorer's auto-refresh no longer discards a snapshot selection (#178).
+  Panel 5 armed a 2000ms poll whose mechanism is `location.reload()`, and panel 6's
+  selector shares that route — so an operator who picked a different pair had both
+  the selection and the "this is NOT the pair you selected" warning wiped about two
+  seconds later, with no explanation. That warning exists precisely so the page can
+  never show one pair while labelling it another, and the poll silently restored
+  exactly that state.
+  Touching either selector now disarms the poll, unticks the checkbox and says why.
+  Unticking is part of the fix rather than tidiness: a control reading "Auto-refresh
+  every 2000ms" while nothing refreshes is the page asserting something untrue about
+  itself. Re-ticking re-arms and will discard the selection on the next reload —
+  acceptable, because it is now an explicit operator act.
+  **Not a covered surface** — Explorer is a dev-only diagnostic page and its markup
+  is explicitly excluded; no exported type or adapter behaviour changes.
 - The host-header allowlist can match an IPv6 host (#247). `isHostAllowed`
   stripped the port with `host.split(':')[0]`, which assumes at most one colon —
   so every IPv6 literal reduced to `'['`, and the shipped `[::1]` default could

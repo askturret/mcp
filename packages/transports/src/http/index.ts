@@ -49,6 +49,7 @@ import {
   negotiateProtocolVersion,
   SUPPORTED_MCP_PROTOCOL_VERSIONS,
 } from '@askturret/mcp-core';
+import type { DivergenceState } from '@askturret/mcp-core';
 import type {
   HttpTransport,
   HttpTransportOptions,
@@ -125,6 +126,7 @@ class StreamableHttpTransport implements HttpTransport {
   private readonly reload: ReloadController | undefined;
   private readonly enforceDependencies: boolean;
   private readonly auditSinkReachable: (() => boolean) | undefined;
+  private readonly registryDivergence: (() => DivergenceState) | undefined;
   private readonly livenessBudgetMs: number;
 
   /**
@@ -212,6 +214,7 @@ class StreamableHttpTransport implements HttpTransport {
     this.reload = options.reload;
     this.enforceDependencies = options.enforceDependencies ?? false;
     this.auditSinkReachable = options.auditSinkReachable;
+    this.registryDivergence = options.registryDivergence;
     this.livenessBudgetMs = options.livenessBudgetMs ?? DEFAULT_LIVENESS_BUDGET_MS;
 
     this.lifecycle = createShutdownCoordinator({
@@ -901,16 +904,36 @@ class StreamableHttpTransport implements HttpTransport {
 
   /** Cached readiness (§8.7). Never probes a dependency. */
   readiness(): HealthReport {
-    return evaluateReadiness({
+    const report = evaluateReadiness({
       shuttingDown: this.lifecycle.isShuttingDown,
       hasRegistrySnapshot: this.hasRegistrySnapshot(),
       enforceDependencies: this.enforceDependencies,
       breakers: this.dispatcher.breakerStats(),
+      // Option B (#64). Reads the monitor's cached verdict; never probes.
+      ...(this.registryDivergence === undefined
+        ? {}
+        : { divergence: this.registryDivergence() }),
       ...(this.reload === undefined ? {} : { reload: this.reload.readiness() }),
       ...(this.auditSinkReachable === undefined
         ? {}
         : { auditSinkReachable: this.auditSinkReachable() }),
     });
+
+    // §11.2 / #64: the hash goes on the body whether or not the instance is
+    // ready. Comparing it across pods by hand is how divergence gets diagnosed
+    // when neither detector is wired, and a field that only appeared on failure
+    // would be missing exactly when someone went looking for it.
+    const registryHash = this.currentRegistryHash();
+    return registryHash === undefined ? report : { ...report, registryHash };
+  }
+
+  /** This instance's registry hash, or undefined when no snapshot is published. */
+  private currentRegistryHash(): string | undefined {
+    try {
+      return this.registry.current()?.hash;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Event-loop responsiveness (§8.7). */

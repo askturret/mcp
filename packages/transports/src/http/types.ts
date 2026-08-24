@@ -8,6 +8,7 @@ import type {
   BreakerStats,
   BreakersConfig,
   BulkheadsConfig,
+  DivergenceState,
   HealthReport,
   Observability,
   ReloadController,
@@ -186,6 +187,19 @@ export interface HttpTransportOptions {
    * §8.7 forbids readiness fanning out to dependencies.
    */
   readonly auditSinkReachable?: () => boolean;
+
+  /**
+   * Option B's cached divergence verdict (#64, §11.2).
+   *
+   * A getter, not a value: readiness is evaluated per probe and must see the
+   * monitor's LATEST conclusion, while still never awaiting one. Pass
+   * `() => monitor.state()`.
+   *
+   * Absent means Option B is off, which is the default — §64 makes the
+   * external Prometheus check the primary mechanism because it costs a
+   * human's attention rather than availability.
+   */
+  readonly registryDivergence?: () => DivergenceState;
 
   /** Event-loop budget for `/health/live`. Default 200ms (§8.7). */
   readonly livenessBudgetMs?: number;

@@ -1,0 +1,128 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Option A — external registry-divergence detection (#64, §11.2).
+#
+# The DEFAULT mechanism, and the one to reach for first. It needs no
+# coordination between instances, no shared store, and no configuration inside
+# the application: Prometheus already scrapes every pod, so the comparison is
+# something the monitoring stack can make for free.
+#
+# It costs a human's attention. Option B — the opt-in internal check — costs
+# availability instead, because sustained divergence there takes every instance
+# out of rotation. Choose per environment; see docs/registry-divergence.md.
+#
+#   Load with:  --rule-files=alerts.yaml     (Prometheus)
+#   Validate:   promtool check rules alerts.yaml
+#
+# ---------------------------------------------------------------------------
+# What is being detected
+# ---------------------------------------------------------------------------
+#
+# `mcp_registry_operations{registry_hash="…"}` is a gauge every instance emits,
+# labelled with the short hash of the snapshot it is serving. All instances of
+# one deployment compile the same configuration, so they must all report the
+# SAME hash. Two live hashes means two pods are answering `tools/list`
+# differently — an agent is told a tool exists by one instance and refused by
+# another, intermittently, by load-balancer luck.
+#
+# ---------------------------------------------------------------------------
+# Why `for: 5m` is the whole design
+# ---------------------------------------------------------------------------
+#
+# A rolling update legitimately runs two hashes at once, for as long as the
+# rollover takes. Alerting on divergence itself would fire on every successful
+# deploy, and an alert that fires on correct behaviour is one that gets
+# silenced — after which it does not fire on the incorrect behaviour either.
+#
+# So the signal is not "hashes differ", it is "hashes have differed for longer
+# than a deploy takes". 5m is the default because it comfortably exceeds a
+# normal rollover; RAISE it if your rollouts are slower, and note that lowering
+# it below your p99 deploy duration converts this into a deploy-noise alarm.
+#
+# Option B's grace period defaults to the same 5m on purpose — the dashboard
+# and the load balancer must not disagree about how long a rollout may take.
+
+groups:
+  - name: askturret-mcp-registry-consistency
+    interval: 30s
+    rules:
+      # -- recording rules ------------------------------------------------
+      #
+      # Recorded rather than inlined so the alert expression stays readable and
+      # so the same series backs the Grafana panel. A dashboard computing its
+      # own version of this would eventually disagree with the alert, and the
+      # disagreement would surface as "the graph looks fine" during an incident.
+
+      # How many DISTINCT registry hashes are live in this deployment.
+      #
+      # `count(count by (registry_hash) (...))` is the double-count idiom: the
+      # inner groups the series by hash, the outer counts the groups. 1 is
+      # healthy; 2+ means instances disagree.
+      #
+      # Grouped by `job` so two separate deployments scraped by one Prometheus
+      # are compared against themselves rather than against each other — §64's
+      # scope rule, expressed in PromQL. Add any label that identifies a
+      # deployment in your setup (`namespace`, `cluster`, `env`).
+      - record: mcp:registry_hashes:count
+        expr: count by (job) (count by (job, registry_hash) (mcp_registry_operations))
+
+      # Instances per hash — what an operator wants the moment the alert fires,
+      # because it says which side is the minority and therefore which pods to
+      # look at first.
+      - record: mcp:registry_instances_by_hash:count
+        expr: count by (job, registry_hash) (mcp_registry_operations)
+
+      # -- alerts ---------------------------------------------------------
+
+      - alert: McpRegistryHashDivergence
+        expr: mcp:registry_hashes:count > 1
+        for: 5m
+        labels:
+          severity: critical
+          component: registry
+        annotations:
+          summary: >-
+            {{ $value }} registry hashes live in {{ $labels.job }} for over 5 minutes
+          description: >-
+            Instances of {{ $labels.job }} are serving DIFFERENT registry snapshots,
+            and have been for longer than a rolling update should take. Some fraction
+            of tools/list responses is inconsistent with the tools/call decisions
+            other instances will make — an agent may be told a tool exists and then
+            refused by the next request.
+
+            This is a configuration bug, not a crash: the usual cause is that a
+            different spec or overlay file reached different pods (a stale ConfigMap,
+            an image that did not roll, a volume mounted from the wrong source).
+
+            Identify the minority side with:
+              mcp:registry_instances_by_hash:count{job="{{ $labels.job }}"}
+
+            Then confirm on the instances themselves — every pod reports its hash on
+            /mcp/health/ready.
+
+            Do NOT auto-remediate by killing the minority. The runtime does not know
+            which hash is correct, and neither does this alert (§64 non-goals).
+          runbook: https://github.com/askturret/mcp/blob/main/docs/registry-divergence.md
+
+      # A deliberately louder second alert, not a duplicate.
+      #
+      # One instance disagreeing with fifty is a pod that failed to roll. Fifty
+      # splitting evenly is a half-applied config change. Same detection, very
+      # different responses — and an operator woken at 3am should be told which
+      # one they have without running a query.
+      - alert: McpRegistryHashDivergenceMajoritySplit
+        expr: mcp:registry_hashes:count > 2
+        for: 5m
+        labels:
+          severity: critical
+          component: registry
+        annotations:
+          summary: >-
+            {{ $value }} distinct registry hashes in {{ $labels.job }} — more than a
+            two-way rollover
+          description: >-
+            Three or more distinct registry snapshots are live simultaneously. A
+            rolling update produces exactly two. More than two means several
+            configurations are in flight at once — most often overlapping deploys,
+            or pods pulling configuration from more than one source.
+          runbook: https://github.com/askturret/mcp/blob/main/docs/registry-divergence.md

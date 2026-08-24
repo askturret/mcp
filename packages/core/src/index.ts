@@ -93,6 +93,7 @@ export * from './retry/index.js';
 export * from './breaker/index.js';
 export * from './lifecycle/index.js';
 export * from './health/index.js';
+export * from './registry-consistency/index.js';
 export * from './audit/index.js';
 export * from './redaction/index.js';
 export {

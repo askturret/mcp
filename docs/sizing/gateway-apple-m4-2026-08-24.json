@@ -1,0 +1,360 @@
+{
+  "issue": 197,
+  "environment": {
+    "cpuModel": "Apple M4",
+    "cpuCount": 10,
+    "totalMemoryBytes": 17179869184,
+    "platform": "darwin/arm64",
+    "nodeVersion": "v25.5.0",
+    "measuredAt": "2026-08-24T10:54:24.878Z"
+  },
+  "parameters": {
+    "durationMillis": 5000,
+    "warmupMillis": 2000,
+    "connections": [
+      1,
+      2,
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "specSizes": [
+      10,
+      50,
+      100,
+      250,
+      500,
+      1000
+    ],
+    "upstreamDelayMillis": 0,
+    "quick": false,
+    "workload": "tools/call listPets (Petstore fixture) proxied to a local mock upstream"
+  },
+  "calibration": {
+    "connections": 64,
+    "workers": 6,
+    "perSecond": 121517.65638001089,
+    "latency": {
+      "count": 607673,
+      "min": 0.04295799999999872,
+      "p50": 0.44270800000003874,
+      "p95": 0.8889999999996689,
+      "p99": 1.3070829999999205,
+      "max": 8.453999999999994,
+      "mean": 0.5220884355154881
+    },
+    "errors": 0
+  },
+  "sweep": {
+    "auditLabel": "none",
+    "operationCount": 3,
+    "gcExposed": true,
+    "levels": [
+      {
+        "connections": 1,
+        "driverWorkers": 1,
+        "latencyMillis": {
+          "count": 41255,
+          "min": 0.08416599999873142,
+          "p50": 0.11158400000022084,
+          "p95": 0.13116599999921164,
+          "p99": 0.2154999999984284,
+          "max": 5.712666999999783,
+          "mean": 0.11817749118894055
+        },
+        "cost": {
+          "cpuMillisPerCall": 0.10835901102896618,
+          "coresUsed": 0.8920098579303987,
+          "throughputPerSecond": 8231.985964618574
+        },
+        "completed": 41255,
+        "errors": 0,
+        "statusCounts": {
+          "200": 41255
+        },
+        "rssBytesAfter": 308101120
+      },
+      {
+        "connections": 2,
+        "driverWorkers": 2,
+        "latencyMillis": {
+          "count": 68479,
+          "min": 0.09070900000006077,
+          "p50": 0.12387500000022555,
+          "p95": 0.17366600000002563,
+          "p99": 0.3940420000001268,
+          "max": 18.005667000000017,
+          "mean": 0.1428350659180168
+        },
+        "cost": {
+          "cpuMillisPerCall": 0.09380180785350253,
+          "coresUsed": 1.2639591212995978,
+          "throughputPerSecond": 13474.78423095661
+        },
+        "completed": 68479,
+        "errors": 0,
+        "statusCounts": {
+          "200": 68479
+        },
+        "rssBytesAfter": 306823168
+      },
+      {
+        "connections": 4,
+        "driverWorkers": 4,
+        "latencyMillis": {
+          "count": 73678,
+          "min": 0.10491700000011406,
+          "p50": 0.2363749999999527,
+          "p95": 0.31754099999989194,
+          "p99": 1.513582999999926,
+          "max": 13.302292000000023,
+          "mean": 0.2672821501533687
+        },
+        "cost": {
+          "cpuMillisPerCall": 0.09032433019354488,
+          "coresUsed": 1.3099604632505806,
+          "throughputPerSecond": 14502.852780016497
+        },
+        "completed": 73678,
+        "errors": 0,
+        "statusCounts": {
+          "200": 73678
+        },
+        "rssBytesAfter": 281640960
+      },
+      {
+        "connections": 8,
+        "driverWorkers": 6,
+        "latencyMillis": {
+          "count": 74880,
+          "min": 0.25083399999999756,
+          "p50": 0.46749999999974534,
+          "p95": 0.6358339999997042,
+          "p99": 2.54037500000004,
+          "max": 13.854291999999987,
+          "mean": 0.528520912673611
+        },
+        "cost": {
+          "cpuMillisPerCall": 0.08915331196581197,
+          "coresUsed": 1.3081764835925043,
+          "throughputPerSecond": 14673.335793673676
+        },
+        "completed": 74880,
+        "errors": 0,
+        "statusCounts": {
+          "200": 74880
+        },
+        "rssBytesAfter": 282771456
+      },
+      {
+        "connections": 16,
+        "driverWorkers": 6,
+        "latencyMillis": {
+          "count": 76575,
+          "min": 0.36529200000001083,
+          "p50": 0.9267919999999776,
+          "p95": 1.443000000000012,
+          "p99": 3.298374999999851,
+          "max": 22.185874999999996,
+          "mean": 1.0393246500816058
+        },
+        "cost": {
+          "cpuMillisPerCall": 0.08874882141691152,
+          "coresUsed": 1.3272136651659956,
+          "throughputPerSecond": 14954.71876670002
+        },
+        "completed": 76575,
+        "errors": 0,
+        "statusCounts": {
+          "200": 76575
+        },
+        "rssBytesAfter": 286949376
+      },
+      {
+        "connections": 32,
+        "driverWorkers": 6,
+        "latencyMillis": {
+          "count": 75666,
+          "min": 1.327541999999994,
+          "p50": 1.8581250000002,
+          "p95": 4.039541999999983,
+          "p99": 5.394499999999994,
+          "max": 20.285541999999964,
+          "mean": 2.108949585295955
+        },
+        "cost": {
+          "cpuMillisPerCall": 0.08933951840985382,
+          "coresUsed": 1.3231300306614835,
+          "throughputPerSecond": 14810.13166638636
+        },
+        "completed": 75666,
+        "errors": 0,
+        "statusCounts": {
+          "200": 75666
+        },
+        "rssBytesAfter": 286179328
+      },
+      {
+        "connections": 64,
+        "driverWorkers": 6,
+        "latencyMillis": {
+          "count": 75013,
+          "min": 1.8903329999999983,
+          "p50": 3.835084000000279,
+          "p95": 6.466875000000073,
+          "p99": 8.505917000000068,
+          "max": 97.391834,
+          "mean": 4.262466561129428
+        },
+        "cost": {
+          "cpuMillisPerCall": 0.09096275312279205,
+          "coresUsed": 1.335391332682931,
+          "throughputPerSecond": 14680.638908106324
+        },
+        "completed": 75013,
+        "errors": 0,
+        "statusCounts": {
+          "200": 75013
+        },
+        "rssBytesAfter": 302858240
+      }
+    ],
+    "rssAtRest": 77594624
+  },
+  "auditSweep": {
+    "auditLabel": "jsonl",
+    "operationCount": 3,
+    "gcExposed": true,
+    "levels": [
+      {
+        "connections": 8,
+        "driverWorkers": 6,
+        "latencyMillis": {
+          "count": 41085,
+          "min": 0.5671250000000327,
+          "p50": 0.8493330000001151,
+          "p95": 1.4966249999999945,
+          "p99": 3.0140829999999994,
+          "max": 14.984249999999975,
+          "mean": 0.9676221310210436
+        },
+        "cost": {
+          "cpuMillisPerCall": 0.16930198369234514,
+          "coresUsed": 1.3633563589504294,
+          "throughputPerSecond": 8052.807942451016
+        },
+        "completed": 41085,
+        "errors": 0,
+        "statusCounts": {
+          "200": 41085
+        },
+        "rssBytesAfter": 257245184
+      }
+    ],
+    "rssAtRest": 77594624
+  },
+  "auditDelta": {
+    "connections": 8,
+    "noneCpuMillisPerCall": 0.08915331196581197,
+    "jsonlCpuMillisPerCall": 0.16930198369234514,
+    "overheadPercent": 89.89982532255016
+  },
+  "memory": {
+    "points": [
+      {
+        "operationCount": 10,
+        "requestedOperationCount": 10,
+        "specBytes": 9203,
+        "rssBytes": 77889536,
+        "rssBytesUnderLoad": 272023552,
+        "rssBytesSettled": 271597568
+      },
+      {
+        "operationCount": 50,
+        "requestedOperationCount": 50,
+        "specBytes": 45243,
+        "rssBytes": 80068608,
+        "rssBytesUnderLoad": 295305216,
+        "rssBytesSettled": 294551552
+      },
+      {
+        "operationCount": 100,
+        "requestedOperationCount": 100,
+        "specBytes": 90294,
+        "rssBytes": 85049344,
+        "rssBytesUnderLoad": 284540928,
+        "rssBytesSettled": 283394048
+      },
+      {
+        "operationCount": 250,
+        "requestedOperationCount": 250,
+        "specBytes": 226044,
+        "rssBytes": 98107392,
+        "rssBytesUnderLoad": 300072960,
+        "rssBytesSettled": 299302912
+      },
+      {
+        "operationCount": 500,
+        "requestedOperationCount": 500,
+        "specBytes": 452294,
+        "rssBytes": 117325824,
+        "rssBytesUnderLoad": 277889024,
+        "rssBytesSettled": 277479424
+      },
+      {
+        "operationCount": 1000,
+        "requestedOperationCount": 1000,
+        "specBytes": 904795,
+        "rssBytes": 119685120,
+        "rssBytesUnderLoad": 333922304,
+        "rssBytesSettled": 333398016
+      }
+    ],
+    "petstore": {
+      "operationCount": 3,
+      "specBytes": 3823,
+      "rssBytes": 77479936
+    },
+    "model": {
+      "interceptBytes": 82092932.40599652,
+      "bytesPerOperation": 44800.12019058687,
+      "rSquared": 0.8361843694277993,
+      "points": 6
+    },
+    "traffic": {
+      "medianDeltaBytes": 201195520,
+      "equivalentOperations": 4490.959380110636
+    }
+  },
+  "peakThroughput": 14954.71876670002,
+  "saturation": {
+    "peakThroughputPerSecond": 14954.71876670002,
+    "plateauConnections": [
+      4,
+      8,
+      16,
+      32,
+      64
+    ],
+    "throughputSpread": 0.03021561245870445,
+    "cpuSpread": 0.020379680790461197,
+    "cpuPlateauCores": 1.3231300306614835,
+    "latencyGrowthFactor": 16.224575356958418,
+    "connectionGrowthFactor": 16,
+    "saturated": true,
+    "reason": "throughput flat within 3.0% across 5 levels while CPU held at 1.32 cores (spread 2.0%) and p50 grew 16.2× over a 16× rise in concurrency"
+  },
+  "headroom": {
+    "driverCeilingPerSecond": 121517.65638001089,
+    "measuredPerSecond": 14954.71876670002,
+    "ratio": 8.12570655963098,
+    "sufficient": false
+  },
+  "certification": {
+    "publishable": true,
+    "grounds": "saturation",
+    "explanation": "Server-side saturation: YES — throughput flat within 3.0% across 5 levels while CPU held at 1.32 cores (spread 2.0%) and p50 grew 16.2× over a 16× rise in concurrency. Driver headroom: 8.13× against a null server (below the 10× bar; this bound is conservative)."
+  }
+}

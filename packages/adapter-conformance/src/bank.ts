@@ -75,21 +75,103 @@ export interface RpcResponse {
   };
 }
 
+/**
+ * Per-request deadline (#151). Overridable with
+ * `ASKTURRET_CONFORMANCE_REQUEST_TIMEOUT_MS`.
+ *
+ * Every request this bank makes is to a server it started moments ago on
+ * loopback, so the honest budget is small. It is set well above that anyway,
+ * because the cost of the two errors is wildly asymmetric: too low is a flaky
+ * suite that blames a working adapter, too high only delays a report that is
+ * going to be red either way.
+ */
+export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+
+const TIMEOUT_ENV = 'ASKTURRET_CONFORMANCE_REQUEST_TIMEOUT_MS';
+
+export function requestTimeoutMs(): number {
+  const raw = process.env[TIMEOUT_ENV];
+  if (raw === undefined || raw.trim() === '') return DEFAULT_REQUEST_TIMEOUT_MS;
+
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    // Loudly, not silently. A typo'd override that fell back to the default
+    // would be survivable; one that fell back to NO deadline would restore the
+    // exact hang this exists to prevent, and it would do it invisibly — which
+    // is the failure mode every other guard in this package is written against.
+    throw new Error(
+      `${TIMEOUT_ENV} must be a positive number of milliseconds; got '${raw}'.`,
+    );
+  }
+  return parsed;
+}
+
+/**
+ * One JSON-RPC round trip, bounded by a deadline.
+ *
+ * ## Why the deadline is here rather than around each category (#151)
+ *
+ * A hung REQUEST is a different failure from a hung category. `withTimeout`
+ * below bounds "any wait that depends on a server noticing something", and its
+ * comment used to be true with an unstated exception: a plain request/response
+ * was not bounded by anything. So an adapter that accepted the connection and
+ * never answered — a hang, not an error — stalled the whole suite. The table
+ * never printed, CI reported only a job timeout, and the blame landed on
+ * whichever adapter happened to be running. #42's QA reproduced exactly that by
+ * disabling the Fastify pass-through parser: past 600 seconds, no output.
+ *
+ * The deadline lives at this choke point so every request gets it, including
+ * `callTool` and any a future category adds. The rejection then travels the
+ * ordinary path: `runBank` catches it and records a FAILED ROW carrying this
+ * message, so a hang reports like every other failure instead of silencing the
+ * run.
+ *
+ * The body read is inside the deadline too. A server can send headers and then
+ * stall the body, which hangs just as effectively and would otherwise slip past
+ * a timeout that only covered establishing the response.
+ *
+ * A caller-supplied `signal` still works and is composed with, not replaced by,
+ * the deadline — `rpc` is exported for the #54 adapter-test kit, so `init` is a
+ * public surface. Only a deadline abort is reported as a timeout; a caller's
+ * own abort rethrows untouched, so it cannot be mislabelled.
+ */
 export async function rpc(
   url: string,
   method: string,
   params: Record<string, unknown> = {},
   init: RequestInit = {},
 ): Promise<RpcResponse> {
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
-    body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
-    ...init,
-  });
+  const timeoutMs = requestTimeoutMs();
+  const deadline = AbortSignal.timeout(timeoutMs);
+  const signal =
+    init.signal === undefined || init.signal === null
+      ? deadline
+      : AbortSignal.any([init.signal, deadline]);
 
-  const text = await response.text();
-  return { status: response.status, body: text.length > 0 ? JSON.parse(text) : {} };
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(init.headers ?? {}) },
+      body: JSON.stringify({ jsonrpc: '2.0', id: nextId++, method, params }),
+      ...init,
+      // After the spread on purpose: `init` may legitimately carry a signal,
+      // and the composed one must be the signal that is actually armed.
+      signal,
+    });
+
+    const text = await response.text();
+    return { status: response.status, body: text.length > 0 ? JSON.parse(text) : {} };
+  } catch (error) {
+    if (deadline.aborted) {
+      throw new Error(
+        `TIMEOUT: ${method} to ${url} did not complete within ${timeoutMs}ms. ` +
+          `The adapter accepted the request but never finished responding — a hang, ` +
+          `not an error response. Raise ${TIMEOUT_ENV} if this environment is ` +
+          `genuinely that slow.`,
+      );
+    }
+    throw error;
+  }
 }
 
 /** Call a tool and return the raw JSON-RPC envelope. */
@@ -260,11 +342,15 @@ function assert(condition: unknown, message: string): asserts condition {
 /**
  * Bound any wait that depends on a server noticing something.
  *
- * Every await in this bank that is not a plain request/response goes through
- * one of these two helpers. A conformance suite that can HANG reports nothing —
- * CI shows a timeout, the table never prints, and the blame lands on whichever
- * adapter happened to be running. Failing loudly with a reason is strictly
- * better than waiting forever with none.
+ * Every await in this bank is now bounded by something: these two helpers cover
+ * waits on a server noticing an event, and `rpc`'s own deadline covers plain
+ * request/response. That exception used to be real and unstated, and it was the
+ * hole #151 closed — see `rpc`.
+ *
+ * A conformance suite that can HANG reports nothing — CI shows a job timeout,
+ * the table never prints, and the blame lands on whichever adapter happened to
+ * be running. Failing loudly with a reason is strictly better than waiting
+ * forever with none.
  */
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   let timer: NodeJS.Timeout | undefined;

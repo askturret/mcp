@@ -106,8 +106,36 @@ when `1.0.0` ships.
   [ADR-021](docs/adr/ADR-021-two-logger-types.md). Numbering starts at 021
   because fourteen ADRs are already cited by number in source comments and none
   is written down; reusing one of those numbers would be worse than the gap.
+- `.github/scripts/check-doc-types.mjs` — a CI guard requiring every type named
+  in a documented ` ```typescript ` block to be a type that exists, and every
+  documented member of a real type to be a real member. Four issues (#42, #43,
+  #44, #61) had each independently rediscovered a documented name with no
+  referent. The reverse direction is deliberately not checked: a doc that omits
+  a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- The architecture overview's type vocabulary now matches the code
+  (#156). `OperationDefinition` documented `effects: Effect[]`,
+  `executors: Executor[]` and a `policies` field — two types that do not exist
+  and one field that never did; the real shape is a single `EffectMetadata` and
+  exactly one `ExecutorBinding`. `OperationExecutor` was documented with a
+  spurious `type` field and a 2-parameter `execute`; `PolicyDecision`'s deny
+  variant with `reason` rather than `code` + `safeReason`; and
+  `RegistrySnapshot.operations` as a mutable `Map` under a heading reading
+  "Immutable Registry Snapshots". Not a covered surface — documentation only,
+  no runtime behaviour changes.
+- §5 "Multiple Executor Strategies" claimed an operation "can use different
+  execution strategies at different times", which read as a per-operation list.
+  One `ExecutorBinding` is bound per operation at compile time; ADR-014's
+  requirement that executors produce identical golden output is what makes the
+  migration story true, not a runtime fan-out. Retitled "Interchangeable
+  Executor Strategies".
+- Six dead documentation links across four files, including `../ARCHITECTURE.md`
+  (referenced twice, never existed) and the same phantom `quick-start.md` /
+  `policies.md` names in three separate files. `docs/readiness.md` criterion 12
+  is downgraded to ⚠️ partial: its evidence link pointed at a directory that
+  does not exist, and the example that does exist demonstrates an exporter
+  plugin rather than the source or executor the criterion names (#233).
 - `mcp_registry_operations` no longer carries a `registry_hash` label, and
   `hash` joins the §9.2 label denylist.
   The label was truncated to 12 characters, and three separate comments called

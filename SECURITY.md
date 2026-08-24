@@ -150,7 +150,9 @@ If you're deploying AskTurret MCP in production, we recommend:
 5. **Monitor and audit** — Enable observability and audit logging to detect suspicious activity
 6. **Follow the principle of least privilege** — Only expose the operations your agents actually need
 
-See our [Policy Configuration Guide](docs/policies.md) for more details.
+See [Policies & Governance](README.md#policies--governance) for the three presets
+and what each enforces, and the [Policy Engine](docs/architecture-overview.md#policy-engine)
+section of the architecture overview for how decisions compose.
 
 ---
 

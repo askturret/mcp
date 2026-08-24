@@ -1,6 +1,6 @@
 # Architecture Overview
 
-AskTurret MCP exposes operations from your existing API to agents through the Model Context Protocol. This page explains the architecture in one concise page. For deeper technical detail, see the [full architecture document](../ARCHITECTURE.md).
+AskTurret MCP exposes operations from your existing API to agents through the Model Context Protocol. This page explains the architecture in one concise page. For the deployment topology and the reasoning behind it, see the [production reference architecture](reference-architecture.md).
 
 ## Product Model
 
@@ -70,16 +70,28 @@ Every source (OpenAPI, routes, schemas, handlers) is normalized into an immutabl
 
 ```typescript
 interface OperationDefinition {
-  id: string;                      // Unique operation ID
-  name: string;                    // Agent-facing tool name
-  description: string;             // What it does
-  input: JSONSchema;               // What it accepts (simplified)
-  output: JSONSchema;              // What it returns
-  effects: Effect[];               // Side-effects (read, write, delete, etc.)
-  executors: Executor[];           // How to run it (direct, HTTP, etc.)
-  policies: Policy[];              // Who can call it and when
+  readonly id: OperationId;            // Unique within a registry snapshot
+  readonly name: string;               // Agent-facing tool name
+  readonly description: string;        // What it does
+  readonly input: JSONSchema;          // What it accepts (simplified)
+  readonly output: JSONSchema;         // What it returns
+  readonly effects: EffectMetadata;    // Safety and retry characteristics
+  readonly executor: ExecutorBinding;  // How to run it — exactly one binding
+  readonly annotations?: Readonly<Record<string, unknown>>;  // Non-canonical metadata
+  readonly provenance?: readonly ProvenanceEntry[];          // Where each field came from
 }
 ```
+
+`effects` is a single `EffectMetadata` object, not a list: it answers *is this
+read-only, is it idempotent, is it safe to retry, does it need an idempotency
+key, and what does it touch* — questions about one operation, each with one
+answer.
+
+**Policies are deliberately not a field here.** An operation does not carry the
+rules that govern it; policies are composed by the preset and evaluated per
+call against a `PolicyContext` that includes the caller and the actual input.
+Binding them to the definition would make authorization a property of the tool
+rather than of the call, which is the distinction §3 below exists to draw.
 
 **Why:** Multiple sources can coexist in one server without duplicate logic or special cases. You can migrate from HTTP proxy execution to direct handlers without changing tool signatures.
 
@@ -89,12 +101,16 @@ Compilation produces a frozen, versioned snapshot of all operations:
 
 ```typescript
 interface RegistrySnapshot {
-  version: number;           // Incremented on every compilation
-  hash: string;              // Content hash (for diffs and caching)
-  createdAt: Date;          // When it was built
-  operations: Map<OperationId, OperationDefinition>;
+  readonly version: number;   // Incremented on every compilation
+  readonly hash: string;      // Content hash (for diffs and caching)
+  readonly createdAt: Date;   // When it was built
+  readonly operations: ReadonlyMap<OperationId, OperationDefinition>;
 }
 ```
+
+`ReadonlyMap`, not `Map` — a snapshot handed to a request handler cannot be
+added to or cleared. The immutability this section is named for is enforced by
+the type, not just intended.
 
 **Why:** In-flight requests see coherent state. No tearing, no race conditions. Snapshots enable safe hot-reload, rollback, and audit trails. Explorer and diff tools can compare snapshots.
 
@@ -113,33 +129,51 @@ Every material field retains its source:
 
 ```typescript
 interface SourcedValue<T> {
-  value: T;
-  source: {
-    kind: 'openapi' | 'overlay' | 'inference' | 'preset';
-    location?: string;
-  };
+  readonly value: T;
+  readonly source: ProvenanceSource;   // { kind: ProvenanceKind; location?: string }
 }
 ```
 
+`ProvenanceKind` is named rather than spelled out here on purpose: an inline
+copy of a union is a second definition that drifts silently the moment a member
+is added, which is exactly how this block came to be missing three of them.
+`PROVENANCE_PRECEDENCE` in `packages/core/src/overlay/types.ts` is the single
+source of both the members and their order.
+
 **Precedence order:**
-1. Explicit code enhancement
-2. MCP overlay YAML
-3. Source-native metadata (x-mcp in OpenAPI)
-4. Source definition
-5. Conservative inference
-6. Preset default
+1. Explicit code enhancement (`code`)
+2. MCP overlay YAML (`overlay`)
+3. Source-native metadata (`x-mcp`)
+4. Source definition — `openapi` and `framework`, which **rank equally**
+5. Conservative inference (`inference`)
+6. Preset default (`preset`)
+
+Six levels, seven kinds: `openapi` and `framework` are two flavours of "the
+source definition itself" and tie deliberately, so two overlays touching the
+same field is a defined situation rather than a race.
 
 **Why:** When a field has multiple values, conflicts are deterministic and inspectable. Explorer can explain why each field took its final value.
 
-### 5. Multiple Executor Strategies
+### 5. Interchangeable Executor Strategies
 
-Operations can be executed via:
+An operation can be executed via:
 
 - **Direct handler:** In-process function call (preferred, lowest latency)
 - **HTTP proxy:** Call an existing remote API (compatibility path)
 - **Custom:** Pluggable executors for queues, webhooks, etc.
 
-**Why:** Same operation can use different execution strategies at different times. Migrate HTTP proxy tools to direct handlers without changing the tool definition.
+**One binding at a time.** `OperationDefinition.executor` is a single
+`ExecutorBinding`, not a list. An operation is not dispatched to several
+executors, and there is no fan-out or fallback between them — the binding is
+chosen when the registry is compiled, and changing it is a recompilation that
+produces a new snapshot.
+
+**Why:** ADR-014 requires that `viaHandler` and `viaHttp` produce *identical*
+golden output for the same operation definition. Because the strategies are
+interchangeable in that strict sense, an operation can move from HTTP proxy to
+a direct handler between one snapshot and the next without its tool signature
+changing — the migration story, and the reason the binding is deliberately
+opaque to the canonical model.
 
 ---
 
@@ -195,11 +229,17 @@ AskTurret prioritizes these in order:
 Policies are composable rules that govern operation visibility and execution:
 
 ```typescript
-type PolicyDecision = 
-  | { effect: 'allow'; evidence: PolicyEvidence[] }
-  | { effect: 'deny'; reason: string; evidence: PolicyEvidence[] }
-  | { effect: 'confirmation_required'; challenge: ConfirmationChallenge; evidence: PolicyEvidence[] };
+type PolicyDecision =
+  | { effect: 'allow'; evidence: readonly PolicyEvidence[] }
+  | { effect: 'deny'; code: string; safeReason: string; evidence: readonly PolicyEvidence[] }
+  | { effect: 'confirmation_required'; challenge: ConfirmationChallenge; evidence: readonly PolicyEvidence[] };
 ```
+
+A denial carries **two** separate fields, and the split is deliberate: `code`
+is machine-readable and for branching, `safeReason` is for humans. It is called
+`safeReason` rather than `reason` as a standing reminder that it crosses a
+trust boundary — whatever a policy puts there may be returned to the caller, so
+it must not leak anything the caller has not already established.
 
 **Policies compose via:**
 - `allOf()` — All policies must allow
@@ -245,11 +285,16 @@ Separate, immutable audit events log:
 Implement the `OperationSource` interface to discover operations from any system:
 
 ```typescript
-interface OperationSource {
-  id: string;
-  discover(context: DiscoveryContext): Promise<DiscoveredOperation[]>;
+interface OperationSource<TExtensions = Record<string, never>> {
+  readonly id: string;
+  discover(context: DiscoveryContext<TExtensions>): Promise<DiscoveredOperation[]>;
 }
 ```
+
+`TExtensions` defaults to empty, so a source that needs nothing extra from the
+discovery context implements the interface without naming it. It is the seam
+for a source that *does* — the typed channel by which a source declares what it
+expects the context to carry.
 
 ### Custom Executors
 
@@ -257,10 +302,21 @@ Implement the `OperationExecutor` interface to execute operations via any mechan
 
 ```typescript
 interface OperationExecutor {
-  type: string;
-  execute(command: OperationCommand, operation: OperationDefinition): Promise<OperationResult>;
+  execute(
+    operation: OperationDefinition,
+    input: unknown,          // already validated against operation.input
+    context: DispatchContext, // principal, deadline, AbortSignal
+  ): Promise<OperationResult>;
 }
 ```
+
+The interface has **one** member. There is no `type` field on the executor
+itself — the strategy identifier lives on the operation's `ExecutorBinding`, so
+an executor is a behaviour and the binding is the reference to it.
+
+An executor must respect the deadline and `AbortSignal` independently of the
+client's own timeout, and must map exceptions to a typed `OperationError` at
+the boundary rather than letting an internal stack or type name escape.
 
 ### Custom Policies
 
@@ -268,10 +324,14 @@ Implement the `Policy` interface to add authorization rules:
 
 ```typescript
 interface Policy {
-  id: string;
+  readonly id: string;
   evaluate(context: PolicyContext): Promise<PolicyDecision>;
 }
 ```
+
+`id` appears in the evidence attached to every decision, so it should identify
+the rule to an operator reading an audit entry. Combinators derive their own
+ids from their children.
 
 ### Compiler Passes
 
@@ -279,10 +339,17 @@ Hook into the compilation pipeline to transform operations:
 
 ```typescript
 interface CompilerPass {
-  name: string;
-  run(operations: CompiledOperation[], context: CompilerContext): Promise<CompiledOperation[]>;
+  readonly name: string;
+  run(
+    operations: readonly CompiledOperation[],
+    context: CompilerContext,
+  ): Promise<readonly CompiledOperation[]>;
 }
 ```
+
+Both arrays are `readonly`: a pass receives operations it may not mutate and
+returns a new array. Transformation is by replacement, which is what lets the
+pipeline be reasoned about one pass at a time.
 
 ---
 
@@ -412,10 +479,11 @@ client halt every unrelated route in their application by sending one field.
 
 ## Next Steps
 
-- **[Quick Start](quick-start.md)** — Get a server running in 5 minutes.
-- **[Full Architecture](../ARCHITECTURE.md)** — Deep technical detail (C4 diagrams, code examples).
-- **[API Reference](api.md)** — Detailed API documentation.
-- **[Policy Configuration](policies.md)** — Write policies for your use case.
+- **[Quick Demo](../README.md#quick-demo)** — Get a server running in 5 minutes.
+- **[Production Reference Architecture](reference-architecture.md)** — The verified deployment topology, and what breaks without it.
+- **[Plugin API](plugin-api.md)** — The extension surface in detail: scoped setters, and what the runtime never hands out.
+- **[Policies & Governance](../README.md#policies--governance)** — The three presets and what each enforces.
+- **[Overlays](overlays.md)** — Customize operations without touching the source.
 
 ---
 

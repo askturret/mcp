@@ -18,10 +18,10 @@ Every criterion links to the test or deliverable that verifies it. The release p
 | 6 | Non-idempotent writes are never automatically retried | ✅ met | [`OUTCOME_UNKNOWN` no-retry test](../packages/core/src/retry/__tests__/dispatcher-retry.test.ts); [Exhaustive retry-matrix test](../packages/core/src/__tests__/idempotent-retryable-fuzz.test.ts) — drives the real `decideRetry` and `isRetryEligible` across all 12 error codes × all 16 effect combinations (192 cases): `OUTCOME_UNKNOWN` never retries under any combination, a non-idempotent mutating operation never retries under any code, and a retry is only ever returned for a transient code the effects matrix permits | Core team | 2026-08-24 |
 | 7 | Audit records include policy and registry evidence without raw secrets | ✅ met | [`AuditEvent` schema includes `policyDecision`, `registryHash`, `inputDigest`](../packages/core/src/audit/types.ts); [Redaction snapshot test proves no secret appears](../packages/core/src/logging/__tests__/redaction.test.ts) | Audit team | 2026-08-24 |
 | 8 | Telemetry passes cardinality and redaction tests | ✅ met | [CI cardinality guard](../.github/scripts/check-metric-cardinality.mjs) green; [Redaction snapshot test](../packages/core/src/logging/__tests__/redaction.test.ts) green | Observability team | 2026-08-24 |
-| 9 | Each official adapter passes the shared conformance suite | ✅ met | [Conformance kit green for Express](../packages/adapter-conformance/src/__tests__/conformance.test.ts?grep=Express), [Fastify](../packages/adapter-conformance/src/__tests__/conformance.test.ts?grep=Fastify), [Gateway](../packages/adapter-conformance/src/__tests__/conformance.test.ts?grep=Gateway) | Adapters team | 2026-08-24 |
+| 9 | Each official adapter passes the shared conformance suite | ✅ met | [Conformance kit](../packages/adapter-conformance/src/__tests__/conformance.test.ts) green for Express, Fastify and Gateway | Adapters team | 2026-08-24 |
 | 10 | Load tests demonstrate bounded memory and graceful overload behavior | ✅ met | [Reliability suite sustained-load results](../packages/reliability/src/__tests__/reliability.test.ts): 10-minute sustained load, memory bounded, bulkhead + breaker + retry work together | Reliability team | 2026-08-24 |
 | 11 | An MCP SDK upgrade can be completed inside the transport boundary without changes to operation definitions | ✅ met | [Fake-SDK-upgrade drill](../packages/gateway/src/__tests__/deployment-examples.test.ts): upgrades the SDK, re-runs all gateway tests, no change to operation definitions required | Gateway team | 2026-08-24 |
-| 12 | A new source or executor can be added as a plugin without modifying core control flow | ✅ met | [Reference plugin example](../examples/plugin-executor/) demonstrating the full lifecycle from registration to invocation | Architecture | 2026-08-24 |
+| 12 | A new source or executor can be added as a plugin without modifying core control flow | ⚠️ partial | [Reference plugin example](../examples/plugin-otel-exporter/) demonstrates the full lifecycle from registration to invocation, including the capability gate — but for an **exporter** plugin. No example adds a *source* or *executor*, which is what this criterion names. See #233. | Architecture | 2026-08-24 |
 
 ---
 
@@ -63,5 +63,9 @@ This certification covers **architectural readiness**, not feature completeness:
 
 ## Related
 
-- [§17 Architectural Readiness](architecture-overview.md#section-17-definition-of-architectural-readiness) — the original definition
-- [Release checklist](releasing.md) — release process that enforces this gate
+- [Architecture overview](architecture-overview.md) — the design these criteria are assessed against
+
+This page is itself the §17 readiness definition. It previously linked to a
+`§17 Architectural Readiness` section of the architecture overview and to a
+`releasing.md` release checklist; **neither has ever existed**, so both are
+removed rather than left pointing at nothing. Both are tracked in #233.

@@ -1,8 +1,10 @@
 # Architectural Readiness for 1.0
 
-This document certifies that the architecture defined in [§17](architecture-overview.md#section-17-definition-of-architectural-readiness) has met all 12 acceptance criteria for a 1.0 release.
+This document certifies that the architecture defined in §17 has met all 12 acceptance criteria for a 1.0 release. §17 is not a section of another document — this page is itself that definition, so there is nothing to link to.
 
-Every criterion links to the test or deliverable that verifies it. The release process refuses to tag `1.0.0` if any row is red.
+Every criterion links to the test or deliverable that verifies it. CI verifies the matrix on every pull request and every push to `main`: if any row is not `✅ met`, the build fails.
+
+**There is no tag-time enforcement.** No workflow in this repository has a tag trigger, so nothing currently prevents `v1.0.0` from being tagged over a red row. Designing that gate, and the release process around it, is [#269](https://github.com/askturret/mcp/issues/269).
 
 ---
 
@@ -21,23 +23,33 @@ Every criterion links to the test or deliverable that verifies it. The release p
 | 9 | Each official adapter passes the shared conformance suite | ✅ met | [Conformance kit](../packages/adapter-conformance/src/__tests__/conformance.test.ts) green for Express, Fastify and Gateway | Adapters team | 2026-08-24 |
 | 10 | Load tests demonstrate bounded memory and graceful overload behavior | ✅ met | [Reliability suite sustained-load results](../packages/reliability/src/__tests__/reliability.test.ts): 10-minute sustained load, memory bounded, bulkhead + breaker + retry work together | Reliability team | 2026-08-24 |
 | 11 | An MCP SDK upgrade can be completed inside the transport boundary without changes to operation definitions | ✅ met | [Fake-SDK-upgrade drill](../packages/gateway/src/__tests__/deployment-examples.test.ts): upgrades the SDK, re-runs all gateway tests, no change to operation definitions required | Gateway team | 2026-08-24 |
-| 12 | A new source or executor can be added as a plugin without modifying core control flow | ✅ met | [`registerSource` / `registerExecutor` on `PluginContext`](../packages/core/src/plugin/types.ts), capability-gated in [`host.ts`](../packages/core/src/plugin/host.ts); [plugin tests](../packages/core/src/plugin/__tests__/plugin.test.ts) register a real `OperationSource` through a plugin and assert it is usable as compiler input. The [reference example](../examples/plugin-otel-exporter/) shows the adopter-facing lifecycle, for an exporter — a source/executor example is tracked in #233. | Architecture | 2026-08-24 |
+| 12 | A new source or executor can be added as a plugin without modifying core control flow | ✅ met | [`registerSource` / `registerExecutor` on `PluginContext`](../packages/core/src/plugin/types.ts), capability-gated in [`host.ts`](../packages/core/src/plugin/host.ts); [plugin tests](../packages/core/src/plugin/__tests__/plugin.test.ts) register a real `OperationSource` through a plugin and assert it is usable as compiler input. The [reference example](../examples/plugin-otel-exporter/) shows the adopter-facing lifecycle, for an exporter — a source/executor example is tracked in [#270](https://github.com/askturret/mcp/issues/270) as adoption work, not a readiness blocker. | Architecture | 2026-08-24 |
 
 ---
 
 ## Verification
 
-**CI readiness gate** (`test-readiness` job in `.github/workflows/test.yml`):
+**CI readiness gate** (the `test-integrity` job in `.github/workflows/test.yml`):
 
 1. Runs all 12 test suites referenced above.
-2. On every commit to `main`, verifies all rows are `✅ met`.
-3. Refuses to create a tag matching `v1.0.0` or `v1.0.*` if any row is not `met`.
-4. Reports the readiness matrix as a structured output.
+2. On every pull request and every push to `main`, verifies all rows are `✅ met`.
+   It counts only numbered matrix rows and requires exact equality, so a
+   restructured table fails rather than silently passing.
 
-**The gate will NOT:**
-- Create a `1.0.0` release if ANY criterion is red
-- Allow overrides for individual criteria
-- Accept evidence from unmerged branches
+### What it does not do
+
+Listed rather than omitted, because a gate assumed to be stricter than it is
+gets trusted for work it never did.
+
+- **No tag-time check.** No workflow here has a tag trigger, so tagging
+  `v1.0.0` over a red row is not blocked by anything. → [#269](https://github.com/askturret/mcp/issues/269)
+- **No structured output.** The gate fails the build; it does not publish the
+  matrix as a machine-readable job output.
+- **No release automation.** There is no documented release process for it to
+  hook into yet. → [#269](https://github.com/askturret/mcp/issues/269)
+
+What it *does* enforce, it enforces without exceptions: no per-criterion
+overrides, and no evidence from unmerged branches.
 
 ---
 
@@ -56,7 +68,8 @@ This certification covers **architectural readiness**, not feature completeness:
 - [x] All 12 rows are `met`
 - [x] Evidence links are current and passing
 - [x] CI gate merges into `.github/workflows/test.yml`
-- [x] Release automation refuses `1.0.0` tag on any red row
+- [ ] Release automation refuses `1.0.0` tag on any red row — **not built**; no
+      workflow has a tag trigger. Tracked in [#269](https://github.com/askturret/mcp/issues/269)
 - [x] Doc merged into `docs/readiness.md`
 
 ---
@@ -67,5 +80,17 @@ This certification covers **architectural readiness**, not feature completeness:
 
 This page is itself the §17 readiness definition. It previously linked to a
 `§17 Architectural Readiness` section of the architecture overview and to a
-`releasing.md` release checklist; **neither has ever existed**, so both are
-removed rather than left pointing at nothing. Both are tracked in #233.
+`releasing.md` release checklist; **neither has ever existed**, and both links
+are now gone rather than left pointing at nothing.
+
+That sentence was here before this page could support it, which is worth
+recording because it is the same defect the page was fixing. The `releasing.md`
+link had been removed, but the *claim* it supported survived — the page went on
+asserting a release process that refuses a bad tag. And the `§17` link was not
+removed at all; it was still live, pointing at an anchor that does not exist in
+a file that has no numbered sections. A note describing its own cleanup outlived
+the cleanup being finished.
+
+Both gaps are closed above: the outward `§17` link is gone, and the enforcement
+claims now say what CI actually does. The release process and the tag-time gate
+that would make the stronger claim true are [#269](https://github.com/askturret/mcp/issues/269).

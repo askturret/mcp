@@ -68,6 +68,36 @@ This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDU
    npm run lint
    ```
 
+### On `typecheck` and `build` being the same command
+
+Both run `tsc -b`, and that is deliberate rather than an oversight.
+
+This is a **composite project**: the root `tsconfig.json` has `files: []` and a
+list of `references`, and each package emits declarations the packages
+downstream of it consume. Two consequences follow, and they are the reason the
+scripts collapsed into one:
+
+- **`tsc --noEmit` checks nothing here.** It does not traverse project
+  references, and the root has no files of its own — so it exited 0 on a tree
+  containing a real type error. It read as a check and could not fail (#134).
+- **`tsc -b --noEmit` is rejected outright**, with `TS6310: Referenced project
+  may not disable emit`. A project others reference *must* emit its `.d.ts`,
+  because that is what they type-check against.
+
+So in a repository shaped like this one, type checking **is** the build. Keeping
+a separate `typecheck` script that did less than the build would be keeping the
+thing #134 removed.
+
+`tsc -b` is incremental: an unchanged, already-built tree exits 0 without
+re-checking. That is standard build-mode behaviour and is what makes it quick
+enough to run often. If you suspect a stale `.tsbuildinfo` — the symptom is a
+package reported up to date while its `dist/` is missing or old — force a full
+rebuild:
+
+```bash
+npx tsc -b --force
+```
+
 ### Project Structure
 
 - `packages/core/` - Core MCP server implementation

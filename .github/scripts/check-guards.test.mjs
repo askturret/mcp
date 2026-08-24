@@ -12,7 +12,7 @@
  * Run: node .github/scripts/check-guards.test.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -812,6 +812,40 @@ check(
     'cardinality: names the offending label and the term it matched',
     r.out.includes('tenantName') && r.out.includes('tenant') ? 'named' : r.out,
     'named',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The root `typecheck` script must be able to fail (#134)
+//
+// This file is about guards that stop working silently, and #134 was that same
+// shape one level up: `typecheck` ran `tsc --noEmit`, which does not traverse
+// project references. The root tsconfig has `files: []`, so the script checked
+// NOTHING — it exited 0 on a tree containing a real type error, while reading,
+// in PR after PR, as evidence that types were sound.
+//
+// Asserted on the SCRIPT STRING rather than by running tsc, deliberately: a
+// full build takes minutes and this suite is meant to be fast. What can
+// realistically regress is someone restoring `--noEmit` to make the script
+// quicker, and that is exactly what these two catch.
+//
+// Note that `tsc -b --noEmit` is NOT an available compromise: TypeScript
+// rejects it here with `TS6310: Referenced project may not disable emit`,
+// because a project others reference must emit the .d.ts they check against.
+// Build mode is the only invocation that checks this repository at all.
+{
+  const rootPkg = JSON.parse(readFileSync(resolve(here, '../../package.json'), 'utf-8'));
+  const typecheck = rootPkg.scripts?.typecheck ?? '';
+
+  check(
+    'scripts: root typecheck uses build mode, so it can actually fail',
+    /(^|\s)(-b|--build)(\s|$)/.test(typecheck) ? 'build-mode' : `NOT build mode: "${typecheck}"`,
+    'build-mode',
+  );
+  check(
+    'scripts: root typecheck does not use --noEmit, which checks nothing here',
+    typecheck.includes('--noEmit') ? `uses --noEmit: "${typecheck}"` : 'no --noEmit',
+    'no --noEmit',
   );
 }
 

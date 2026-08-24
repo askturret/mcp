@@ -358,6 +358,26 @@ when `1.0.0` ships.
   engine kept only one finding per file per rule.
 
 ### Changed
+- An audit record's `registryHash` is now server-authored on every path (#218).
+  It previously fell back to `command.registryHash` — the value the CALLER sent
+  — whenever dispatch failed before stage 1 captured a snapshot hash, which
+  every call naming an unknown operation does. Such records now carry the new
+  `AUDIT_REGISTRY_HASH_UNRESOLVED` sentinel (`'unresolved'`) instead.
+  **Covered surface — audit-log contents** (compatibility-policy §5). A consumer
+  that read `registryHash` from an unknown-operation record was reading the
+  caller's claim, so the value it saw was never evidence of anything; it now
+  reads a sentinel that says resolution never happened.
+  Two problems, and the second is why tagging the value's provenance would not
+  have been enough: the field is exempt from audit redaction (it is in
+  `AUDIT_STRUCTURAL_FIELDS`, justified as non-sensitive *by construction*), so a
+  caller-controlled string reaching it was both a misattribution and an
+  unredacted channel into the audit log — a caller could post arbitrary text
+  through a surface that strips everything else. Labelling smuggled content
+  does not stop it arriving.
+  `OperationCommand.registryHash` is consequently read nowhere now. It stays,
+  because it is a required field on a public type and removing it would be
+  breaking under §1; it is documented as inert.
+
 - The `@modelcontextprotocol/sdk` peer-dependency range moves from `^0.5.0` to
   `^1.24.0`, clearing GHSA-w48q-cv73-mx4w (#140) — high severity, "does not
   enable DNS rebinding protection by default". `npm audit` now reports **0

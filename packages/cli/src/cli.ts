@@ -78,6 +78,8 @@ function printHelp() {
   console.log('Options:');
   console.log('  --json                  Machine-readable output');
   console.log("  --preset production     Also print the preset's configuration expansion");
+  console.log('                          Only production expands from a flag; light and');
+  console.log('                          regulated are refused with the reason why');
   console.log('');
   console.log('Examples:');
   console.log('  npx @askturret/mcp doctor ./openapi.yaml');

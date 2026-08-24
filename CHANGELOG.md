@@ -114,6 +114,23 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- `doctor --preset` refuses what it cannot expand instead of ignoring it (#169).
+  Four different situations previously produced one identical outcome — a clean
+  score, exit 0, and no preset section: `--preset regulated` (supported but
+  silently dropped), `--preset <typo>`, `--preset` with no value, and omitting
+  the flag. An operator running a compliance-adjacent check could not tell "not
+  supported" from "I typo'd it" from "I forgot the flag".
+  **Covered surface — CLI behaviour** (compatibility-policy §5): an invocation
+  that exited 0 now exits 1. That is the point of the change rather than a side
+  effect, and `--preset production` is unaffected.
+  The silence was correct until #168, when `regulated` became a real preset; the
+  behaviour did not change, its correctness did. Each case now states its own
+  reason — regulated cannot be expressed as a flag because it requires an
+  `EvidenceVerifier` function, light is applied inside the adapter rather than
+  described as configuration, and an unknown value is named as unknown with the
+  known set listed. A placeholder expansion was rejected as the alternative: it
+  would describe a configuration that could never boot.
+
 - The adapter conformance suite bounds every request, so a hung adapter fails a
   row instead of stalling the run (#151). `rpc` — the choke point `callTool` and
   every category go through — now carries a deadline, default 15s, overridable

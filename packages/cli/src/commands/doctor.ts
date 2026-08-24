@@ -15,15 +15,104 @@ import type {
 import { formatHumanReadable, formatJson } from './doctor-output.js';
 
 /**
- * Presets that expand to configuration today.
+ * Presets `doctor --preset` can expand from a flag.
  *
- * `PresetName` also admits 'light' and 'regulated', but neither is a
- * composition yet — Light is hardcoded inside the Express adapter, and
- * Regulated ships in Epic #3. Typing this narrowly means `--preset light`
- * cannot silently produce a Production expansion, and widening it later is a
- * one-word change at the point the other two become real.
+ * `PresetName` admits 'light' and 'regulated' too, and neither can be expanded
+ * from a command line — for different reasons, which `resolvePresetFlag` below
+ * states individually rather than collapsing into one shrug.
+ *
+ * Typing this narrowly means `--preset light` cannot silently produce a
+ * Production expansion.
  */
 type ExpandablePreset = 'production';
+
+/** Every name `PresetName` admits, for telling "unsupported" from "unknown". */
+const KNOWN_PRESETS = ['light', 'production', 'regulated'] as const;
+
+/**
+ * What `--preset <value>` should do (#169).
+ *
+ * ## Why a refusal rather than an expansion
+ *
+ * Until #168, `regulated` was not a real preset, so dropping it was correct.
+ * #168 made it real and fully implemented, and this code path went on silently
+ * discarding a name the system genuinely supports. The behaviour did not
+ * change; its correctness did.
+ *
+ * The result was that four different situations produced one identical
+ * outcome — a clean score, exit 0, and no preset section:
+ *
+ *   --preset production      expansion printed
+ *   --preset regulated       nothing            <- supported, silently dropped
+ *   --preset nonsense        nothing            <- typo
+ *   (flag omitted)           nothing            <- never asked
+ *
+ * An operator running a compliance-adjacent check could not tell "doctor does
+ * not support this" from "I typo'd it" from "I forgot the flag", and got a
+ * green report either way. That is the wrong artifact to hand anyone.
+ *
+ * ## Why not print a placeholder expansion for regulated
+ *
+ * Because it would describe a configuration that could never boot. Regulated
+ * requires an `EvidenceVerifier` — a function — and `describePreset('regulated',
+ * …)` refuses without it precisely so that a non-bootable description is never
+ * produced. Printing one from the CLI would defeat that on purpose.
+ *
+ * Returning a value rather than exiting here keeps this decidable in a unit
+ * test; the caller owns the exit code.
+ */
+export type PresetFlagResolution =
+  | { readonly kind: 'expand'; readonly preset: ExpandablePreset }
+  | { readonly kind: 'refuse'; readonly message: string };
+
+export function resolvePresetFlag(value: string | undefined): PresetFlagResolution {
+  if (value === undefined || value.startsWith('--')) {
+    // `--preset` with nothing after it, or immediately followed by another
+    // flag. Silently treating this as "no preset" is the same ambiguity again.
+    return {
+      kind: 'refuse',
+      message:
+        'error: `--preset` requires a value.\n' +
+        `  Expandable from the command line: ${CLI_EXPANDABLE.join(', ')}.`,
+    };
+  }
+
+  if (value === 'production') return { kind: 'expand', preset: 'production' };
+
+  if (value === 'regulated') {
+    return {
+      kind: 'refuse',
+      message:
+        'error: `doctor --preset regulated` is not supported.\n' +
+        '  The Regulated preset requires an evidence verifier — a function — which\n' +
+        '  cannot be supplied from a command-line flag. Expand it in code via\n' +
+        "  describePreset('regulated', { auditSink, customReviewAcknowledged,\n" +
+        '  verifyEvidence }).',
+    };
+  }
+
+  if (value === 'light') {
+    return {
+      kind: 'refuse',
+      message:
+        'error: `doctor --preset light` is not supported.\n' +
+        '  Light is applied inside the adapter rather than described as\n' +
+        '  configuration, so there is no expansion to print. doctor already\n' +
+        '  reports which operations Light would drop, under "Light Preset Policy".',
+    };
+  }
+
+  return {
+    kind: 'refuse',
+    message:
+      `error: unknown preset '${value}'.\n` +
+      `  Known presets: ${KNOWN_PRESETS.join(', ')}.\n` +
+      `  Expandable from the command line: ${CLI_EXPANDABLE.join(', ')}.`,
+  };
+}
+
+/** Kept beside the type so the two cannot drift apart. */
+const CLI_EXPANDABLE: readonly ExpandablePreset[] = ['production'];
 
 type OpenAPIDocument = OpenAPIV3.Document | OpenAPIV3_1.Document;
 type OpenAPIOperation = OpenAPIV3.OperationObject | OpenAPIV3_1.OperationObject;
@@ -39,6 +128,14 @@ export async function doctorCommand(args: string[]): Promise<void> {
     console.error('Error: Missing required argument');
     console.error('Usage: npx @askturret/mcp doctor <path-to-spec>');
     console.error('       npx @askturret/mcp doctor --url <endpoint>');
+    process.exit(1);
+  }
+
+  // Before the spec is loaded (#169). A flag the operator can fix immediately
+  // should not cost them a parse first — and a refusal must never arrive
+  // alongside a clean score, which is the outcome this replaces.
+  if (flags.presetError !== undefined) {
+    console.error(flags.presetError);
     process.exit(1);
   }
 
@@ -76,12 +173,14 @@ function parseArgs(args: string[]): {
   url: boolean;
   json: boolean;
   preset?: ExpandablePreset;
+  presetError?: string;
 } {
   const flags: {
     input?: string;
     url: boolean;
     json: boolean;
     preset?: ExpandablePreset;
+    presetError?: string;
   } = {
     url: false,
     json: false,
@@ -99,12 +198,19 @@ function parseArgs(args: string[]): {
     } else if (arg === '--json') {
       flags.json = true;
     } else if (arg === '--preset') {
-      // Only 'production' expands today. An unknown value is left unset rather
-      // than guessed at, so the caller sees no preset section instead of a
-      // confidently wrong one.
-      const value = args[++i];
-      if (value === 'production') {
-        flags.preset = value;
+      // Only 'production' expands today, but the others no longer pass in
+      // silence — see resolvePresetFlag (#169). A value that cannot be expanded
+      // is refused with its own reason rather than left unset.
+      const value = args[i + 1];
+      const resolved = resolvePresetFlag(value);
+      if (resolved.kind === 'expand') {
+        flags.preset = resolved.preset;
+        i++;
+      } else {
+        flags.presetError = resolved.message;
+        // Only consume the next token if it was actually the flag's value. A
+        // bad `--preset` must not also swallow `--json` or the spec path.
+        if (value !== undefined && !value.startsWith('--')) i++;
       }
     } else if (!arg.startsWith('--')) {
       flags.input = arg;

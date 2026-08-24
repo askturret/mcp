@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Datasource for the reference deployment (#63).
+
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    # The dashboards ship without a hardcoded datasource UID so they import
+    # into an existing Grafana too. Marking this one default is what makes them
+    # resolve here without editing anything.
+    editable: false

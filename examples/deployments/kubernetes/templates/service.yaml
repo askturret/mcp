@@ -1,0 +1,56 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "askturret-mcp.fullname" . }}
+  labels:
+    {{- include "askturret-mcp.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "askturret-mcp.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: mcp
+      port: {{ .Values.service.port }}
+      targetPort: mcp
+    {{/*
+      The scrape port is on the Service but is a SEPARATE named port, so a
+      NetworkPolicy or an Ingress can expose agent traffic without exposing
+      /metrics. Metric labels carry tool names and error codes — not secrets,
+      but not something to publish on the internet either.
+    */}}
+    - name: metrics
+      port: {{ .Values.service.metricsPort }}
+      targetPort: metrics
+---
+{{/*
+  A headless Service alongside the routed one.
+
+  This is what lets an operator query ONE INSTANCE at a time — which is how a
+  suspected registry divergence gets confirmed by hand when neither detector is
+  wired:
+
+    for p in $(kubectl get pods -l app.kubernetes.io/name=askturret-mcp -o name); do
+      kubectl exec $p -- wget -qO- localhost:7000/health/ready
+    done
+
+  Through the routed Service you would get a random pod each time and could not
+  tell two hashes apart from one.
+*/}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "askturret-mcp.fullname" . }}-headless
+  labels:
+    {{- include "askturret-mcp.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  # Resolve pods that are NOT ready too — an instance held out of rotation by a
+  # registry divergence is exactly the one you need to reach to diagnose it.
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "askturret-mcp.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: mcp
+      port: {{ .Values.service.port }}
+      targetPort: mcp

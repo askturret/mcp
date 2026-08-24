@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Prometheus config for the reference deployment (#63, §11.2).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# The real rules from examples/dashboards/alerts.yaml, mounted rather than
+# copied. The registry-divergence recording rules defined there are what the
+# Registry dashboard's panels read — the alert and the panel are the same
+# series by construction, so they cannot disagree during an incident.
+rule_files:
+  - /etc/prometheus/alerts.yaml
+
+scrape_configs:
+  # BOTH instances under ONE job name. This is load-bearing, not cosmetic:
+  # the divergence rules group `by (job)`, so instances that should agree with
+  # each other must share a job. Splitting them into `mcp-a` and `mcp-b` jobs
+  # would compare each instance only against itself, and the detector would
+  # never fire no matter how far the configs drifted.
+  - job_name: askturret-mcp
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - 'mcp-a:9464'
+          - 'mcp-b:9464'

@@ -1,0 +1,174 @@
+{
+  "title": "MCP — Reliability",
+  "uid": "askturret-mcp-reliability",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["askturret", "mcp", "reliability"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "description": "Breakers, bulkheads, retries and the OUTCOME_UNKNOWN counter. Breaker and bulkhead state is PER INSTANCE by design — see docs/reference-architecture.md — so panels here deliberately break out by instance rather than summing, because the sum hides the one pod that is actually broken.",
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Job",
+        "type": "query",
+        "datasource": { "type": "prometheus" },
+        "query": "label_values(mcp_tool_calls_total, job)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Circuit breaker state by instance",
+      "type": "timeseries",
+      "description": "0 closed, 1 half-open, 2 open. Broken out by instance because breakers are per-instance state: one pod with an open breaker while the rest are closed is a pod-local problem (bad DNS, exhausted connection pool), not an upstream outage. Summing these would average that signal away.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (breaker, instance) (mcp_circuit_breaker_state{job=~\"$job\"})",
+          "legendFormat": "{{breaker}} @ {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Bulkhead queue depth",
+      "type": "timeseries",
+      "description": "Queued calls per bulkhead. Every configured bulkhead publishes zero at startup, so an idle group shows an idle panel rather than a blank one — a blank panel and a healthy one must not look the same.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (bulkhead, instance) (mcp_tool_queue_depth{job=~\"$job\"})",
+          "legendFormat": "{{bulkhead}} @ {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Bulkhead rejections",
+      "type": "timeseries",
+      "description": "Calls shed because a queue was full. Counts QUEUE_FULL only — a caller that cancelled while queued is not load being shed, and folding the two together would invert the diagnosis during a burst of client disconnects.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (bulkhead) (rate(mcp_bulkhead_rejected_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{bulkhead}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Retry attempts by outcome",
+      "type": "timeseries",
+      "description": "Counts RETRIES only, not the initial attempt — every call already appears once in mcp_tool_calls_total, and counting it again here would make the retry rate unreadable against a baseline of 1.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tool, outcome) (rate(mcp_retry_attempts_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{tool}} / {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Retry budget exhausted",
+      "type": "timeseries",
+      "description": "Calls that retried and still failed, labelled by the error finally returned. This distinguishes \"retried and still failed\" from \"failed once and was not eligible\" — which look identical in mcp_tool_errors_total.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tool, terminal_error) (rate(mcp_retry_exhausted_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{tool}} / {{terminal_error}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "OUTCOME_UNKNOWN rate",
+      "type": "timeseries",
+      "description": "The most important panel here. OUTCOME_UNKNOWN means the runtime could not determine whether a side effect happened — distinct from failure, and NOT safe to retry blindly. A non-zero rate means some callers cannot know whether their write landed.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.001 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tool) (rate(mcp_tool_errors_total{job=~\"$job\", error_code=\"OUTCOME_UNKNOWN\"}[5m]))",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "OUTCOME_UNKNOWN total (24h)",
+      "type": "stat",
+      "description": "The reference SLO treats any OUTCOME_UNKNOWN as worth investigating rather than as background noise, because the caller is left unable to reconcile.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(mcp_tool_errors_total{job=~\"$job\", error_code=\"OUTCOME_UNKNOWN\"}[24h]))",
+          "legendFormat": "unknown outcomes"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Upstream latency p99 by executor",
+      "type": "timeseries",
+      "description": "Time spent in the upstream call itself, split by executor type. Compare against tool latency on the Overview: a large gap is time spent in the runtime, not in the upstream.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, executor_type) (rate(mcp_upstream_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99 {{executor_type}}"
+        }
+      ]
+    }
+  ]
+}

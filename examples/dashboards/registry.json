@@ -1,0 +1,142 @@
+{
+  "title": "MCP — Registry",
+  "uid": "askturret-mcp-registry",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["askturret", "mcp", "registry", "consistency"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "description": "Registry reloads and multi-instance hash consistency. The divergence panels read the SAME recording rules that back the alerts in alerts.yaml (mcp:registry_hashes:count) rather than recomputing the expression — a dashboard computing its own version would eventually disagree with the alert, and that disagreement surfaces as 'the graph looks fine' during an incident.",
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Job",
+        "type": "query",
+        "datasource": { "type": "prometheus" },
+        "query": "label_values(mcp_registry_operations, job)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Distinct registry hashes — must be 1",
+      "type": "stat",
+      "description": "All instances of one deployment compile the same configuration, so they must all report the same hash. 2 or more means pods are answering tools/list differently and an agent's view depends on load-balancer luck. Requires the mcp:registry_hashes:count recording rule from alerts.yaml to be loaded.",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (job) (mcp:registry_hashes:count{job=~\"$job\"})",
+          "legendFormat": "{{job}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Divergence over time",
+      "type": "timeseries",
+      "description": "A brief excursion to 2 during a rolling update is EXPECTED and is why the alerts debounce for 5m. A line that stays above 1 past that window is a real configuration bug — different overlays reached different pods.",
+      "gridPos": { "h": 6, "w": 16, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (job) (mcp:registry_hashes:count{job=~\"$job\"})",
+          "legendFormat": "{{job}} distinct hashes"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Instances per hash",
+      "type": "timeseries",
+      "description": "The panel that tells you WHICH failure you have. One instance disagreeing with fifty is a pod that failed to roll; an even split is a half-applied config change. Same detection, opposite responses — and this is how you tell them apart without writing a query at 3am.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "mcp:registry_instances_by_hash:count{job=~\"$job\"}",
+          "legendFormat": "{{registry_hash}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Operations in the live registry by hash",
+      "type": "timeseries",
+      "description": "Operation count per served snapshot. Two hashes exposing different operation counts is the concrete shape of the divergence — it is literally a different tool surface per pod.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (registry_hash) (mcp_registry_operations{job=~\"$job\"})",
+          "legendFormat": "{{registry_hash}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Reload rate by outcome",
+      "type": "timeseries",
+      "description": "Registry reloads and how they ended. error_class splits a benign superseded reload — one reload overtaken by a newer one, which is normal under rapid config churn — from a real failure.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (outcome, error_class) (rate(mcp_registry_reload_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{outcome}} / {{error_class}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Failed reloads (24h)",
+      "type": "stat",
+      "description": "A failed reload leaves the instance serving its PREVIOUS snapshot — it does not crash and it does not go unready. So a pod can sit on stale configuration indefinitely while looking perfectly healthy, and this counter plus the divergence panel above are the only places that shows.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(mcp_registry_reload_total{job=~\"$job\", outcome=\"error\"}[24h]))",
+          "legendFormat": "failed reloads"
+        }
+      ]
+    }
+  ]
+}

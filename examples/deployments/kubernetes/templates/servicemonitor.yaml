@@ -1,0 +1,34 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if .Values.monitoring.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "askturret-mcp.fullname" . }}
+  labels:
+    {{- include "askturret-mcp.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "askturret-mcp.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: metrics
+      interval: {{ .Values.monitoring.serviceMonitor.interval }}
+      path: {{ .Values.config.metricsPath }}
+{{/*
+  A note on the `job` label, which the divergence rules depend on.
+
+  examples/dashboards/alerts.yaml groups `by (job)` so that instances which
+  ought to agree are compared against each other — and instances which should
+  NOT be compared (staging vs prod) are kept apart.
+
+  The Prometheus Operator derives `job` from the Service name by default, so
+  every replica of THIS release shares one job and the grouping is correct
+  as-is. If you override the job label per-pod — via relabelings, or by giving
+  each replica its own Service — you break the comparison silently: each
+  instance is then only ever compared with itself, the count is permanently 1,
+  and the detector can never fire however far the configs drift.
+
+  A detector that cannot fire is worse than no detector, because the empty
+  panel reads as evidence of health.
+*/}}
+{{- end }}

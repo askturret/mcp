@@ -634,6 +634,19 @@ jobs:
       - name: No high-cardinality metric labels
         run: node .github/scripts/check-metric-cardinality.mjs
 
+      # #63: a dashboard querying a metric we do not emit renders an EMPTY
+      # panel, not an error — indistinguishable from a metric that is
+      # legitimately at zero. The drift is therefore invisible until an
+      # incident, which is exactly when the panel was supposed to earn its
+      # keep. Self-tested first for the same reason as the guards above: a
+      # guard that passes everything looks identical in a CI log to one that
+      # works.
+      - name: Self-test the dashboard metric guard
+        run: node .github/scripts/check-dashboard-metrics.test.mjs
+
+      - name: Dashboards reference only metrics we emit
+        run: node .github/scripts/check-dashboard-metrics.mjs
+
       # Needs dist/ — packages resolve each other through their built entry points.
       - run: npm run build
 

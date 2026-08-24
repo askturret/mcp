@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: askturret-mcp
+description: Reference Kubernetes deployment for an AskTurret MCP gateway (#63, §11.2)
+type: application
+
+# Chart version, independent of the app it deploys.
+version: 0.1.0
+
+# Tracks the gateway image tag in values.yaml. Quoted because a bare 0.1.0
+# would be parsed as a number by some tooling.
+appVersion: '0.1.0'
+
+keywords:
+  - mcp
+  - model-context-protocol
+  - askturret
+
+home: https://github.com/askturret/mcp
+sources:
+  - https://github.com/askturret/mcp
+
+annotations:
+  # This chart is a REFERENCE, not a product. It is deliberately readable
+  # rather than exhaustive — no autoscaling, no ingress, no service mesh —
+  # because its job is to show the topology §11.2 describes and the two or
+  # three settings that are easy to get dangerously wrong.
+  askturret.com/purpose: reference-architecture

@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Application config for the reference deployment (#63).
+#
+# Both instances mount THIS SAME FILE. That is what makes their registry hashes
+# match, and it is the whole precondition §11.2 rests on: "all instances
+# compile the same configuration and expose the same registry hash". If you
+# want to watch the divergence detector fire, give mcp-b a different spec.
+
+spec: /etc/askturret/openapi.yaml
+
+# The deployment decides the destination; the spec only describes the shape.
+upstream: http://upstream:8080
+
+host: 0.0.0.0
+port: 7000
+basePath: /mcp
+
+# `production` rather than `light`, because this is the REFERENCE deployment
+# and the reference is what someone copies. Production turns on the behaviour
+# §11.2 assumes: bounded concurrency, breakers, and a real audit posture.
+#
+# `regulated` additionally refuses to boot without a durable audit sink, an
+# acknowledged redaction config, and an authorization evidence verifier — see
+# docs/reference-architecture.md for what adopting it costs.
+preset: production
+
+audit:
+  # jsonl, not stdout: §11.2's audit topology is a DURABLE sink. stdout is a
+  # pipe to whatever collects container logs, which is not a delivery guarantee.
+  sink: jsonl
+  path: /var/lib/askturret/audit.jsonl
+
+metricsPort: 9464
+metricsPath: /metrics

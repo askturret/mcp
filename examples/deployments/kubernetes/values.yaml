@@ -1,0 +1,151 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reference values (#63, §11.2). Every default here is explained in
+# docs/reference-architecture.md; the ones that are easy to get dangerously
+# wrong carry their reasoning inline.
+
+image:
+  repository: ghcr.io/askturret/mcp-gateway
+  tag: '0.1.0'
+  pullPolicy: IfNotPresent
+
+# §11.2 is a horizontally scaled topology. Two is the minimum that survives a
+# single node failure and the minimum at which registry-hash consistency means
+# anything at all.
+replicaCount: 2
+
+# --- sizing --------------------------------------------------------------
+#
+# See the sizing table in docs/reference-architecture.md for the QPS bands
+# these come from, and for why the CPU request is the number to tune first.
+#
+# requests == limits for memory ONLY. A memory limit above the request invites
+# the kernel OOM-killer to reap a pod mid-request; CPU is compressible, so a
+# CPU limit above request is throttling rather than death.
+resources:
+  requests:
+    cpu: 500m
+    memory: 512Mi
+  limits:
+    # No CPU limit by default. A CPU limit throttles the event loop in exactly
+    # the tail-latency region the deadline budget is defending, and the usual
+    # symptom is p99 latency that no profile explains. Set one only if your
+    # platform requires it.
+    memory: 512Mi
+
+service:
+  type: ClusterIP
+  port: 7000
+  metricsPort: 9464
+
+# --- application config --------------------------------------------------
+#
+# Rendered into a ConfigMap and mounted at /etc/askturret. Every replica gets
+# the SAME ConfigMap, which is the precondition for a single registry hash
+# across the deployment.
+config:
+  spec: /etc/askturret/openapi.yaml
+  upstream: http://upstream.default.svc.cluster.local:8080
+  host: 0.0.0.0
+  port: 7000
+  basePath: /mcp
+
+  # `production`, because this is the reference and the reference is what gets
+  # copied. See docs/reference-architecture.md for what `regulated` adds and
+  # the three boot refusals it introduces.
+  preset: production
+
+  audit:
+    sink: jsonl
+    path: /var/lib/askturret/audit.jsonl
+
+  metricsPort: 9464
+  metricsPath: /metrics
+
+# The OpenAPI spec, inlined into the same ConfigMap for the reference. A real
+# deployment more often mounts it from its own ConfigMap or an init container;
+# what matters is that every replica reads an IDENTICAL one.
+openapiSpec: ''
+
+# --- audit sink ----------------------------------------------------------
+audit:
+  # §11.2's audit topology is ONE durable sink behind N instances.
+  #
+  # A ReadWriteMany volume is the simplest thing that satisfies that, and it is
+  # also the assumption most likely to be false on your cluster: the default
+  # storage class on EKS, GKE and AKS is ReadWriteOnce, which CANNOT be mounted
+  # by two pods at once. With replicaCount > 1 and a RWO class, the second pod
+  # stays Pending and the failure is a scheduling message, not an audit error.
+  #
+  # If you have no RWM class, do NOT paper over it by giving each pod its own
+  # volume — that silently converts one audit trail into N partial ones. Point
+  # the sink at a real log pipeline instead.
+  persistence:
+    enabled: true
+    accessMode: ReadWriteMany
+    size: 10Gi
+    storageClass: ''
+
+# --- rollout -------------------------------------------------------------
+rollout:
+  # maxUnavailable 0 keeps capacity flat through a rollout; maxSurge 1 means
+  # only one extra pod exists at a time, which bounds how long two registry
+  # hashes coexist. That window must stay comfortably under the 5m divergence
+  # debounce in examples/dashboards/alerts.yaml — if a rollout can take longer
+  # than the debounce, a NORMAL deploy starts firing the divergence alert.
+  maxUnavailable: 0
+  maxSurge: 1
+
+  # #47 graceful shutdown. Must exceed preStopDelay plus the longest deadline
+  # the runtime will allow, or Kubernetes SIGKILLs the process partway through
+  # draining the calls the delay existed to protect.
+  terminationGracePeriodSeconds: 60
+
+  # Endpoint propagation is asynchronous: a pod is removed from Service
+  # endpoints at roughly the same moment it receives SIGTERM, and in-flight
+  # kube-proxy rules take a moment to catch up. Without this pause the pod
+  # stops accepting connections while the LB is still sending them, which
+  # presents to clients as connection resets during every deploy.
+  preStopDelaySeconds: 5
+
+# Keeps a voluntary disruption (node drain, cluster upgrade) from taking the
+# whole deployment at once. Without it, a drain can evict every replica
+# simultaneously and the service disappears without anything having failed.
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# --- monitoring ----------------------------------------------------------
+monitoring:
+  # Requires the Prometheus Operator CRDs. Off by default so `helm template`
+  # works on a cluster without them.
+  serviceMonitor:
+    enabled: false
+    interval: 15s
+  # Ships examples/dashboards/alerts.yaml as a PrometheusRule, including the
+  # registry-divergence detection from #64.
+  prometheusRule:
+    enabled: false
+    # Populated at install time from the canonical file, NOT copied here:
+    #   --set-file monitoring.prometheusRule.rules=../../dashboards/alerts.yaml
+    # Enabling the flag without supplying this fails the render on purpose; an
+    # empty PrometheusRule installs cleanly and alerts on nothing.
+    rules: ''
+
+# --- pod hardening -------------------------------------------------------
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ['ALL']
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

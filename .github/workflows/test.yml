@@ -45,11 +45,24 @@ jobs:
               # change to the example must re-run these tests — otherwise the
               # guard cannot fire on the thing it guards (#99).
               - 'examples/petstore-light/**'
+              # The adapter is BUILT from core and transports and has no runtime
+              # of its own for the parts they own, so a change to either can
+              # break it without touching an adapter file (#153). This was a
+              # near-miss on #43: a real bulkhead bug reached CI and was caught
+              # only because #42's adapter-conformance filter happens to include
+              # these two. That is coverage by side effect — it would disappear
+              # the day that filter is narrowed.
+              - 'packages/core/**'
+              - 'packages/transports/**'
             adapters-fastify:
               - 'packages/adapters-fastify/**'
               # Same reasoning as adapters-express: this adapter serves the
               # Explorer too, so an explorer-only change must re-run it.
               - 'packages/explorer/**'
+              # And the same dependency reality (#153) — built from core and
+              # transports, so both must re-run it.
+              - 'packages/core/**'
+              - 'packages/transports/**'
             adapter-conformance:
               # The conformance suite asserts PARITY, so it must re-run when any
               # adapter changes, and when the shared machinery underneath them

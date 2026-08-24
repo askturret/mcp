@@ -8,6 +8,7 @@
 
 import type { Logger as LegacyLogger } from '../sources/types.js';
 import {
+  FORBIDDEN_FIELD_KEYS,
   LOG_LEVEL_SEVERITY,
   type JsonSerializable,
   type LogFields,
@@ -179,19 +180,81 @@ class JsonLogger implements StructuredLogger {
 }
 
 /**
+ * Split `meta` into what may be logged and the forbidden key names found.
+ *
+ * Own-enumerable keys only, and no recursion into nested objects. That bound is
+ * deliberate: `FORBIDDEN_FIELD_KEYS` is the §9.4 list of names a developer
+ * writes at the TOP level of a log call, and the runtime redaction pipeline —
+ * not this adapter — is what walks values of unknown shape. Recursing here
+ * would duplicate that layer badly while still not being it.
+ */
+function withoutForbiddenFields(meta?: Record<string, unknown>): {
+  readonly safe: LogFields;
+  readonly dropped: readonly string[];
+} {
+  if (meta === undefined) return { safe: {} as LogFields, dropped: [] };
+
+  const safe: Record<string, unknown> = {};
+  const dropped: string[] = [];
+
+  for (const [key, value] of Object.entries(meta)) {
+    if ((FORBIDDEN_FIELD_KEYS as readonly string[]).includes(key)) {
+      dropped.push(key);
+      continue;
+    }
+    safe[key] = value;
+  }
+
+  return { safe: safe as LogFields, dropped };
+}
+
+/**
+ * Field name carrying the forbidden keys this adapter refused to forward.
+ *
+ * The NAMES are safe to emit — they are eight fixed strings from a list in this
+ * repository, not data. The values are what §9.4 forbids, and those never
+ * leave the adapter.
+ */
+export const DROPPED_FIELDS_KEY = 'forbiddenFieldsDropped';
+
+/**
  * View a `StructuredLogger` as the legacy discovery/compiler `Logger`.
  *
  * The codebase already had a `Logger` (debug/info/warn/error, `meta?:
  * Record<string, unknown>`) used by the compiler, the source adapters and the
  * reload controller. #38 specifies a richer one, and unifying them would mean
- * changing every one of those call sites - more than this issue asked for, and
- * a change that deserves its own review.
+ * changing every one of those call sites - more than that issue asked for.
+ * Both therefore exist; see `docs/adr/ADR-021-two-logger-types.md` for why, and
+ * for the condition under which the legacy one retires (Epic #3 / #49).
  *
- * So both exist, with this one-way adapter between them, and the duplication
- * is flagged rather than hidden. `meta` is cast at the boundary because the
- * legacy type permits `unknown` values that `JsonSerializable` does not; the
- * JSON sink is the thing that would actually fail on a non-serializable value,
- * and it fails loudly rather than silently.
+ * ## The §9.4 guard, and why this adapter has to re-implement it (#133)
+ *
+ * `StructuredLogger`'s methods are generic over `T & SafeLogFields<T>` for one
+ * reason: to make `logger.info('x', { rawInput: big })` a COMPILE error. This
+ * adapter used to hand `meta` across as `(meta ?? {}) as LogFields`, and that
+ * cast erased the guard — a legacy-side caller passing `{ rawInput: … }`
+ * compiled cleanly and emitted. The runtime layer did not catch it either:
+ * `DEFAULT_REDACTED_KEYS` is a credential-shaped list that deliberately shares
+ * no member with `FORBIDDEN_FIELD_KEYS`, so through this adapter BOTH layers
+ * missed.
+ *
+ * The compile-time guard cannot be restored here, and it is worth being precise
+ * about why rather than appearing to have chosen the weaker fix. The callers
+ * that matter — `fromOpenApi`'s discovery, the compiler passes — hold a
+ * `LegacyLogger`, whose `meta` is `Record<string, unknown>` by definition. They
+ * never see this adapter's types. Narrowing the parameter here would change
+ * nothing at any real call site while making the returned object no longer a
+ * `LegacyLogger`.
+ *
+ * So the guard is enforced where it CAN be: at runtime, at the boundary. A
+ * forbidden key's value is dropped rather than forwarded, and the key's name is
+ * reported under `DROPPED_FIELDS_KEY` so the bypass is loud in the record
+ * itself. Silence was the actual defect; a value that vanishes without trace
+ * would only be a quieter version of it.
+ *
+ * Non-forbidden `meta` is still cast, because the legacy type permits `unknown`
+ * values that `JsonSerializable` does not. The JSON sink is what would fail on
+ * a non-serializable value, and it fails loudly.
  */
 export function asLegacyLogger(logger: StructuredLogger): LegacyLogger {
   const call = (
@@ -199,7 +262,8 @@ export function asLegacyLogger(logger: StructuredLogger): LegacyLogger {
     message: string,
     meta?: Record<string, unknown>,
   ): void => {
-    logger[level](message, (meta ?? {}) as LogFields);
+    const { safe, dropped } = withoutForbiddenFields(meta);
+    logger[level](message, dropped.length === 0 ? safe : { ...safe, [DROPPED_FIELDS_KEY]: dropped });
   };
 
   return {

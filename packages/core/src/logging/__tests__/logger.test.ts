@@ -5,7 +5,14 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
-import { createLogger, asLegacyLogger, silentSink, jsonStdoutSink } from '../logger.js';
+import {
+  createLogger,
+  asLegacyLogger,
+  silentSink,
+  jsonStdoutSink,
+  DROPPED_FIELDS_KEY,
+} from '../logger.js';
+import { FORBIDDEN_FIELD_KEYS } from '../types.js';
 import { REDACTED } from '../redaction.js';
 import type { LogRecord } from '../types.js';
 
@@ -300,5 +307,76 @@ describe('asLegacyLogger', () => {
     legacy.info('legacy path', { apiKey: 'k' });
 
     expect(records[0]?.fields['apiKey']).toBe(REDACTED);
+  });
+
+  // ---------------------------------------------------------------------------
+  // The §9.4 guard across the adapter boundary (#133)
+  //
+  // The two tests above check that the adapter FORWARDS correctly. Neither
+  // checks that it is SAFE, and that distinction is the whole of #133's second
+  // item: `StructuredLogger`'s generics make a forbidden field a compile error,
+  // and this adapter used to launder `meta` past them with an unconstrained
+  // cast. The runtime redaction list does not overlap the forbidden list, so
+  // both layers missed.
+  //
+  // These are the tests that would have caught it.
+  // ---------------------------------------------------------------------------
+
+  it('does NOT forward a §9.4 forbidden field, and says which it dropped', () => {
+    const { records, sink, now } = capture();
+    const legacy = asLegacyLogger(createLogger({ sink, now }));
+
+    legacy.info('discovering', { spec: 'petstore.yaml', rawInput: { secret: 'PAYLOAD' } });
+
+    const fields = records[0]?.fields ?? {};
+    // The value never reaches the sink — not redacted, absent.
+    expect(fields['rawInput']).toBeUndefined();
+    expect(JSON.stringify(records)).not.toContain('PAYLOAD');
+    // ...and the drop is LOUD rather than silent, which was the actual defect.
+    expect(fields[DROPPED_FIELDS_KEY]).toEqual(['rawInput']);
+    // Everything legitimate still passes through untouched.
+    expect(fields['spec']).toBe('petstore.yaml');
+  });
+
+  it('covers every name in FORBIDDEN_FIELD_KEYS, not just the one in the example', () => {
+    // Enumerated from the exported list rather than hand-written, so a name
+    // added to §9.4 later is covered here by construction instead of by
+    // somebody remembering to extend this test.
+    for (const key of FORBIDDEN_FIELD_KEYS) {
+      const { records, sink, now } = capture();
+      const legacy = asLegacyLogger(createLogger({ sink, now }));
+
+      legacy.warn('boundary', { [key]: 'SENSITIVE-VALUE', keep: 1 });
+
+      const fields = records[0]?.fields ?? {};
+      expect(fields[key]).toBeUndefined();
+      expect(fields[DROPPED_FIELDS_KEY]).toEqual([key]);
+      expect(fields['keep']).toBe(1);
+    }
+  });
+
+  it('adds no drop marker when nothing was forbidden', () => {
+    // A marker on every record would be noise, and would train a reader to
+    // ignore the one line that matters.
+    const { records, sink, now } = capture();
+    const legacy = asLegacyLogger(createLogger({ sink, now }));
+
+    legacy.info('clean', { pass: 'normalize' });
+
+    expect(records[0]?.fields).toEqual({ pass: 'normalize' });
+  });
+
+  it('drops forbidden fields on every level the legacy interface exposes', () => {
+    // The adapter routes all four levels through one helper, so a regression
+    // that sanitised only `info` is possible and would look fine in review.
+    for (const level of ['debug', 'info', 'warn', 'error'] as const) {
+      const { records, sink, now } = capture();
+      const legacy = asLegacyLogger(createLogger({ sink, now, level: 'debug' }));
+
+      legacy[level]('boundary', { principalId: 'user-42' });
+
+      expect(records[0]?.fields['principalId']).toBeUndefined();
+      expect(records[0]?.fields[DROPPED_FIELDS_KEY]).toEqual(['principalId']);
+    }
   });
 });

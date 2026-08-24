@@ -98,6 +98,14 @@ when `1.0.0` ships.
 - `compileSnapshot` — the discover/compile/filter step, extracted from
   `bootstrapRegistry` so boot and reload run the same path. Facade behaviour is
   unchanged; bootstrap still compiles under `light`.
+- `FORBIDDEN_FIELD_KEYS` and `DROPPED_FIELDS_KEY` — the §9.4 never-log list as a
+  runtime array (`ForbiddenFieldKey` is now derived from it rather than
+  hand-written alongside it), and the field name `asLegacyLogger` uses to report
+  what it refused to forward.
+- `docs/adr/` — an ADR home, starting at
+  [ADR-021](docs/adr/ADR-021-two-logger-types.md). Numbering starts at 021
+  because fourteen ADRs are already cited by number in source comments and none
+  is written down; reusing one of those numbers would be worse than the gap.
 
 ### Changed
 - A policy denial carrying `UNAUTHENTICATED` now reaches the caller as
@@ -134,5 +142,15 @@ when `1.0.0` ships.
   is now enforced end to end. Not a covered surface — `pending` describes what is
   unfinished, and leaving a wired control in it would misreport in the other
   direction.
+- `asLegacyLogger` no longer forwards §9.4 forbidden fields. It previously cast
+  `meta` into the structured sink unconstrained, which erased the compile-time
+  guard those generics exist for — and `DEFAULT_REDACTED_KEYS` shares no member
+  with `FORBIDDEN_FIELD_KEYS`, so the runtime layer did not cover it either.
+  A forbidden key's value is now dropped and its NAME reported under
+  `forbiddenFieldsDropped`; silence was the defect, so a value vanishing without
+  trace would only be a quieter version of it.
+  Not a covered surface in the §6 sense — no error code or type changes — but it
+  is a behaviour change on an exported function, and a log consumer may see a
+  field name it has not seen before. It appears only when something was dropped.
 
 [Unreleased]: https://github.com/askturret/mcp/compare/main...HEAD

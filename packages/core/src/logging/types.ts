@@ -54,16 +54,31 @@ export const LOG_LEVEL_SEVERITY: Readonly<Record<LogLevel, number>> = {
  *   shape is not known until execution. A compile error is impossible there.
  *
  * Neither subsumes the other, which is why both exist.
+ *
+ * ## Why this is a runtime array with the type derived from it (#133)
+ *
+ * It was a hand-written union with no runtime counterpart, which was fine while
+ * the guard was purely a compile-time one. `asLegacyLogger` crosses from a
+ * signature the guard cannot reach, so it has to check these names WHILE
+ * RUNNING — and that needs the list to exist as values.
+ *
+ * Derived rather than duplicated: two lists that must agree, maintained by
+ * hand, agree until the first time someone adds to one of them. Here adding a
+ * name to the array extends the compile-time union in the same edit, and there
+ * is no second place to forget.
  */
-export type ForbiddenFieldKey =
-  | 'input'
-  | 'rawInput'
-  | 'output'
-  | 'rawOutput'
-  | 'principal'
-  | 'principalId'
-  | 'credential'
-  | 'credentials';
+export const FORBIDDEN_FIELD_KEYS = [
+  'input',
+  'rawInput',
+  'output',
+  'rawOutput',
+  'principal',
+  'principalId',
+  'credential',
+  'credentials',
+] as const;
+
+export type ForbiddenFieldKey = (typeof FORBIDDEN_FIELD_KEYS)[number];
 
 /**
  * Maps any forbidden key in `T` to `never`, so passing a real value for it is
@@ -120,10 +135,15 @@ export type LogSink = (record: LogRecord) => void;
 /**
  * Structured logger (§9.3).
  *
+ * **This is the logger new code should use.**
+ *
  * Superset of the legacy discovery-time `Logger` in `sources/types.ts`: adds
  * `trace` and `child`. The two are NOT unified here - see `asLegacyLogger` -
  * because collapsing them would touch the compiler and every source adapter,
  * which is a larger change than this issue asked for.
+ *
+ * That deferral now has a recorded rationale and a named retirement trigger
+ * (Epic #3 / #49): `docs/adr/ADR-021-two-logger-types.md` (#133).
  */
 export interface StructuredLogger {
   trace<T extends LogFields>(message: string, fields?: T & SafeLogFields<T>): void;

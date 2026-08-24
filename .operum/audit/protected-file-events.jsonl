@@ -45,3 +45,4 @@
 {"ts":"2026-08-24T14:23:15Z","branch":"fix/issue-136-bound-registry-hash-label","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T16:27:26Z","branch":"fix/issue-190-protocol-version-remainder","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T16:34:36Z","branch":"agent/engineer","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-24T17:01:51Z","branch":"docs/issue-187-broken-relative-links","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

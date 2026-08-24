@@ -33,8 +33,8 @@ assignees: ''
 
 <!-- Have you checked the documentation? Link to any relevant docs you've already consulted -->
 
-- [ ] I have checked the [Quick Start](https://github.com/askturret/mcp/blob/main/docs/quick-start.md)
-- [ ] I have checked the [API Reference](https://github.com/askturret/mcp/blob/main/docs/api.md)
+- [ ] I have checked the [Quick Demo](https://github.com/askturret/mcp#quick-demo)
+- [ ] I have checked the [documentation](https://github.com/askturret/mcp/tree/main/docs)
 - [ ] I have checked [existing issues and discussions](https://github.com/askturret/mcp/issues)
 
 ---

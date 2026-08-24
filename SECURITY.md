@@ -15,6 +15,13 @@ We provide security updates for the following versions:
 
 **Note:** As a pre-1.0 project, we only support the latest minor version. Once we reach 1.0, we will maintain security updates for the current major version and the previous major version.
 
+**What counts as a major version** — and therefore what moves you into a new
+support window — is defined in the
+[compatibility and deprecation policy](docs/compatibility-policy.md). That
+document also governs whether a security fix can ship in a patch: a fix that
+would break a covered surface needs a MAJOR, and the policy is the frame in
+which we weigh that against leaving a vulnerability open.
+
 ---
 
 ## Reporting a Vulnerability

@@ -256,6 +256,24 @@ when `1.0.0` ships.
   engine kept only one finding per file per rule.
 
 ### Changed
+- The `@modelcontextprotocol/sdk` peer-dependency range moves from `^0.5.0` to
+  `^1.24.0`, clearing GHSA-w48q-cv73-mx4w (#140) — high severity, "does not
+  enable DNS rebinding protection by default". `npm audit` now reports **0
+  vulnerabilities**.
+  Not an enumerated covered surface — `docs/compatibility-policy.md` does not
+  cover peer-dependency ranges — but it is a **major** bump across the SDK's
+  `0.x` → `1.x` boundary and would break an adopter pinned to `0.5.x`. No such
+  adopter can exist yet: all thirteen workspaces are `private: true`, so nothing
+  has been published (#173).
+  The compatibility risk to this repository is close to nil, and the reason is
+  worth recording rather than asserting: **the SDK is never called at runtime.**
+  Its entire usage is one deliberately-unused *type-only* import in
+  `packages/transports`, kept as a boundary marker and enforced by
+  `check-sdk-boundary.mjs`. `Server` is still exported from the same path in
+  `1.30.0`, so `tsc -b --force` is clean and all 1,432 tests pass unchanged.
+  The advisory's mechanism was never reachable here either — the transport
+  implements its own host-header validation for DNS rebinding, independent of
+  the SDK. The bump is still right: the range is what an adopter installs from.
 - The network-access guard's gateway exemption is now the single file that needs
   it, `packages/gateway/src/server.ts`, rather than the whole of
   `packages/gateway/src/` (#181).

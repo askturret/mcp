@@ -53,7 +53,10 @@ describe('label denylist', () => {
     expect(isDeniedLabel('executor_type')).toBeNull();
     expect(isDeniedLabel('bulkhead')).toBeNull();
     expect(isDeniedLabel('breaker')).toBeNull();
-    expect(isDeniedLabel('registry_hash')).toBeNull();
+    // `registry_hash` was asserted here as an ALLOWED label until #136. It is
+    // now denied, and the metric that declared it is unlabelled — see the
+    // hash-label block at the bottom of this file for why truncating a hash
+    // never bounded anything.
     expect(isDeniedLabel('phase')).toBeNull();
     expect(isDeniedLabel('decision')).toBeNull();
     expect(isDeniedLabel('error_class')).toBeNull();
@@ -95,10 +98,20 @@ describe('declared metric set', () => {
     expect(METRIC_DEFINITIONS).toHaveLength(20);
   });
 
-  it('gives every metric a kind, at least one label, and a description', () => {
+  it('gives every metric a kind, a well-formed label set, and a description', () => {
+    // This required at least ONE label until #136, and that requirement was
+    // quietly the wrong way round: an unlabelled metric is a single time series
+    // and therefore the cheapest thing you can declare, while a rule demanding
+    // a label nudges toward inventing one. `mcp_registry_operations` is now
+    // deliberately unlabelled for exactly that reason.
+    //
+    // What is worth asserting is that the labels are WELL FORMED — no empty or
+    // whitespace-only names, which would produce an unqueryable series.
     for (const definition of METRIC_DEFINITIONS) {
       expect(['counter', 'histogram', 'gauge']).toContain(definition.kind);
-      expect(definition.labels.length).toBeGreaterThan(0);
+      expect(Array.isArray(definition.labels)).toBe(true);
+      for (const label of definition.labels) expect(label.trim()).toBe(label);
+      for (const label of definition.labels) expect(label.length).toBeGreaterThan(0);
       expect(definition.description.length).toBeGreaterThan(0);
     }
   });
@@ -147,5 +160,59 @@ describe('runtime label enforcement', () => {
     recorder.set('mcp_tool_inflight', 2, { tool: 'listPets' });
 
     expect(recorder.samples()).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Hash-valued labels (#136)
+//
+// `mcp_registry_operations` carried `registry_hash`, truncated to 12 characters
+// by `shortHash`, and the surrounding comments called that the cardinality
+// bound. It is not one. Truncation bounds a label's WIDTH; cardinality is the
+// number of DISTINCT VALUES, and a truncated hash still differs on every
+// registry change — one new permanent series per reload, and one new permanent
+// entry in the OTel adapter's unevicted `gaugeLevels` map.
+//
+// These exist so the reasoning is ENFORCED rather than merely written down. A
+// comment saying "hashes are unbounded" would not have stopped the next one;
+// the one it replaced said the opposite and was believed for two issues.
+// ---------------------------------------------------------------------------
+
+describe('hash-valued labels are denied (#136)', () => {
+  it('denies `registry_hash`, the label that prompted this', () => {
+    expect(isDeniedLabel('registry_hash')).toBe('hash');
+  });
+
+  it('denies the whole family, however it is spelled', () => {
+    // Compound labels are split on separators and camelCase boundaries, so a
+    // future `inputHash` or `principal-hash` is caught before it is written.
+    for (const label of ['hash', 'registryHash', 'input_hash', 'principal-hash', 'HASH']) {
+      expect(isDeniedLabel(label)).not.toBeNull();
+    }
+  });
+
+  it('does NOT deny a label that merely contains the letters', () => {
+    // Matching is on whole segments. `hashtag` is one word, not a hash, and a
+    // guard that cried wolf on it is one somebody eventually switches off.
+    expect(isDeniedLabel('hashtag')).toBeNull();
+  });
+
+  it('leaves every currently declared metric legal', () => {
+    // The other half of the change: adding a denied term is only safe if no
+    // shipped metric still declares one. `mcp_registry_operations` dropped its
+    // label in the same commit, and this is what proves the two agree.
+    expect(findCardinalityViolations()).toEqual([]);
+  });
+
+  it('rejects a hash label at RUNTIME, not only in the declarations', () => {
+    // The declaration check runs in CI; this one catches a caller passing a
+    // label the metric never declared, which is the path a regression would
+    // actually take.
+    const recorder = createRecordingMetricRecorder();
+
+    expect(() => recorder.set('mcp_registry_operations', 1, { registry_hash: 'abc123' })).toThrow(
+      /cardinality rule/,
+    );
+    expect(recorder.samples()).toEqual([]);
   });
 });

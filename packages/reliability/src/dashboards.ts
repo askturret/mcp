@@ -43,6 +43,23 @@ export interface GrafanaDashboard {
 function expressionFor(definition: MetricDefinition): string {
   const labels = definition.labels.join(', ');
 
+  // An UNLABELLED metric has one series, so there is nothing to group by.
+  // `sum by () (…)` is legal PromQL and renders as a degenerate panel with an
+  // empty legend, which is how #136 first surfaced here: dropping a metric's
+  // only label produced `max by () (mcp_registry_operations)`. Aggregating
+  // without a grouping clause is the correct form, and it is what an operator
+  // would have written by hand.
+  if (definition.labels.length === 0) {
+    switch (definition.kind) {
+      case 'counter':
+        return `sum(rate(${definition.name}[5m]))`;
+      case 'histogram':
+        return `histogram_quantile(0.99, sum by (le) (rate(${definition.name}_bucket[5m])))`;
+      case 'gauge':
+        return `max(${definition.name})`;
+    }
+  }
+
   switch (definition.kind) {
     case 'counter':
       return `sum by (${labels}) (rate(${definition.name}[5m]))`;
@@ -67,7 +84,14 @@ export function buildGoldenDashboard(
     targets: [
       {
         expr: expressionFor(definition),
-        legendFormat: definition.labels.map((label) => `{{${label}}}`).join(' / '),
+        // An unlabelled metric has nothing to interpolate, so the metric name
+        // is the legend. An empty string here renders as a blank series label
+        // in Grafana, which reads as a rendering fault rather than as a single
+        // unlabelled series (#136).
+        legendFormat:
+          definition.labels.length === 0
+            ? definition.name
+            : definition.labels.map((label) => `{{${label}}}`).join(' / '),
       },
     ],
     // Two panels per row, in declaration order — deterministic, so a

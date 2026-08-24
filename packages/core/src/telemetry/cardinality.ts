@@ -13,8 +13,28 @@ import { METRIC_DEFINITIONS, type MetricDefinition } from './types.js';
 /**
  * Label names that must never appear on a metric (§9.2).
  *
- * The issue names these eight. They are matched NORMALIZED rather than
+ * The issue names the first eight. They are matched NORMALIZED rather than
  * literally — see `normalizeLabel`.
+ *
+ * ## `hash` was added by #136, and truncation is the reason
+ *
+ * `mcp_registry_operations` carried `registry_hash`, shortened to 12 characters
+ * by `shortHash`. That reads as the cardinality bound and is not one:
+ * **truncating a hash bounds its LENGTH, not the number of distinct values it
+ * can take.** Every reload that changes the registry still yields a different
+ * 12-character prefix, and so a new time series that never goes away.
+ *
+ * The consequence was live rather than theoretical. The OTel adapter keeps a
+ * `gaugeLevels` map keyed by metric-plus-label-set with no eviction, beneath a
+ * comment asserting that `registry_hash` is "bounded by construction" and that
+ * an unbounded label there "would be a memory leak". It was not bounded, and
+ * the leak was real.
+ *
+ * A hash is the canonical unbounded value — its entire purpose is to differ
+ * whenever its input differs. So the term is denied outright, which also covers
+ * `principal_hash`, `input_hash` and anything of that shape before it is
+ * written. Correlating a metric with a specific registry belongs on a span or a
+ * log line, where high-cardinality identity costs nothing.
  */
 export const LABEL_DENYLIST: readonly string[] = [
   'user',
@@ -25,6 +45,7 @@ export const LABEL_DENYLIST: readonly string[] = [
   'requestId',
   'input',
   'arg',
+  'hash',
 ];
 
 /**

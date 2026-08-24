@@ -175,10 +175,7 @@ class DefaultReloadController implements ReloadController {
       since: new Date(),
     };
 
-    this.metrics.recordActiveRegistry(
-      shortHash(initial.hash),
-      initial.operations.size,
-    );
+    this.metrics.recordActiveRegistry(initial.operations.size);
   }
 
   current(): RegistrySnapshot {
@@ -340,10 +337,7 @@ class DefaultReloadController implements ReloadController {
     };
 
     this.metrics.recordReload('success');
-    this.metrics.recordActiveRegistry(
-      shortHash(candidate.hash),
-      candidate.operations.size,
-    );
+    this.metrics.recordActiveRegistry(candidate.operations.size);
 
     this.logger.info('Registry reload published', {
       previousHash: previous.hash,
@@ -439,10 +433,7 @@ class DefaultReloadController implements ReloadController {
       since: new Date(),
     };
 
-    this.metrics.recordActiveRegistry(
-      shortHash(target.hash),
-      target.operations.size,
-    );
+    this.metrics.recordActiveRegistry(target.operations.size);
 
     this.logger.info('Registry rolled back', {
       fromHash: from.hash,

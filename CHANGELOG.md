@@ -107,6 +107,37 @@ when `1.0.0` ships.
   because fourteen ADRs are already cited by number in source comments and none
   is written down; reusing one of those numbers would be worse than the gap.
 
+### Fixed
+- `mcp_registry_operations` no longer carries a `registry_hash` label, and
+  `hash` joins the §9.2 label denylist.
+  The label was truncated to 12 characters, and three separate comments called
+  that the cardinality bound. It is not one: **truncation bounds a label's
+  width, not the number of distinct values it can take.** Every reload that
+  changed the registry produced a new permanent time series — and in the OTel
+  adapter a new permanent entry in a `gaugeLevels` map that nothing evicts,
+  beneath a comment asserting the label was "bounded by construction".
+  `recordActiveRegistry` no longer accepts a hash at all, so the cardinality
+  cannot be reintroduced by a caller passing one. Which registry is live is
+  reported on a span and in the readiness payload, where high-cardinality
+  identity costs nothing.
+  Dashboards: the generated `reliability.json` panel becomes
+  `max(mcp_registry_operations)`, and `examples/dashboards/registry.json` breaks
+  down by `instance` — a scrape label bounded by the size of the deployment —
+  instead of by hash. Divergence detection is unaffected: it reads the
+  `mcp:registry_hashes:count` recording rule, not this label.
+- `check-metric-cardinality.mjs` now derives its denylist from `LABEL_DENYLIST`
+  rather than keeping a second hand-maintained copy, and fails rather than
+  falling back when it cannot read it. The two had already drifted: adding
+  `hash` to the runtime list left the CI guard — the one readiness criterion 8
+  cites as evidence — still passing the reintroduced label.
+- `check-dashboard-metrics.mjs` now fails when it cannot parse a declared
+  metric instead of silently dropping it. Its entry matcher needs `name`,
+  `kind` and `labels` adjacent, so a comment between those keys removed the
+  metric from its view and made a correct dashboard look as though it
+  referenced a metric the runtime does not emit.
+- The dashboard generator renders an unlabelled metric as `max(metric)` rather
+  than the degenerate `max by () (metric)` with an empty legend.
+
 ### Changed
 - A policy denial carrying `UNAUTHENTICATED` now reaches the caller as
   `UNAUTHENTICATED` rather than being collapsed into `FORBIDDEN`. Every other

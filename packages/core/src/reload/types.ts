@@ -163,12 +163,24 @@ export interface ReloadMetrics {
   recordReload(outcome: ReloadOutcome, errorClass?: ReloadErrorClass): void;
 
   /**
-   * `mcp_registry_operations{registry_hash=<short>}` - gauge.
+   * `mcp_registry_operations` - gauge, unlabelled.
    *
-   * The hash is SHORTENED before it reaches this method precisely so the label
-   * stays low-cardinality, as the issue requires.
+   * ## The hash parameter was removed by #136
+   *
+   * This used to take a shortened registry hash and emit it as a
+   * `registry_hash` label, and this comment used to say the shortening was
+   * "precisely so the label stays low-cardinality". That reasoning does not
+   * hold: **truncating a hash bounds its WIDTH, not the number of distinct
+   * values it can take.** Every reload that changed the registry still produced
+   * a different 12-character prefix, and therefore a permanent new series — in
+   * the OTel adapter, a permanent new entry in an unevicted map.
+   *
+   * The parameter is gone rather than merely unused, so the cardinality cannot
+   * be reintroduced by a caller passing it again. Which registry is live is
+   * reported on a span and in the readiness payload, where high-cardinality
+   * identity is free.
    */
-  recordActiveRegistry(registryHashShort: string, operationCount: number): void;
+  recordActiveRegistry(operationCount: number): void;
 }
 
 /**

@@ -59,13 +59,13 @@ export function reloadMetricsFromRecorder(recorder: MetricRecorder): ReloadMetri
     // that into whatever its backend needs (the OTel adapter converts it to a
     // delta against the last value for this series).
     //
-    // The hash arrives already shortened by the controller; shortening is NOT
-    // repeated here. One place decides how short is short enough, and the
-    // controller is where the cardinality reasoning already lives.
-    recordActiveRegistry: (registryHashShort: string, operationCount: number): void => {
-      recorder.set(METRIC.registryOperations, operationCount, {
-        registry_hash: registryHashShort,
-      });
+    // Unlabelled since #136. This used to pass a shortened `registry_hash`, on
+    // the belief that shortening bounded the cardinality. Shortening bounded
+    // the label's WIDTH; the value set stayed unbounded, producing one new
+    // permanent series per reload. With no label there is exactly one series,
+    // which is what a gauge of the LIVE registry wanted in the first place.
+    recordActiveRegistry: (operationCount: number): void => {
+      recorder.set(METRIC.registryOperations, operationCount, {});
     },
   };
 }

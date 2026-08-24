@@ -19,7 +19,7 @@ import { describe, it, expect } from '@jest/globals';
 import { AtomicRegistryReference } from '../../registry-reference.js';
 import { createRecordingMetricRecorder } from '../../telemetry/metrics.js';
 import { METRIC } from '../../telemetry/types.js';
-import { createReloadController, shortHash } from '../controller.js';
+import { createReloadController } from '../controller.js';
 import { NO_ERROR_CLASS, reloadMetricsFromRecorder } from '../metrics.js';
 import type { ReloadMetrics } from '../types.js';
 import { snapshot } from './fixtures.js';
@@ -58,28 +58,38 @@ describe('reloadMetricsFromRecorder', () => {
   it('emits mcp_registry_operations as an absolute level, not an increment', () => {
     const recorder = createRecordingMetricRecorder();
 
-    reloadMetricsFromRecorder(recorder).recordActiveRegistry('abc123def456', 7);
+    reloadMetricsFromRecorder(recorder).recordActiveRegistry(7);
 
     expect(recorder.forMetric(METRIC.registryOperations)).toEqual([
       {
         metric: METRIC.registryOperations,
         kind: 'set',
         value: 7,
-        labels: { registry_hash: 'abc123def456' },
+        labels: {},
       },
     ]);
   });
 
-  it('does not re-shorten the hash it is given', () => {
-    // The controller shortens before calling. Shortening again here would be a
-    // second opinion on cardinality in a second place, and the two would drift.
+  it('emits NO labels, so reloading cannot grow the series count (#136)', () => {
+    // This asserted `{ registry_hash: 'short' }` until #136, under the heading
+    // "does not re-shorten the hash it is given" — a test about the label's
+    // WIDTH, written on the assumption that width was the cardinality bound.
+    // It was not: a truncated hash still differs on every registry change, so
+    // each reload added a permanent series, and in the OTel adapter a permanent
+    // entry in a map nothing evicts from.
+    //
+    // Asserted as an exact empty object rather than "no registry_hash key",
+    // because ANY label here reintroduces the same growth. The claim is that
+    // this gauge has one series — not that it lost one particular label.
     const recorder = createRecordingMetricRecorder();
+    const metrics = reloadMetricsFromRecorder(recorder);
 
-    reloadMetricsFromRecorder(recorder).recordActiveRegistry('short', 1);
+    metrics.recordActiveRegistry(1);
+    metrics.recordActiveRegistry(2);
 
-    expect(recorder.forMetric(METRIC.registryOperations)[0]?.labels).toEqual({
-      registry_hash: 'short',
-    });
+    const emitted = recorder.forMetric(METRIC.registryOperations);
+    expect(emitted).toHaveLength(2);
+    for (const record of emitted) expect(record.labels).toEqual({});
   });
 });
 
@@ -100,11 +110,17 @@ describe('createReloadController metric wiring', () => {
     // Construction records the initial registry; the successful reload records
     // the new one. Asserting the LAST sample rather than a count, because the
     // number of gauge writes is not the contract — the final level is.
+    //
+    // Both samples used to assert `{ registry_hash: shortHash(...) }`, which is
+    // what made the unbounded label look verified: two reloads, two different
+    // hashes, two series, and a green test. Since #136 the gauge is unlabelled,
+    // so what the two samples share is the label set, and what differs is only
+    // the level.
     const gauges = recorder.forMetric(METRIC.registryOperations);
-    expect(gauges[0]?.labels).toEqual({ registry_hash: shortHash(v1.hash) });
+    expect(gauges[0]?.labels).toEqual({});
     expect(gauges[gauges.length - 1]).toMatchObject({
       value: v2.operations.size,
-      labels: { registry_hash: shortHash(v2.hash) },
+      labels: {},
     });
 
     expect(recorder.forMetric(METRIC.registryReloadTotal)).toEqual([

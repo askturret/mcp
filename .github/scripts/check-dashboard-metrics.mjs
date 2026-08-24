@@ -99,6 +99,33 @@ export function parseEmittedMetrics(source) {
   if (metrics.size === 0) {
     throw new Error('parsed zero metric definitions — the guard would pass vacuously');
   }
+
+  // Every declared entry must have been PARSED, not merely most of them (#136).
+  //
+  // `entryRe` matches `name … kind … labels` as one span with only whitespace
+  // between, so anything else in that gap — a comment, a reordered key — makes
+  // the entry vanish from this map. Silently: the loop above just does not
+  // match it, and `metrics.size === 0` only catches total failure.
+  //
+  // The symptom is a lie in the opposite direction from the one this guard
+  // exists to catch. A dashboard panelling the dropped metric is reported as
+  // "references a metric the runtime does not emit", which sends a reader to
+  // fix a dashboard that was correct. That is exactly what happened when a
+  // comment was added between `kind` and `labels`.
+  const declared = [...defsBlock[0].matchAll(/name:\s*METRIC\.(\w+)/g)].map(([, key]) => key);
+  const unparsed = declared.filter((key) => {
+    const name = byKey.get(key);
+    return name === undefined || !metrics.has(name);
+  });
+  if (unparsed.length > 0) {
+    throw new Error(
+      `parsed ${String(metrics.size)} of ${String(declared.length)} metric definitions; ` +
+        `could not read: ${unparsed.join(', ')}. ` +
+        'Each entry must keep `name`, `kind` and `labels` adjacent — put any comment ABOVE ' +
+        'the entry, not between its keys.',
+    );
+  }
+
   return metrics;
 }
 

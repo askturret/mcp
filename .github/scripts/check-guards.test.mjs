@@ -713,9 +713,13 @@ check(
     CARDINALITY,
     scratchSource(
       'core/src/telemetry/types.ts',
+      // `registry_hash` stood here as an example of an ALLOWED label until #136
+      // denied the whole `hash` family: truncating a hash bounds a label's
+      // width, never its value set. Replaced with `executor_type`, which is
+      // bounded by the executor registry and is genuinely allowed.
       `export const D = [
          { name: METRIC.a, kind: 'counter', labels: ['method', 'outcome'] },
-         { name: METRIC.b, kind: 'gauge', labels: ['tool', 'registry_hash'] },
+         { name: METRIC.b, kind: 'gauge', labels: ['tool', 'executor_type'] },
        ];\n`,
     ),
   ).code,

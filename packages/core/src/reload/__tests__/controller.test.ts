@@ -5,21 +5,17 @@
 
 import { describe, it, expect, jest } from '@jest/globals';
 import { AtomicRegistryReference } from '../../registry-reference.js';
-import {
-  createReloadController,
-  ReloadFailedError,
-  shortHash,
-} from '../controller.js';
+import { createReloadController, ReloadFailedError } from '../controller.js';
 import type { ReloadMetrics, ReloadOutcome, SnapshotViolation } from '../types.js';
 import { snapshot } from './fixtures.js';
 
 function recordingMetrics(): {
   metrics: ReloadMetrics;
   reloads: ReloadOutcome[];
-  gauges: Array<{ hash: string; count: number }>;
+  gauges: Array<{ count: number }>;
 } {
   const reloads: ReloadOutcome[] = [];
-  const gauges: Array<{ hash: string; count: number }> = [];
+  const gauges: Array<{ count: number }> = [];
   return {
     reloads,
     gauges,
@@ -27,8 +23,8 @@ function recordingMetrics(): {
       recordReload: (outcome) => {
         reloads.push(outcome);
       },
-      recordActiveRegistry: (hash, count) => {
-        gauges.push({ hash, count });
+      recordActiveRegistry: (count) => {
+        gauges.push({ count });
       },
     },
   };
@@ -175,7 +171,15 @@ describe('createReloadController', () => {
     expect(controller.readiness().ready).toBe(false);
   });
 
-  it('records reload outcomes and a short, bounded registry-hash label', async () => {
+  it('records reload outcomes and an UNLABELLED operation-count gauge (#136)', async () => {
+    // This asserted a 12-character `hash` on every gauge, under the comment
+    // "Low cardinality is the point of the short label". That was the defect
+    // stated as a requirement: shortening bounds the label's WIDTH, and the
+    // number of distinct values is what cardinality means. Two reloads produced
+    // two hashes here, and would produce two permanent series in a backend.
+    //
+    // The gauge now carries no label at all, so the assertion is about the
+    // COUNT of things recorded rather than their width.
     const v1 = snapshot(1, ['a']);
     const v2 = snapshot(2, ['a', 'b']);
     const ref = new AtomicRegistryReference(v1);
@@ -195,16 +199,9 @@ describe('createReloadController', () => {
 
     expect(reloads).toEqual(['success', 'invalid']);
 
-    // Construction gauge + one per successful swap.
-    expect(gauges).toEqual([
-      { hash: shortHash(v1.hash), count: 1 },
-      { hash: shortHash(v2.hash), count: 2 },
-    ]);
-    // Low cardinality is the point of the short label.
-    for (const gauge of gauges) {
-      expect(gauge.hash.length).toBe(12);
-      expect(v1.hash.length).toBeGreaterThan(gauge.hash.length);
-    }
+    // Construction gauge + one per successful swap. The rejected reload
+    // records no gauge, because nothing was published.
+    expect(gauges).toEqual([{ count: 1 }, { count: 2 }]);
   });
 
   it('logs every reload with old and new hash', async () => {

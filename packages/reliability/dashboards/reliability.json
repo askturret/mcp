@@ -222,11 +222,11 @@
     {
       "title": "mcp_registry_operations",
       "type": "stat",
-      "description": "Operation count in the live registry, labelled by short registry hash.",
+      "description": "Operation count in the live registry. Deliberately unlabelled (#136): the registry hash that labelled it is unbounded, and truncating it bounded only its width.",
       "targets": [
         {
-          "expr": "max by (registry_hash) (mcp_registry_operations)",
-          "legendFormat": "{{registry_hash}}"
+          "expr": "max(mcp_registry_operations)",
+          "legendFormat": "mcp_registry_operations"
         }
       ],
       "gridPos": {

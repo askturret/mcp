@@ -83,16 +83,16 @@
     },
     {
       "id": 4,
-      "title": "Operations in the live registry by hash",
+      "title": "Operations in the live registry by instance",
       "type": "timeseries",
-      "description": "Operation count per served snapshot. Two hashes exposing different operation counts is the concrete shape of the divergence — it is literally a different tool surface per pod.",
+      "description": "Operation count per pod. Two instances reporting different counts is the concrete shape of the divergence — it is literally a different tool surface per pod. Broken down by `instance` rather than by registry hash since #136: the hash was a metric label with an unbounded value set, adding a permanent series on every reload, while `instance` is a scrape label bounded by the size of the deployment. Which hash each pod serves is answered by the divergence panels above, which read the mcp:registry_hashes:count recording rule.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
       "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
       "targets": [
         {
           "refId": "A",
-          "expr": "max by (registry_hash) (mcp_registry_operations{job=~\"$job\"})",
-          "legendFormat": "{{registry_hash}}"
+          "expr": "max by (instance) (mcp_registry_operations{job=~\"$job\"})",
+          "legendFormat": "{{instance}}"
         }
       ]
     },

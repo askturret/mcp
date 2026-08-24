@@ -245,10 +245,22 @@ export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
       'Registry reloads by outcome. `error_class` splits a benign superseded reload from a real failure (#37 QA note).',
   },
   {
+    // Unlabelled since #136. It carried `registry_hash`, shortened to 12
+    // characters — which bounds the label's WIDTH, not its cardinality. Every
+    // reload that changed the registry produced a new, permanent series.
+    // A gauge of the LIVE registry needs exactly one series; which registry is
+    // live belongs on a span or in the readiness payload, where
+    // high-cardinality identity costs nothing.
+    //
+    // This comment sits ABOVE the entry rather than inside it deliberately:
+    // `check-dashboard-metrics.mjs` matches `name … kind … labels` as one span,
+    // so a comment between those keys drops the metric from its view entirely.
     name: METRIC.registryOperations,
     kind: 'gauge',
-    labels: ['registry_hash'],
-    description: 'Operation count in the live registry, labelled by short registry hash.',
+    labels: [],
+    description:
+      'Operation count in the live registry. Deliberately unlabelled (#136): the registry ' +
+      'hash that labelled it is unbounded, and truncating it bounded only its width.',
   },
   {
     name: METRIC.bulkheadRejectedTotal,

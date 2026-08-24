@@ -40,6 +40,10 @@ export const NEVER_RETRY_CODES: readonly OperationErrorCode[] = [
   'CONFIRMATION_REQUIRED',
   'RATE_LIMITED',
   'CANCELLED',
+  // Both size bounds (#125). Neither is transient: the same payload retried
+  // against the same cap yields the same refusal. The fix is a smaller request
+  // or a split call, and that is the client's to make.
+  'REQUEST_TOO_LARGE',
   'OUTPUT_TOO_LARGE',
 ];
 

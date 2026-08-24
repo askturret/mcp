@@ -73,6 +73,17 @@ when `1.0.0` ships.
   migration tooling. No published migration exists yet, because no release has
   broken a published surface; the tooling ships first so the first breaking
   change arrives with its migration rather than after it.
+- `REQUEST_TOO_LARGE` — a request body exceeding `maxRequestBodySize` now returns
+  HTTP `413` with this code, symmetric with the response side's
+  `OUTPUT_TOO_LARGE`.
+  **Covered surface — error `code` values** (compatibility-policy §6). Adding a
+  code is additive, so this half is MINOR; the condition it takes over is
+  recorded under *Changed* below.
+  Classified non-retryable (`NEVER_RETRY_CODES`): the same payload against the
+  same cap yields the same refusal. It is emitted by the transport before the
+  body is parsed, so unlike every other code in the union it can never come from
+  an executor — which is why it is deliberately absent from the executor-facing
+  code lists in `adapter-conformance` and `reliability`.
 
 ### Changed
 - A policy denial carrying `UNAUTHENTICATED` now reaches the caller as
@@ -87,5 +98,16 @@ when `1.0.0` ships.
   `UNAUTHENTICATED` arm. The two call for different behaviour — obtain
   credentials and retry, versus do not retry with this identity — which is the
   distinction callers previously could not make.
+- An oversized request body returns HTTP `413` with `REQUEST_TOO_LARGE` instead
+  of HTTP `500` with JSON-RPC `-32603` "Internal server error".
+  **Covered surface — error `code` values** (compatibility-policy §6). §6 makes
+  "changing which condition produces it" MAJOR, and this removes a condition
+  from `-32603`, so it would be MAJOR once `1.0.0` ships. It lands now because
+  no guarantee is in force yet.
+  A client treating `-32603` as "server fault, possibly transient" would have
+  retried an oversized payload that could never succeed; it now gets a terminal,
+  client-correctable answer. Body-read failures that are **not** size-related —
+  a reset socket, say — still return `500`/`-32603`, which is the distinction
+  the fix turns on.
 
 [Unreleased]: https://github.com/askturret/mcp/compare/main...HEAD

@@ -40,6 +40,11 @@ export const PRODUCTION_CONFIRM_FOR: readonly EffectClassification[] = ['financi
  * on a valid response will raise the limit anyway, less carefully and under
  * time pressure. The request cap, which is the one an attacker controls, is
  * unchanged.
+ *
+ * Both caps report a specific code when they bite (#125): `OUTPUT_TOO_LARGE`
+ * on the response side and `REQUEST_TOO_LARGE` on the request side. The latter
+ * used to surface as a generic 500, which sent an operator hunting a server
+ * fault that was really a caller sending too much.
  */
 export const PRODUCTION_BOUNDS = {
   requestMaxBytes: 1 << 20, // 1 MiB — same as the transport default

@@ -91,6 +91,23 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
 }
 
 /**
+ * The request body exceeded `maxRequestBodySize` (#125).
+ *
+ * A distinct type rather than a flag on a generic `Error`, because the handler
+ * has to separate this from a genuine socket failure: one is a client-
+ * correctable condition that deserves a `413`, the other is an internal fault
+ * that must keep its `500`. Collapsing them is the defect this fixes, and
+ * matching on `error.message` would reintroduce it the first time somebody
+ * rewords the string.
+ */
+class RequestBodyTooLargeError extends Error {
+  constructor(readonly maxBytes: number) {
+    super(`Request body exceeds the ${maxBytes} byte limit`);
+    this.name = 'RequestBodyTooLargeError';
+  }
+}
+
+/**
  * Streamable HTTP transport implementation
  */
 class StreamableHttpTransport implements HttpTransport {
@@ -366,7 +383,37 @@ class StreamableHttpTransport implements HttpTransport {
 
   private async handleJsonRpc(req: any, res: any): Promise<void> {
     // Read request body with size limit
-    const body = await this.readRequestBody(req, this.maxRequestBodySize);
+    let body: string;
+    try {
+      body = await this.readRequestBody(req, this.maxRequestBodySize);
+    } catch (error) {
+      if (!(error instanceof RequestBodyTooLargeError)) {
+        // A real I/O failure. Rethrow so it keeps the 500 it deserves —
+        // narrowing to the size case is the entire point of the typed error.
+        throw error;
+      }
+
+      // 413 with a specific code, mirroring the response-side OUTPUT_TOO_LARGE
+      // path below (#125). Previously this fell through to the generic handler
+      // catch and surfaced as 500 / -32603 "Internal server error", telling a
+      // client that its own oversized payload was a server fault.
+      //
+      // `id: null` because the body never parsed, so there is no request id to
+      // echo. JSON-RPC says to use null when the id cannot be determined —
+      // omitting the field would be the one thing that is definitely wrong.
+      res.writeHead(413, { 'Content-Type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: null,
+          error: {
+            code: 'REQUEST_TOO_LARGE',
+            message: 'Request exceeds size limit',
+          },
+        }),
+      );
+      return;
+    }
 
     let jsonRpcRequest;
     try {
@@ -863,7 +910,11 @@ class StreamableHttpTransport implements HttpTransport {
       req.on('data', (chunk: Buffer) => {
         size += chunk.length;
         if (size > maxSize) {
-          reject(new Error('Request body too large'));
+          // A TYPED rejection, not a bare Error (#125). The caller has to tell
+          // "the client sent too much" from "the socket failed", and matching on
+          // a message string would silently start misclassifying the day
+          // somebody reworded it.
+          reject(new RequestBodyTooLargeError(maxSize));
           return;
         }
         chunks.push(chunk);

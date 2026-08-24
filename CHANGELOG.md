@@ -114,6 +114,21 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- `@askturret/mcp/policies` resolves (#149). The subpath was missing from the
+  root `package.json` exports map, so the import on README line 89 —
+  `import { confirmationForEffects, authenticated, allOf } from
+  '@askturret/mcp/policies'` — threw `ERR_PACKAGE_PATH_NOT_EXPORTED`. Following
+  our own documented usage failed on its first line.
+  **Covered surface — published entry points** (compatibility-policy §1), and
+  purely additive: a subpath that previously could not be imported now can, and
+  no existing entry changes. `./policies` points at the policy engine's public
+  entry point, `packages/core/dist/policy/index.js`.
+  The same class as the `./fastify` bug fixed in #41, and it survived that fix
+  because the guard added there reads the exports map rather than resolving
+  through it — a map cannot be checked for an entry nobody remembered to add.
+  The new test resolves for real, in a subprocess, and additionally executes the
+  README's own example against the resolved subpath.
+
 - The DCO check no longer certifies commits it never examined (#141).
   `.github/scripts/dco-check.sh` selected commits with `git rev-list
   --no-merges`, so **any** commit carrying two parents was excluded — not

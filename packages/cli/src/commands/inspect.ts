@@ -4,7 +4,7 @@
  */
 
 import { readFile } from 'fs/promises';
-import { normalizeFlags, type FlagSpec } from '../args.js';
+import { normalizeFlags, renderOptions, type FlagSpec } from '../args.js';
 import type {
   InspectResult,
   ServerInfo,
@@ -113,24 +113,36 @@ export async function inspectCommand(args: string[]): Promise<void> {
   }
 }
 
-/** What `inspect` accepts (#261). Listed in the order its help prints them. */
+/**
+ * What `inspect` accepts (#261), as ONE list rendered two ways (#264) — the
+ * help text and the unknown-flag refusal — so they cannot disagree.
+ */
 export const INSPECT_FLAGS: FlagSpec = {
   command: 'inspect',
-  value: ['--url', '--tool', '--diff-against'],
-  boolean: ['--dry-run', '--json', '--help', '-h'],
+  flags: [
+    { name: '--url', placeholder: '<endpoint>', description: 'MCP endpoint to inspect (required)' },
+    {
+      name: '--tool',
+      placeholder: '<name>',
+      description: 'Inspect one tool rather than the whole surface',
+    },
+    { name: '--dry-run', description: 'Describe the call without invoking it' },
+    {
+      name: '--diff-against',
+      placeholder: '<file>',
+      description: 'Compare the live surface against a snapshot',
+    },
+    { name: '--json', description: 'Machine-readable output' },
+    { name: '--help', alias: '-h', description: 'Show this message' },
+  ],
 };
 
-/** Usage for `inspect --help`. */
+/** Usage for `inspect --help`. Options are DERIVED (#264), never restated. */
 function printInspectHelp(): void {
   console.log('Usage: npx @askturret/mcp inspect --url <endpoint> [options]');
   console.log('');
   console.log('Options:');
-  console.log('  --url <endpoint>      MCP endpoint to inspect (required)');
-  console.log('  --tool <name>         Inspect one tool rather than the whole surface');
-  console.log('  --dry-run             Describe the call without invoking it');
-  console.log('  --diff-against <file> Compare the live surface against a snapshot');
-  console.log('  --json                Machine-readable output');
-  console.log('  --help, -h            Show this message');
+  for (const line of renderOptions(INSPECT_FLAGS)) console.log(line);
   console.log('');
   console.log('Both `--flag value` and `--flag=value` are accepted.');
 }

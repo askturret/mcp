@@ -17,7 +17,7 @@ import {
   type RegistrySnapshot,
 } from '@askturret/mcp-core';
 import { formatHumanReadable, formatJson } from './diff-output.js';
-import { normalizeFlags, type FlagSpec } from '../args.js';
+import { normalizeFlags, renderOptions, type FlagSpec } from '../args.js';
 
 /**
  * Exit codes, matching the convention `inspect` established:
@@ -49,11 +49,35 @@ interface DiffFlags {
   usageError?: string;
 }
 
-/** What `diff` accepts (#261). Listed in the order its help prints them. */
+/**
+ * What `diff` accepts (#261), as ONE list rendered two ways (#264) — the help
+ * text and the unknown-flag refusal — so they cannot disagree.
+ */
 export const DIFF_FLAGS: FlagSpec = {
   command: 'diff',
-  value: ['--before', '--after', '--rename-hints', '--confirm-for'],
-  boolean: ['--json', '--allow-breaking', '--help', '-h'],
+  flags: [
+    {
+      name: '--before',
+      placeholder: '<path|url>',
+      description: 'Baseline snapshot (file path or http(s) URL)',
+    },
+    { name: '--after', placeholder: '<path|url>', description: 'Candidate snapshot' },
+    { name: '--json', description: 'Machine-readable output for CI' },
+    { name: '--allow-breaking', description: 'Exit 0 even when breaking changes are found' },
+    {
+      name: '--rename-hints',
+      placeholder: '<path>',
+      description:
+        'JSON file of known renames: { "oldId": "newId" }\n(a { "renamed": { ... } } wrapper is also accepted)',
+    },
+    {
+      name: '--confirm-for',
+      placeholder: '<list>',
+      description:
+        'Comma-separated effect classifications that require\nconfirmation under your policy.\nDefault: financial,destructive',
+    },
+    { name: '--help', alias: '-h', description: 'Show this rubric' },
+  ],
 };
 
 export async function diffCommand(args: string[]): Promise<void> {
@@ -323,16 +347,7 @@ Usage:
   npx @askturret/mcp diff --before <snapshot.json> --after <snapshot.json> [options]
 
 Options:
-  --before <path|url>     Baseline snapshot (file path or http(s) URL)
-  --after  <path|url>     Candidate snapshot
-  --json                  Machine-readable output for CI
-  --allow-breaking        Exit 0 even when breaking changes are found
-  --rename-hints <path>   JSON file of known renames: { "oldId": "newId" }
-                          (a { "renamed": { ... } } wrapper is also accepted)
-  --confirm-for <list>    Comma-separated effect classifications that require
-                          confirmation under your policy.
-                          Default: financial,destructive
-  -h, --help              Show this rubric
+${renderOptions(DIFF_FLAGS).join('\n')}
 
 Exit codes:
   0   No breaking changes, or --allow-breaking was passed

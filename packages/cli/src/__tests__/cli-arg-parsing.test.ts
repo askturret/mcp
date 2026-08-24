@@ -38,8 +38,12 @@ const CLI = join(REPO_ROOT, 'packages/cli/dist/cli.js');
 
 const SPEC: FlagSpec = {
   command: 'demo',
-  value: ['--url', '--out'],
-  boolean: ['--json', '--help', '-h'],
+  flags: [
+    { name: '--url', placeholder: '<value>', description: 'endpoint' },
+    { name: '--out', placeholder: '<value>', description: 'output path' },
+    { name: '--json', description: 'machine-readable' },
+    { name: '--help', alias: '-h', description: 'show help' },
+  ],
 };
 
 let workdir: string;

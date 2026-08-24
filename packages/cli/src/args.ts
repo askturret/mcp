@@ -43,14 +43,47 @@
  *     because that is what it did before.
  */
 
-/** What a command accepts, in the order its help text lists them. */
+/** One flag a command accepts. */
+export interface FlagDef {
+  /** Long form, e.g. `--url`. */
+  readonly name: string;
+  /** Short form, e.g. `-h`. */
+  readonly alias?: string;
+  /**
+   * Value placeholder, e.g. `<url>`. Its PRESENCE is what makes this a
+   * value-taking flag — there is no separate boolean marker to keep in step.
+   */
+  readonly placeholder?: string;
+  /**
+   * For `--help`. May contain newlines; continuation lines are indented to the
+   * description column, so a flag that needs a second sentence keeps it rather
+   * than being truncated into the accepted-flags list's shape.
+   */
+  readonly description: string;
+}
+
+/**
+ * What a command accepts — ONE list, two renderings (#264).
+ *
+ * ## Why the shape changed
+ *
+ * #261 generated the unknown-flag refusal from this spec while each command's
+ * `--help` stayed hand-maintained. The two promptly disagreed: `diagnostics
+ * --help` listed nine flags while its refusal advertised twelve, omitting
+ * `--regulated` — a real disclosure control, and one the `--preset regulated`
+ * refusal explicitly sends operators to. An operator taking that advice to
+ * `--help` did not find it there.
+ *
+ * Adding the missing lines would have fixed today's disagreement and left the
+ * mechanism that produced it. So the help text and the accepted-flags list are
+ * now BOTH derived from this one list. They cannot drift, because there is no
+ * longer a second copy to drift from.
+ */
 export interface FlagSpec {
   /** Command name, for the refusal message. */
   readonly command: string;
-  /** Flags taking a value — `--url <v>` and `--url=<v>` both work. */
-  readonly value: readonly string[];
-  /** Flags taking no value. */
-  readonly boolean: readonly string[];
+  /** In the order `--help` should list them. */
+  readonly flags: readonly FlagDef[];
 }
 
 export interface NormalizedArgs {
@@ -60,18 +93,62 @@ export interface NormalizedArgs {
   readonly error?: string;
 }
 
+/** Every spelling that names this flag. */
+function spellings(flag: FlagDef): readonly string[] {
+  return flag.alias === undefined ? [flag.name] : [flag.name, flag.alias];
+}
+
+/** `--url <url>` / `--help, -h` — one flag as the help's left column shows it. */
+function label(flag: FlagDef): string {
+  const names = spellings(flag).join(', ');
+  return flag.placeholder === undefined ? names : `${names} ${flag.placeholder}`;
+}
+
+/**
+ * The `Options:` block for `--help`, column-aligned.
+ *
+ * Returned as lines rather than printed, so a command can place it inside its
+ * own help — `diff`'s carries a classification rubric §13 requires, which is
+ * not this function's business.
+ */
+export function renderOptions(spec: FlagSpec): readonly string[] {
+  const labels = spec.flags.map(label);
+  const width = Math.max(...labels.map((l) => l.length));
+  const lines: string[] = [];
+
+  spec.flags.forEach((flag, index) => {
+    const [first, ...rest] = flag.description.split('\n');
+    lines.push(`  ${(labels[index] ?? '').padEnd(width)}  ${first ?? ''}`);
+    // Continuations align under the description, not under the flag.
+    for (const line of rest) lines.push(`  ${' '.repeat(width)}  ${line}`);
+  });
+
+  return lines;
+}
+
+/**
+ * The accepted-flags list the unknown-flag refusal prints.
+ *
+ * Names only — a refusal is a pointer to `--help`, not a replacement for it, and
+ * a paragraph per flag in an error message would bury the flag that was wrong.
+ */
+export function acceptedSummary(spec: FlagSpec): string {
+  return spec.flags.map(label).join(', ');
+}
+
 function unknownFlagMessage(spec: FlagSpec, name: string): string {
-  const accepted = [...spec.value.map((f) => `${f} <value>`), ...spec.boolean].join(', ');
   return (
     `error: unknown flag \`${name}\`.\n` +
-    `  ${spec.command} accepts: ${accepted}.\n` +
+    `  ${spec.command} accepts: ${acceptedSummary(spec)}.\n` +
     '  Use `--` to stop option parsing.'
   );
 }
 
 export function normalizeFlags(argv: readonly string[], spec: FlagSpec): NormalizedArgs {
-  const known = new Set([...spec.value, ...spec.boolean]);
-  const takesValue = new Set(spec.value);
+  const known = new Set(spec.flags.flatMap(spellings));
+  const takesValue = new Set(
+    spec.flags.filter((f) => f.placeholder !== undefined).flatMap(spellings),
+  );
 
   const out: string[] = [];
   let error: string | undefined;

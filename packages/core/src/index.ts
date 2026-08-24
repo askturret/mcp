@@ -79,6 +79,7 @@ export {
   type ConfirmationRejection,
 } from './policy/index.js';
 export type { DispatcherOptions } from './dispatcher/index.js';
+export * from './protocol/index.js';
 export * from './preset/index.js';
 export * from './plugin/index.js';
 export * from './overlay/index.js';

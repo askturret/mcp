@@ -286,6 +286,104 @@ interface CompilerPass {
 
 ---
 
+## The MCP SDK boundary
+
+§17 criterion 11: *"An MCP SDK upgrade can be completed inside the transport
+boundary without changes to operation definitions."*
+
+`@modelcontextprotocol/sdk` is reachable from exactly one place. Everything else
+speaks the canonical model, and the transport translates at the edge:
+
+```
+   ┌───────────────────────────────────────────────────────────────┐
+   │  sources/  compiler/  policy/  executors/  audit/  telemetry/  │
+   │                                                                │
+   │   speak ONLY the canonical model —                             │
+   │   OperationDefinition · OperationCommand · OperationResult     │
+   └───────────────────────────┬────────────────────────────────────┘
+                               │  canonical types only
+                               │  (no SDK type crosses this line)
+   ════════════════════════════╪════════════════════════════════════
+        THE BOUNDARY           │   enforced by CI, not convention
+   ════════════════════════════╪════════════════════════════════════
+                               │
+   ┌───────────────────────────┴────────────────────────────────────┐
+   │  packages/transports/src/                                      │
+   │                                                                │
+   │   • the ONLY package that may import the SDK                   │
+   │   • translates canonical types ⇄ MCP wire shapes               │
+   │   • negotiates the protocol version, and refuses one it does   │
+   │     not speak — with a JSON-RPC error, never exit()            │
+   └───────────────────────────┬────────────────────────────────────┘
+                               │  JSON-RPC over HTTP
+                               ▼
+                         MCP clients
+```
+
+**Enforced, not observed.** `.github/scripts/check-sdk-boundary.mjs` runs on
+every PR and fails on two things:
+
+1. an SDK import — static, type-only, `export … from`, dynamic `import()` or
+   `require()` — from anywhere outside `packages/transports/src/`;
+2. an SDK type reaching any emitted `.d.ts`. That is the subtler breach: no
+   package names the SDK, the source looks clean, and yet **adopters** now
+   compile against the SDK's shape, so an SDK upgrade breaks *them*.
+
+There is deliberately **no allowlist file**. An allowlist is how a boundary
+becomes a suggestion — the first exception is always justified, and it is the
+entry that makes the second one arguable.
+
+### Upgrading the SDK
+
+```bash
+npm install @modelcontextprotocol/sdk@<new-version>
+npm run build
+
+node .github/scripts/check-sdk-boundary.mjs   # nothing else imports it
+node .github/scripts/sdk-upgrade-drill.mjs    # nothing else breaks when it changes
+npm test --workspaces
+```
+
+**If those pass, no package outside `packages/transports/` needs a diff.** That
+is the whole content of criterion 11, and it is checkable rather than asserted.
+
+Then update the SDK row in [`compatibility.md`](compatibility.md) and
+[`compatibility.json`](compatibility.json) — a versioned contract, so leaving
+them stale makes one of them untrue. If the new SDK changes the protocol
+version, `MCP_PROTOCOL_VERSION` in `packages/core/src/protocol/versions.ts` is
+the single place it is defined.
+
+### What the drill does and does not prove
+
+`sdk-upgrade-drill.mjs` injects a synthetic breaking change at the boundary — a
+renamed export, the commonest shape of real SDK churn — rebuilds the workspace,
+and reports **every** package that failed to compile. It passes only if that set
+is a subset of `packages/transports`, and it restores the file afterwards even
+if interrupted.
+
+It also prints **how much SDK surface it broke**, and that number is how the
+verdict should be read. Today the project touches the SDK through a single
+type-only import that nothing references — the transport implements JSON-RPC by
+hand — so a pass currently means *the boundary is intact and lightly loaded*,
+not *isolation has been proven under a realistic upgrade*.
+
+Stated plainly because the alternative is worse: a drill printing PASS without
+that context would let a reader infer a guarantee the code does not support,
+which is the failure §12.3's boundary exists to prevent.
+
+### Protocol-version negotiation
+
+The transport negotiates at `initialize` and records the result on the session,
+so `mcp.protocol.version` on every span reports what that session actually
+agreed rather than a build-time constant.
+
+An unsupported version is **refused** with JSON-RPC `-32602`, carrying both the
+requested version and the supported set. It is never `process.exit()`: this code
+runs inside an adopter's own server process, and exiting would let a remote
+client halt every unrelated route in their application by sending one field.
+
+---
+
 ## Next Steps
 
 - **[Quick Start](quick-start.md)** — Get a server running in 5 minutes.

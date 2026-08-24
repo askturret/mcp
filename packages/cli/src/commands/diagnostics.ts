@@ -5,7 +5,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { arch, platform, release } from 'node:os';
-import { describePreset } from '@askturret/mcp-core';
+import { describePreset, MCP_PROTOCOL_VERSION } from '@askturret/mcp-core';
 
 import { analyzeSpec, loadSpec } from './doctor.js';
 
@@ -16,9 +16,6 @@ import {
   sanitizeErrorText,
   type BundleInputs,
 } from './diagnostics-bundle.js';
-
-/** Stamped into the bundle; matches the constant the dispatcher emits. */
-const MCP_PROTOCOL_VERSION = '2025-06-18';
 
 /** Lines of `--log-file` included. */
 export const DEFAULT_LOG_TAIL_LINES = 500;
@@ -183,6 +180,17 @@ export async function collectBundleInputs(
     platform: platform(),
     arch: arch(),
     osRelease: release(),
+    // The protocol version this build ANNOUNCES, imported from core's single
+    // source of truth (#61) rather than restated here. A local literal is what
+    // made this field report `2025-06-18` — a version nothing in the system
+    // has ever spoken — and a support bundle is the worst place to carry that,
+    // because it is what someone reads while already debugging a version
+    // problem.
+    //
+    // Announced rather than negotiated, because there is no session in scope:
+    // the collectors make stateless JSON-RPC posts and never initialize one.
+    // So this describes THIS BUILD, which is also the honest reading of a file
+    // documented as "package, Node, OS/arch and MCP protocol versions".
     mcpProtocol: MCP_PROTOCOL_VERSION,
   };
 

@@ -114,6 +114,16 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- The `diagnostics` support bundle no longer stamps a protocol version this
+  server has never spoken (#190, completing #61). `versions.json` carried a
+  hardcoded `2025-06-18` while the server announces `2024-11-05`; it now reports
+  core's exported `MCP_PROTOCOL_VERSION`.
+  Not a covered surface — the bundle is a support artifact, not a published API.
+  It is the worst place for the defect regardless, because the bundle is what
+  someone reads while already debugging a version problem.
+  The value is the version this build **announces**. No session exists at
+  collection time — the collectors make stateless JSON-RPC posts and never
+  initialize one — so there is no negotiated value to report.
 - `migrate` no longer rewrites an overlay as if it were a config because of how
   it happens to be capitalised (#192). `askturret.MCP.json` and
   `askturret.mcp.json` are **the same file** on macOS and Windows, whose

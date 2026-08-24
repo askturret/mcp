@@ -125,8 +125,14 @@ export function createRedactionPipeline(
     },
 
     add(rule: RedactionRule): void {
-      // Appended, so built-ins keep priority under first-match-wins. A user
-      // rule therefore cannot un-redact something the defaults already catch.
+      // Appended, so built-ins keep priority under first-match-wins FOR ANY
+      // NODE A BUILT-IN ALSO MATCHES. That is a tie-break, not containment.
+      //
+      // A rule matching a container claims it and `walk` returns without
+      // descending, so the built-ins never reach the leaves inside it — and
+      // since no built-in matches a container, there is no tie for the built-in
+      // to win. An adopter rule may do this deliberately (own trust boundary);
+      // plugin rules are wrapped by constrainPluginRedactionRule instead.
       rules.push(rule);
     },
 

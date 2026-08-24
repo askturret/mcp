@@ -65,33 +65,48 @@ reporting on the server's state; `2` means the command could not run at all. Scr
 on a transient outage should retry on `1` and never on `2` — retrying a usage error just repeats
 it.
 
-## MCP Readiness Score (0-100)
+## Readiness Score (rubric v1)
 
 The doctor command calculates a readiness score using a stable, documented rubric:
 
 ### Base Score: 50
 
-### Bonuses (additive):
+### Bonuses:
 
 - **+10** - Valid OpenAPI spec with no errors
 - **+10** - All operations have `operationId`
 - **+10** - All operations have descriptions (>20 chars)
 - **+5** - All required schemas present (input for mutations, output for GETs)
-- **+5** - Fewer than 3 warnings
-- **+3** - Fewer than 5 warnings
+- **+5** - Fewer than 3 warnings — **or** **+3** for fewer than 5
+
+The last two are **mutually exclusive**, not cumulative: the implementation is an
+`if / else if`, so a spec with 0 warnings earns `+5` and *not* `+5 and +3`. This
+is the one part of the rubric that reads as additive and is not.
 
 ### Penalties (subtractive):
 
 - **-5 per error** - Critical issues that block deployment
 - **-1 per warning** - Non-critical issues worth reviewing
 
-### Score is clamped to 0-100
+The result is clamped to `0-100`.
 
-### Examples:
+### The reachable range is 0-90
 
-- **100**: Perfect spec - all checks pass, no warnings
-- **80-99**: Production-ready with minor improvements possible
-- **60-79**: Good foundation, some issues to address
+Adding every bonus to the base gives `50 + 10 + 10 + 10 + 5 + 5 = 90`. **A
+flawless spec scores 90, and 91-100 is unreachable** — the clamp's upper bound is
+not the rubric's maximum. Both worked examples above confirm it: the clean
+fixture scores exactly 90.
+
+This is stated rather than quietly rounded up because the gap is what produced
+#107 — a documented `95/100` example, and a "100 = perfect spec" band, for scores
+the code cannot emit. Whether the rubric *should* reach 100 is a scoring-behaviour
+question, deliberately not changed here.
+
+### Bands:
+
+- **90**: Flawless - every check passes, no warnings (the maximum)
+- **75-89**: Production-ready with minor improvements possible
+- **60-74**: Good foundation, some issues to address
 - **40-59**: Needs work before deployment
 - **0-39**: Major issues blocking MCP adoption
 
@@ -127,10 +142,20 @@ The `doctor` command is **static analysis only**:
 
 ## Examples
 
-### High score example (Petstore):
+Both examples below are what `doctor` **actually prints** against the specs
+checked in at `src/__tests__/fixtures/`, so you can reproduce them. A test
+asserts these blocks still match the command's real output — see
+[Keeping these examples honest](#keeping-these-examples-honest).
+
+Transcribed as a terminal renders them, so the colour escape codes are applied
+rather than shown. One visible consequence in the broken example: the `E` and `W`
+columns sit a space narrower on rows whose counts are non-zero, because a
+coloured count is padded before it is coloured. Cosmetic, and not a typo here.
+
+### Clean spec (`fixtures/petstore.json`):
 
 ```bash
-$ npx @askturret/mcp doctor ./petstore.yaml
+$ turret doctor src/__tests__/fixtures/petstore.json
 
 ═══════════════════════════════════════════════════════════════
   AskTurret MCP Doctor - API Readiness Analysis
@@ -139,43 +164,46 @@ $ npx @askturret/mcp doctor ./petstore.yaml
 Spec: Petstore API v1.0.0
 OpenAPI: 3.0.0
 
-✓ MCP Readiness Score: 95/100
+✓ MCP Readiness Score: 90/100
 
 Summary:
   Total Operations: 3
   Errors:           0
-  Warnings:         1
+  Warnings:         0
   Info:             0
   Light Exposed:    2
   Light Dropped:    1
 
 Operations:
 
-  Method  Path              OpID          E  W  Light
-  ──────  ────────────────  ────────────  ─  ─  ─────
-  GET     /pets             listPets      -  -  ✓
-  POST    /pets             createPet     -  1  ✗
-  GET     /pets/{id}        getPetById    -  -  ✓
-
-Detailed Findings:
-
-  createPet:
-    ⚠ [MISSING_EFFECTS] Mutating operation should have x-mcp-effects
+  Method  Path                          OpID                  E  W  Light
+  ──────  ────────────────────────────  ────────────────────  ─  ─  ─────
+  GET     /pets                         listPets              -   -   ✓
+  POST    /pets                         createPet             -   -   ✗
+  GET     /pets/{id}                    getPetById            -   -   ✓
 
 Light Preset Policy:
   The following operations would be dropped in Light preset:
 
   • createPet
-    POST operation not auto-exposed (mutations require explicit inclusion)
+    POST operation not auto-exposed in Light preset (mutations require explicit inclusion)
 
 ═══════════════════════════════════════════════════════════════
-⚠ Analysis complete with warnings. Review before deployment.
+
+✓ Analysis complete. No issues found.
 ```
 
-### Broken spec example:
+Exit code `0`. Note **90 is the maximum** the rubric can produce — see
+[Readiness Score](#readiness-score-rubric-v1). A clean spec scoring 90 rather
+than 100 is the rubric working as documented, not a deduction you need to hunt for.
+
+### Broken spec (`fixtures/broken.json`):
+
+This is where warnings are worth reading — eight of them, across five distinct
+codes.
 
 ```bash
-$ npx @askturret/mcp doctor ./broken.yaml
+$ turret doctor src/__tests__/fixtures/broken.json
 
 ═══════════════════════════════════════════════════════════════
   AskTurret MCP Doctor - API Readiness Analysis
@@ -184,21 +212,75 @@ $ npx @askturret/mcp doctor ./broken.yaml
 Spec: Broken API v1.0.0
 OpenAPI: 3.0.0
 
-✗ MCP Readiness Score: 35/100
+✗ MCP Readiness Score: 32/100
 
 Summary:
   Total Operations: 3
   Errors:           2
-  Warnings:         5
-  Info:             1
+  Warnings:         8
+  Info:             0
   Light Exposed:    1
   Light Dropped:    2
 
-... (detailed findings follow)
+Operations:
+
+  Method  Path                          OpID                  E  W  Light
+  ──────  ────────────────────────────  ────────────────────  ─  ─  ─────
+  GET     /users                        -                     2  1  ✓
+  POST    /users                        p1_post_v3            -   4  ✗
+  PUT     /users/{id}                   updateUser            -   3  ✗
+
+Detailed Findings:
+
+  GET /users:
+    ✗ [MISSING_OPERATION_ID] Operation must have an operationId
+    ⚠ [MISSING_DESCRIPTION] Operation should have a description
+    ✗ [MISSING_OUTPUT_SCHEMA] GET operation must have a non-empty output schema
+
+  p1_post_v3:
+    ⚠ [UNFRIENDLY_OPERATION_ID] Operation ID "p1_post_v3" is not agent-friendly. Consider using camelCase or snake_case descriptive names.
+      Suggestion: createUser
+    ⚠ [MISSING_DESCRIPTION] Operation should have a description
+    ⚠ [MISSING_EFFECTS] Mutating operation should have x-mcp-effects classification
+      Suggestion: Add x-mcp-effects to operation object with appropriate effect types
+    ⚠ [UNSAFE_FIELDS_DETECTED] Request body contains potentially sensitive fields: password, apiKey. Consider adding redaction hints.
+      Fields: password, apiKey
+
+  updateUser:
+    ⚠ [MISSING_DESCRIPTION] Operation should have a description
+    ⚠ [MISSING_INPUT_SCHEMA] Mutating operation should define request body schema
+    ⚠ [MISSING_EFFECTS] Mutating operation should have x-mcp-effects classification
+      Suggestion: Add x-mcp-effects to operation object with appropriate effect types
+
+Light Preset Policy:
+  The following operations would be dropped in Light preset:
+
+  • p1_post_v3
+    POST operation not auto-exposed in Light preset (mutations require explicit inclusion)
+  • updateUser
+    PUT operation not auto-exposed in Light preset (mutations require explicit inclusion)
 
 ═══════════════════════════════════════════════════════════════
+
 ✗ Analysis complete with errors. Fix errors before deployment.
 ```
+
+Exit code `1`. Working the score by hand shows how the rubric composes: base 50,
+no bonuses earned (there are errors, a missing `operationId`, missing
+descriptions, missing schemas, and 8 warnings is over every warning threshold),
+then `-5 x 2 errors` and `-1 x 8 warnings` = **32**.
+
+### Keeping these examples honest
+
+These two blocks drifted from reality once already (#107): the clean example
+claimed `95/100` with 1 invented warning, and the broken one claimed `35/100`
+with 5 warnings and 1 info. Neither had ever been printed by the command, and
+`95` was not even reachable under the rubric.
+
+`src/__tests__/doctor-readme.test.ts` now runs `doctor` against both fixtures and
+asserts the score, the summary counts and the closing line in **this file** match
+what the command actually prints. If you change the rubric, a check or a fixture,
+that test fails and tells you which number to update here.
 
 ## Development
 

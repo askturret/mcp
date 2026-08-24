@@ -37,3 +37,4 @@
 {"ts":"2026-08-24T03:47:59Z","branch":"feat/issue-62-migration-tooling","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T03:22:39Z","branch":"feat/issue-61-sdk-boundary","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T05:07:35Z","branch":"feat/issue-65-readiness-gate","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-24T06:02:18Z","branch":"feat/issue-99-petstore-mock-backend","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

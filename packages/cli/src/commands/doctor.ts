@@ -609,22 +609,36 @@ function levenshteinDistance(str1: string, str2: string): number {
 }
 
 /**
- * Calculate MCP readiness score (0-100)
+ * Calculate MCP readiness score.
  *
- * Rubric (documented and stable):
+ * Rubric (documented and stable — mirrored in the package README):
  * - Base score: 50
- * - Valid OpenAPI: +10
+ * - No errors: +10
  * - All operations have operationId: +10
  * - All operations have descriptions: +10
- * - No errors: +10
- * - <3 warnings: +5
- * - <5 warnings: +3
  * - All schemas present: +5
- * - Penalties:
- *   - Each error: -5
- *   - Each warning: -1
- *   - Missing operationId: -5
- *   - Missing output schema on GET: -5
+ * - <3 warnings: +5, ELSE <5 warnings: +3   (exclusive — see below)
+ * - Penalties: each error -5, each warning -1
+ *
+ * ## Two things this rubric is easy to misread (#107)
+ *
+ * 1. **The warning bonuses are mutually exclusive**, not cumulative: the
+ *    `else if` below means 0 warnings earns +5, never +5 and +3. Read as
+ *    additive, the ceiling looks like 93.
+ * 2. **The reachable range is 0-90, not 0-100.** Every bonus applied to the
+ *    base is 50+10+10+10+5+5 = 90. The clamp's upper bound of 100 is a guard,
+ *    not an attainable score — a flawless spec scores 90.
+ *
+ * Both were previously wrong in the README, which documented a 95/100 example
+ * and a "100 = perfect spec" band for scores this function cannot return.
+ * `__tests__/doctor-readme.test.ts` now pins the README's worked examples to
+ * real output so the two cannot drift apart again silently.
+ *
+ * Missing `operationId` and a missing GET output schema are NOT separate
+ * penalties, despite an earlier version of this comment listing them as -5
+ * each. They are already `error`-severity findings, so they are charged once
+ * via `errorCount * 5` — listing them again described a double deduction the
+ * code has never applied.
  */
 function calculateScore(
   operations: OperationAnalysis[],

@@ -437,9 +437,33 @@ function reportOutput(rule: OutputRule): Finding {
  * an `askturret*.json` config. Without the exclusion a config rule would
  * happily rewrite a dotted path inside an overlay document — silently, since
  * both are JSON and both parse.
+ *
+ * ## Case-insensitive, because the filesystem is (#192)
+ *
+ * macOS and Windows default to case-insensitive filesystems, so
+ * `askturret.MCP.json` and `askturret.mcp.json` are THE SAME FILE. A matcher
+ * that distinguishes them is drawing a line the filesystem does not: the
+ * overlay pattern missed on the capitalised spelling while `CONFIG_FILE`'s
+ * `[.\w-]*` matched it, so one file was an overlay and its own alias was a
+ * config that got rewritten.
+ *
+ * Both patterns carry `/i` together, and that pairing is load-bearing.
+ * `CONFIG_FILE` alone under `/i` would be a REGRESSION — `AskTurret.mcp.json`
+ * currently misses both patterns and is ignored, and making only the config
+ * pattern case-blind would pull it into the rewritable bucket. It is safe here
+ * solely because the overlay pattern claims it first.
+ *
+ * ## The separator and the suffix
+ *
+ * `askturret-mcp.json` and `askturret.mcp2.json` were also classified as
+ * config. Hyphen-for-dot is an ordinary naming choice rather than a mistake,
+ * so the alternation accepts either separator and a trailing ordinal. An
+ * ambiguous name resolving to "overlay" is the safe direction: the cost is a
+ * config rule declining to rewrite, and the cost of the other answer is a
+ * silently corrupted overlay.
  */
-const OVERLAY_FILE = /(^|\/)(askturret\.mcp|[\w.-]*overlay[\w.-]*)\.(json|ya?ml)$/;
-const CONFIG_FILE = /(^|\/)askturret[.\w-]*\.(json|ya?ml)$/;
+const OVERLAY_FILE = /(^|\/)(askturret[.-]mcp\d*|[\w.-]*overlay[\w.-]*)\.(json|ya?ml)$/i;
+const CONFIG_FILE = /(^|\/)askturret[.\w-]*\.(json|ya?ml)$/i;
 const SOURCE_FILE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 
 function isOverlayPath(path: string): boolean {
@@ -448,6 +472,33 @@ function isOverlayPath(path: string): boolean {
 
 function isConfigPath(path: string): boolean {
   return CONFIG_FILE.test(path) && !isOverlayPath(path);
+}
+
+/**
+ * Does this parsed document look like an overlay, whatever it is called?
+ *
+ * `OverlayDocument.operations` is REQUIRED (`packages/core/src/overlay/types.ts`),
+ * and a preset config has no such key — the config surface these rules address
+ * is `audit.*`, `redaction.*` and the like. So the key is a reliable
+ * discriminator rather than a heuristic.
+ *
+ * This exists because the filename patterns above can only ever enumerate the
+ * spellings someone thought of. #192 was found by trying a fourth spelling
+ * after #191 fixed the first three, which is a strong hint that a fifth exists.
+ * Shape is what the file IS; the name is what it was called.
+ *
+ * ## Why BOTH this and the filename patterns
+ *
+ * Each covers the other's blind spot, so neither is redundant:
+ *
+ * - **Shape cannot see YAML.** `parseJson` returns `null` for a YAML overlay,
+ *   so there is no document to inspect and the name is the only signal left.
+ * - **The name cannot see intent.** A JSON overlay saved under any spelling
+ *   nobody enumerated is caught here regardless.
+ */
+function looksLikeOverlayDocument(document: Record<string, unknown>): boolean {
+  const operations = document['operations'];
+  return operations !== null && typeof operations === 'object' && !Array.isArray(operations);
 }
 
 /** JSON only — YAML is reported rather than rewritten. See the note below. */
@@ -517,6 +568,37 @@ export function applyMigrations(options: ApplyOptions): MigrationResult & {
               detail:
                 `Not rewritten: only JSON config and overlay files are edited automatically. ` +
                 `Apply '${rule.from}' → '${rule.to ?? '(removed)'}' by hand. ${rule.reason}`,
+            });
+          }
+          continue;
+        }
+
+        // A config rule never rewrites an overlay-shaped document, however the
+        // file is named (#192). The filename patterns are a allowlist of
+        // spellings someone thought of; this is the backstop for the ones
+        // nobody did.
+        //
+        // It REFUSES rather than reclassifying. A file called
+        // `askturret.config.json` that carries an `operations` key is genuinely
+        // ambiguous, and quietly running overlay rules over it would be the
+        // same silent-wrong-bucket failure in the opposite direction. Declining
+        // and saying so leaves the judgement with the person who named it.
+        if (isConfig && looksLikeOverlayDocument(document)) {
+          // Only speak up when this rule had something to say about this file,
+          // matching how the YAML branch above gates its report. Telling an
+          // adopter to hand-apply a rule whose field is not present would be
+          // noise that trains them to skim the real ones.
+          if ((rule.from.split('.')[0] as string) in document) {
+            findings.push({
+              ruleId: rule.id,
+              kind: rule.kind,
+              file: file.path,
+              action: 'manual',
+              detail:
+                `Not rewritten: '${file.path}' is named like a config but carries an ` +
+                `'operations' key, which is the shape of an overlay. Refusing rather than ` +
+                `guessing — rename it if it is a config, or apply '${rule.from}' → ` +
+                `'${rule.to ?? '(removed)'}' by hand if the field really belongs here. ${rule.reason}`,
             });
           }
           continue;

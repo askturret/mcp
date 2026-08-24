@@ -114,6 +114,22 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- `diagnostics --help` documents `--regulated`, and every command's help now
+  agrees with its unknown-flag refusal by construction (#264). #261 generated
+  the refusal list from each command's flag spec and left `--help`
+  hand-maintained; the two promptly disagreed, with `diagnostics --help` listing
+  nine flags to the refusal's twelve.
+  Not a covered surface — CLI help text. It mattered because the omitted flag
+  was `--regulated`, a real disclosure control, and because #261's own
+  `--preset regulated` refusal explicitly points operators at it: an operator
+  following that advice to `--help` did not find it, so the only way to discover
+  a disclosure control was to trigger an error.
+  Both renderings are now derived from one list, so there is no second copy to
+  drift from — adding the missing lines would have fixed the disagreement and
+  left the mechanism that produced it. `inspect` and `diff` were checked in the
+  same pass and had no gap; they are converted anyway, so the property holds for
+  all three rather than being true of two by luck.
+
 - `inspect`, `diff` and `diagnostics` accept `--flag=value` and refuse flags
   they do not recognise (#261). All three matched flags by exact string equality
   with no final `else`/`default`, so every `=` spelling and every unrecognised

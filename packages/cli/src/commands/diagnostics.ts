@@ -10,7 +10,7 @@ import { describePreset, MCP_PROTOCOL_VERSION } from '@askturret/mcp-core';
 import { analyzeSpec, loadSpec } from './doctor.js';
 
 import { createTarGz } from './diagnostics-tar.js';
-import { normalizeFlags, type FlagSpec } from '../args.js';
+import { normalizeFlags, renderOptions, type FlagSpec } from '../args.js';
 import {
   buildBundleEntries,
   environmentNames,
@@ -47,11 +47,60 @@ export interface DiagnosticsFlags {
   readonly usageError?: string;
 }
 
-/** What `diagnostics` accepts (#261). Listed in the order its help prints them. */
+/**
+ * What `diagnostics` accepts (#261), as ONE list rendered two ways (#264).
+ *
+ * Both the help text and the unknown-flag refusal are generated from this,
+ * which is the point of #264: they had disagreed, and `--regulated` — a real
+ * disclosure control that the `--preset regulated` refusal explicitly points
+ * operators toward — was missing from the very help they were sent to.
+ */
 export const DIAGNOSTICS_FLAGS: FlagSpec = {
   command: 'diagnostics',
-  value: ['--url', '--spec', '--config', '--out', '--log-file', '--tail', '--preset'],
-  boolean: ['--full-schemas', '--regulated', '--json', '--help', '-h'],
+  flags: [
+    { name: '--url', placeholder: '<url>', description: 'Live MCP endpoint to snapshot' },
+    {
+      name: '--spec',
+      placeholder: '<path|url>',
+      description: 'OpenAPI source for the readiness analysis',
+    },
+    {
+      name: '--config',
+      placeholder: '<path>',
+      description: 'Configuration file (recorded by basename)',
+    },
+    {
+      name: '--out',
+      placeholder: '<path>',
+      description: 'Output archive (default ./bundle.tar.gz)',
+    },
+    {
+      name: '--preset',
+      placeholder: '<name>',
+      description: 'Include the expanded preset. Only production can be\nincluded from a flag',
+    },
+    {
+      name: '--log-file',
+      placeholder: '<path>',
+      description: 'Include a re-redacted tail of this log file',
+    },
+    {
+      name: '--tail',
+      placeholder: '<n>',
+      // Interpolated, not restated. The hand-written help did this too, and
+      // hardcoding it here would reintroduce the drift #264 is about — one
+      // level down, between the default and the text describing it.
+      description: `Lines of log tail (default ${DEFAULT_LOG_TAIL_LINES})`,
+    },
+    { name: '--full-schemas', description: 'Include tool schemas in full' },
+    {
+      name: '--regulated',
+      description:
+        'Withhold schemas and config paths from the bundle.\nGoverns DISCLOSURE, and is separate from --preset —\nit works with any preset',
+    },
+    { name: '--json', description: 'Machine-readable summary on stdout' },
+    { name: '--help', alias: '-h', description: 'Show this message' },
+  ],
 };
 
 /**
@@ -501,15 +550,9 @@ function printDiagnosticsHelp(): void {
   console.log('  npx @askturret/mcp diagnostics --config ./askturret.config.ts --out ./bundle.tar.gz');
   console.log('');
   console.log('Options:');
-  console.log('  --url <url>         Live MCP endpoint to snapshot');
-  console.log('  --spec <path|url>   OpenAPI source for the readiness analysis');
-  console.log('  --config <path>     Configuration file (recorded by basename)');
-  console.log('  --out <path>        Output archive (default ./bundle.tar.gz)');
-  console.log('  --preset production Include the expanded preset');
-  console.log('  --log-file <path>   Include a re-redacted tail of this log file');
-  console.log(`  --tail <n>          Lines of log tail (default ${DEFAULT_LOG_TAIL_LINES})`);
-  console.log('  --full-schemas      Include tool schemas in full');
-  console.log('  --json              Machine-readable summary on stdout');
+  // Derived from DIAGNOSTICS_FLAGS (#264), never restated. The hand-maintained
+  // version of this block is what omitted --regulated.
+  for (const line of renderOptions(DIAGNOSTICS_FLAGS)) console.log(line);
   console.log('');
   console.log('The bundle is written locally. Nothing is uploaded.');
   console.log('');

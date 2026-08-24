@@ -26,6 +26,10 @@
     "./otel": {
       "types": "./packages/observability/dist/index.d.ts",
       "import": "./packages/observability/dist/index.js"
+    },
+    "./policies": {
+      "types": "./packages/core/dist/policy/index.d.ts",
+      "import": "./packages/core/dist/policy/index.js"
     }
   },
   "engines": {

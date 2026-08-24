@@ -47,3 +47,4 @@
 {"ts":"2026-08-24T16:34:36Z","branch":"agent/engineer","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T17:01:51Z","branch":"docs/issue-187-broken-relative-links","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T17:15:33Z","branch":"docs/issue-184-entrypoint-failure-modes","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-24T17:31:17Z","branch":"feat/issue-188-markdown-link-guard","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

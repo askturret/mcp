@@ -114,6 +114,25 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- `RedactionPipeline.add` no longer documents a security property that does not
+  hold (#171). Its public type doc, and the matching comment in
+  `createRedactionPipeline`, claimed that "a user rule cannot accidentally
+  un-redact something the defaults already catch, because first match wins and
+  the built-in matched first". The premise is true and the conclusion does not
+  follow: ordering only decides a tie, and a tie needs a built-in matching the
+  **same node**. No built-in matches a plain-object container, so a user rule
+  claiming one wins by default and the walk never reaches the leaves inside it.
+  Not a covered surface and **no behaviour changed** — the diff to the runtime
+  is comments only. It is recorded here rather than passed over in silence
+  because the text stated a security property an adopter could reasonably build
+  on, which is the reason it was filed as a bug.
+  The adopter-facing behaviour is deliberate and is unchanged: replacing a whole
+  subtree is a legitimate capability for code running in the adopter's own trust
+  boundary. Plugin-supplied rules remain constrained to leaf values by
+  `constrainPluginRedactionRule`, which is where the trust boundary actually is.
+  Both halves are now pinned by tests, so the corrected wording cannot quietly
+  drift back.
+
 - `@askturret/mcp/policies` resolves (#149). The subpath was missing from the
   root `package.json` exports map, so the import on README line 89 —
   `import { confirmationForEffects, authenticated, allOf } from

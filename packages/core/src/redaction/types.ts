@@ -79,10 +79,24 @@ export interface RedactionPipeline {
   /**
    * Append a rule.
    *
-   * User rules land AFTER the built-ins (§49), so a built-in always wins a
-   * tie. That ordering is the safe one: a user rule cannot accidentally
-   * un-redact something the defaults already catch, because first match wins
-   * and the built-in matched first.
+   * User rules land AFTER the built-ins (§49), so a built-in wins a tie on any
+   * node a built-in ALSO matches. That is the whole of what ordering buys.
+   *
+   * It does NOT stop a user rule un-redacting what the defaults would have
+   * caught. Ordering is a tie-break, not containment: `redact` tests every node
+   * including containers, and a match returns without descending. A rule that
+   * matches a plain object therefore claims it outright — no built-in matches a
+   * container, so there is no tie to lose — and the leaves the built-ins would
+   * have caught are never visited.
+   *
+   * For adopter rules this is deliberate, not an oversight: replacing a whole
+   * subtree is a legitimate capability, and code calling `add` already runs
+   * inside the adopter's own trust boundary. Plugin-supplied rules are
+   * third-party, so they are wrapped by `constrainPluginRedactionRule` to
+   * decline containers.
+   *
+   * Both halves are pinned by
+   * `redaction/__tests__/ordering-is-not-containment.test.ts`.
    */
   add(rule: RedactionRule): void;
 

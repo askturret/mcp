@@ -230,6 +230,14 @@ when `1.0.0` ships.
   engine kept only one finding per file per rule.
 
 ### Changed
+- The network-access guard's gateway exemption is now the single file that needs
+  it, `packages/gateway/src/server.ts`, rather than the whole of
+  `packages/gateway/src/` (#181).
+  Not a covered surface — this is CI tooling, and no shipped behaviour changes.
+  It is recorded because it narrows what the guard behind
+  `docs/telemetry-policy.md`'s no-outbound-call promise will let through: an
+  outbound call added anywhere else in the gateway package is now caught rather
+  than exempted. Nothing in that package made one, so no existing code moves.
 - A policy denial carrying `UNAUTHENTICATED` now reaches the caller as
   `UNAUTHENTICATED` rather than being collapsed into `FORBIDDEN`. Every other
   denial — unrecognised policy codes and the engine's own internal ones

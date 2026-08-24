@@ -185,6 +185,28 @@ The Fastify adapter registers as a properly **encapsulated** plugin: its
 content-type parser, hooks and decorators stay inside its own scope, so mounting
 it cannot change how the rest of your app parses requests.
 
+### When you cannot change the application
+
+If the code cannot be modified, run the **standalone gateway** instead — a
+separate server that reads your spec and proxies to the API you already have:
+
+```bash
+npx @askturret/mcp-gateway \
+  --spec ./openapi.yaml --upstream https://api.example.com --port 7000
+```
+
+It is the *same* runtime — same compiler, same overlays, same presets, same
+audit and metrics — packaged as a process rather than as a middleware. It is
+also deliberately **secondary**: it adds a network hop and an auth boundary the
+embedded adapters do not have, so prefer an adapter when you have the choice.
+
+A one-command worked setup (gateway + mock upstream + OTel collector) is in
+[`examples/gateway-compose`](examples/gateway-compose); see the
+[gateway README](packages/gateway/README.md) for configuration.
+
+> Not published to npm yet — every workspace here is currently `private`, so
+> build and run it from source in the meantime.
+
 ### The adapter conformance contract
 
 Every adapter — ours and yours — must pass the same test bank. This is the

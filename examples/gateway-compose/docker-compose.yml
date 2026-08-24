@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Working end-to-end gateway setup (#57).
+#
+#   docker compose up --build
+#
+# Three services, which is the whole point: §57 asks that an evaluator get a
+# working setup in ONE command rather than a gateway with nothing behind it.
+#
+#   upstream  — a mock "existing API" the adopter cannot modify. This is the
+#               premise of §11.3: the gateway exists because this service is
+#               not going to grow an MCP endpoint.
+#   gateway   — reads the spec, serves MCP on 7000, proxies to `upstream`.
+#   collector — an OTel collector, so the observability path has a real
+#               destination rather than a documented one.
+#
+# Then:
+#   curl -s localhost:7000/mcp -H 'Content-Type: application/json' \
+#        -H 'Accept: application/json, text/event-stream' \
+#        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+#   curl -s localhost:9464/metrics
+
+services:
+  upstream:
+    image: node:20-alpine
+    working_dir: /srv
+    volumes:
+      - ./mock-upstream.js:/srv/mock-upstream.js:ro
+    command: ["node", "mock-upstream.js"]
+    # Not published to the host. The gateway is the front door — exposing the
+    # upstream too would let an evaluator bypass the thing being demonstrated.
+    expose:
+      - "8080"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/pets').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gateway:
+    build:
+      # The workspace root: the gateway's siblings are unpublished, so the image
+      # compiles them from source. See packages/gateway/Dockerfile.
+      context: ../..
+      dockerfile: packages/gateway/Dockerfile
+    depends_on:
+      upstream:
+        # Wait for the upstream to answer, not merely to start. Without this the
+        # gateway's first proxied call can race container startup and fail in a
+        # way that looks like a gateway bug.
+        condition: service_healthy
+    volumes:
+      - ./openapi.yaml:/etc/askturret/openapi.yaml:ro
+      - ./askturret.gateway.yaml:/etc/askturret/askturret.gateway.yaml:ro
+      # Audit records outlive the container. A gateway auditing to a container
+      # filesystem has an audit trail that vanishes with `docker compose down`.
+      - gateway-audit:/var/lib/askturret
+    command:
+      - "--config"
+      - "/etc/askturret/askturret.gateway.yaml"
+    environment:
+      # Where the collector is. Read by whatever OTel SDK an operator wires in;
+      # the gateway itself ships core's no-op tracer by default (§Delivery makes
+      # no-exporter the default) and exports metrics via the scrape endpoint.
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
+      OTEL_SERVICE_NAME: askturret-mcp-gateway
+    ports:
+      - "7000:7000"   # MCP
+      - "9464:9464"   # Prometheus scrape
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.104.0
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    expose:
+      - "4317"
+      - "4318"
+    # The collector also SCRAPES the gateway's Prometheus endpoint — see
+    # otel-collector.yaml. That is what makes the metrics path end-to-end here
+    # rather than an endpoint nobody reads.
+
+volumes:
+  gateway-audit:

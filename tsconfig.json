@@ -31,6 +31,9 @@
       ],
       "@askturret/mcp-cli": [
         "./packages/cli/src"
+      ],
+      "@askturret/mcp-gateway": [
+        "./packages/gateway/src"
       ]
     }
   },
@@ -67,6 +70,9 @@
     },
     {
       "path": "./packages/adapter-test"
+    },
+    {
+      "path": "./packages/gateway"
     }
   ],
   "files": [],

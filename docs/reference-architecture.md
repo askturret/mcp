@@ -69,29 +69,95 @@ and the assumptions below stop holding.
 
 ## 2. Sizing guidance
 
-> **Read this section's caveat first.** The numbers an operator wants here —
-> "CPU/memory per instance × QPS band" — **do not exist yet, and are
-> deliberately not printed below.**
+> **Read the provenance before the numbers.** Everything below was measured on
+> **one Apple M4, 10 cores, 16 GiB, Node v25.5.0, on 2026-08-24**, by
+> [`packages/gateway/bench`](../packages/gateway/bench/README.md). Raw results:
+> [`docs/sizing/gateway-apple-m4-2026-08-24.json`](sizing/gateway-apple-m4-2026-08-24.json).
 >
-> The [reliability suite](reliability-suite.md) is a fault-injection and
-> interaction harness, not a load generator. Its own harness says so
-> explicitly: it drives concurrency in-process to test how the primitives
-> behave *together* — a reload landing mid-drain, a bulkhead rejection
-> reaching a breaker — and it records **no throughput or resource
-> measurements** at all.
->
-> Publishing a sizing table derived from anything else would mean inventing
-> numbers, and a reference architecture is the worst place for that: the
-> numbers would be copied into capacity plans and carry the authority of a
-> checked-in document. Measuring this properly is tracked in
-> [#197](https://github.com/askturret/mcp/issues/197).
+> **Do not copy the QPS column onto another instance type.** Throughput is a
+> property of the machine it was measured on. The two figures that *do* travel
+> are CPU-ms per call and cores-at-saturation, and they are called out below.
+> The harness is checked in precisely so you can re-run it on your own hardware
+> rather than trusting ours.
 
-What can be said without measurements:
+### Measured: one instance, Petstore spec, audit sink off
+
+| Connections | Achieved QPS | p50 | p95 | p99 | CPU-ms/call | Cores used |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 8,230 | 0.11 ms | 0.13 ms | 0.22 ms | 0.108 | 0.89 |
+| 2 | 13,480 | 0.12 ms | 0.17 ms | 0.39 ms | 0.094 | 1.26 |
+| 4 | 14,500 | 0.24 ms | 0.32 ms | 1.51 ms | 0.090 | 1.31 |
+| 8 | 14,670 | 0.47 ms | 0.64 ms | 2.54 ms | 0.089 | 1.31 |
+| 16 | 14,955 | 0.93 ms | 1.44 ms | 3.30 ms | 0.089 | 1.33 |
+| 32 | 14,810 | 1.86 ms | 4.04 ms | 5.39 ms | 0.089 | 1.32 |
+| 64 | 14,680 | 3.84 ms | 6.47 ms | 8.51 ms | 0.091 | 1.34 |
+
+**The knee is at 4–8 concurrent calls.** Past it, throughput is flat within 3%
+while p50 grows in proportion to concurrency — 16× more connections bought 16×
+the latency and no extra throughput. That is queueing against a fixed service
+rate, and it is why the sizing advice below is to add replicas rather than
+connections.
+
+Latency is indicative only: the load driver shared the machine with the
+gateway. CPU and memory are not — they are read from inside the gateway process
+itself, so they are attributable to the instance regardless of what else was
+running.
+
+### The two numbers that transfer
+
+- **≈ 0.09 CPU-ms per call** at saturation. Divide your core budget by it:
+  `cores ≈ QPS × 0.00009`, then adjust for your target's single-core speed
+  relative to an M4. A thousand calls/second is roughly a tenth of a core of
+  *work* — the constraint is rarely total CPU, it is the next line.
+- **≈ 1.32 cores at saturation, and no more.** One instance is one event loop.
+  The 0.32 above a full core is garbage collection and the thread pool, not
+  parallel request handling. This is the measured basis for *scale out, not up*:
+  a second core does very little for a single instance, so past roughly one
+  and a third CPUs the return on a bigger pod is close to nil.
+
+### Memory
+
+| Operations in spec | Spec on disk | RSS at rest | RSS retained after traffic |
+|---:|---:|---:|---:|
+| 3 (Petstore) | 3.7 KiB | 74 MiB | — |
+| 10 | 9 KiB | 74 MiB | 259 MiB |
+| 50 | 44 KiB | 76 MiB | 281 MiB |
+| 100 | 88 KiB | 81 MiB | 270 MiB |
+| 250 | 221 KiB | 94 MiB | 285 MiB |
+| 500 | 442 KiB | 112 MiB | 265 MiB |
+| 1000 | 884 KiB | 114 MiB | 318 MiB |
+
+**Correction to earlier guidance in this document.** A previous revision said
+memory is "dominated by the compiled registry, which is a function of spec size,
+not of traffic". Measurement does not support that below a large spec:
+
+- At rest, RSS ≈ **78 MiB + ~44 KiB per operation** — but that slope is an
+  *average over a stepwise curve* (R² ≈ 0.84; per-step cost ranged from 4.6 to
+  97 KiB/operation as V8 resized its heap). Treat it as an order of magnitude,
+  not a formula, and do not extrapolate past 1000 operations.
+- Serving traffic adds **~190 MiB that is not returned when traffic stops**,
+  and that figure is roughly independent of spec size.
+
+So traffic is the *larger* term until roughly **4,500 operations**. Size the
+memory request from the "retained after traffic" column, not from the at-rest
+one: an instance sized against a resting 74 MiB will be killed under load.
+
+### Audit sink cost
+
+The JSONL audit sink costs **≈ 90% more CPU per call** (0.089 → 0.169 CPU-ms at
+8 connections). Mandatory delivery means dispatch awaits the append, so this is
+real per-request work rather than background cost. The table above has the sink
+**off**; if you run with auditing on — most production deployments should —
+budget roughly double the CPU, or half the QPS per instance.
+
+### Qualitative guidance, now with measurements behind it
 
 **CPU is the dimension to tune first.** The runtime's per-call work is
 JSON serialization, policy evaluation and schema handling — all CPU-bound and
-all on one event loop per instance. Memory is dominated by the compiled
-registry, which is a function of *spec size*, not of traffic.
+all on one event loop per instance. Memory has two terms: a fixed cost for
+serving traffic at all, and a per-operation cost from the compiled registry.
+For specs under a few thousand operations the first term is the larger — see
+the memory table above, which corrects what this section used to claim.
 
 **Do not set a CPU limit unless your platform forces you to.** CPU limits
 throttle the event loop precisely in the tail-latency region the deadline
@@ -101,15 +167,31 @@ off. Memory is different: it is incompressible, so `request == limit` is
 right there, and a limit above the request just invites the OOM-killer to reap
 a pod mid-request.
 
-**Scale out, not up.** One instance is one event loop. A second core does
-comparatively little for a single instance, so past roughly one CPU per
-instance the return on a bigger pod falls off and another replica is the
+**Scale out, not up.** One instance is one event loop. Measured at saturation,
+a single instance consumed **1.32 cores and stopped there** — a full core of
+JavaScript plus GC and thread-pool work — while throughput stayed flat as
+concurrency rose 16×. Past roughly one and a third CPUs, another replica is the
 better spend.
 
 ### Measuring it for your workload
 
 Your spec, your policies and your upstreams dominate, so measure rather than
-extrapolate from anyone's table. From the shipped dashboards:
+extrapolate from anyone's table — including the one above.
+
+The harness that produced these numbers is checked in and takes about three
+minutes:
+
+```bash
+npx tsc -b
+node packages/gateway/bench/run.mjs --out my-results.json
+```
+
+It refuses to certify a run it cannot show was limited by the gateway rather
+than by the harness, and exits non-zero when that happens. See
+[`packages/gateway/bench/README.md`](../packages/gateway/bench/README.md) for
+the method and its limits.
+
+To size against your *own* traffic instead, from the shipped dashboards:
 
 1. Drive representative traffic and raise it until **p99 tool latency**
    (Overview) starts climbing while upstream latency (Reliability) stays flat.

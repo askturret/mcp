@@ -190,6 +190,111 @@ export function expressMcp(options: ExpressMcpOptions): Router {
 }
 
 /**
+ * Has something already read this request's body to the end?
+ *
+ * `readableEnded` is the stream's own answer and covers any consumer.
+ * `_body` is what `body-parser` sets once it has handled a request, and it is
+ * checked too because a parser can mark the body handled without the stream
+ * reporting ended (an empty body, or a `type` mismatch that still short-circuits).
+ * Either one means the transport must not expect `data` events.
+ */
+function bodyAlreadyConsumed(req: Request): boolean {
+  const raw = req as unknown as { readableEnded?: boolean; _body?: boolean };
+  return raw.readableEnded === true || raw._body === true;
+}
+
+/**
+ * Recover the bytes a host parser left behind, as close to the wire as we can.
+ *
+ * `express.raw()` and `express.text()` keep the payload verbatim, so those are
+ * exact. `express.json()` keeps only the PARSED value, so the original bytes are
+ * gone and re-serializing is the best available reconstruction — semantically
+ * equal JSON, not byte-identical. That is fine for JSON-RPC, which is what this
+ * route carries, and it is the honest limit of fixing this after the fact.
+ */
+function payloadFromParsedBody(req: Request): Buffer {
+  const body = (req as unknown as { body?: unknown }).body;
+
+  if (Buffer.isBuffer(body)) return body;
+  if (typeof body === 'string') return Buffer.from(body, 'utf-8');
+  if (body === undefined || body === null) return Buffer.alloc(0);
+
+  try {
+    return Buffer.from(JSON.stringify(body), 'utf-8');
+  } catch {
+    // A circular or otherwise unserializable body is not something we can
+    // replay. Send nothing rather than throwing: the transport answers an empty
+    // body with a normal JSON-RPC parse error, and an answer beats a hang.
+    return Buffer.alloc(0);
+  }
+}
+
+/**
+ * Replay an already-consumed body so the transport's stream listeners still fire.
+ *
+ * ## The hazard (#147)
+ *
+ * The transport reads the RAW stream — `readRequestBody` consumes it via
+ * `req.on('data')`. A host app registering a global `express.json()` is
+ * completely ordinary, and it drains that stream first. By the time the
+ * transport attaches listeners the stream has ended: `data` never fires, `end`
+ * never fires, the promise never settles, and the request HANGS. No error, no
+ * 500 — no response at all, which is the hardest failure to attribute to the
+ * right layer.
+ *
+ * ## Why Express cannot use Fastify's fix
+ *
+ * #41 solved this for Fastify with an encapsulated pass-through content-type
+ * parser, so the body is never parsed inside the plugin's scope. Express has no
+ * equivalent: middleware order is global, the host's parser has ALREADY run
+ * before anything scoped to our router can act, and nothing can un-drain a
+ * stream. So Fastify PREVENTS the parse and Express can only REPAIR it. Those
+ * are different mechanisms for the same defect, and the difference is Express's
+ * middleware model rather than a choice.
+ *
+ * ## Why the replay is armed rather than emitted immediately
+ *
+ * Emitting on the spot would fire into an empty room — the transport attaches
+ * its listeners later, inside `readRequestBody`. Instead the first `data`/`end`
+ * subscription arms a `nextTick` replay: that executor attaches all of its
+ * listeners synchronously, so the tick lands once `data`, `end` AND `error` are
+ * all present. It therefore does not depend on the order the transport happens
+ * to subscribe in.
+ *
+ * ## What this preserves
+ *
+ * `maxRequestBodySize` still enforces. The transport counts bytes per chunk and
+ * rejects when the running total exceeds the limit, so replaying the payload as
+ * a single chunk trips exactly the same check.
+ */
+function armBodyReplay(req: Request): void {
+  const stream = req as unknown as {
+    on: (event: string, listener: (...args: unknown[]) => void) => unknown;
+    emit: (event: string, ...args: unknown[]) => boolean;
+  };
+
+  const payload = payloadFromParsedBody(req);
+  const subscribe = stream.on.bind(stream);
+  let armed = false;
+
+  stream.on = function patchedOn(event: string, listener: (...args: unknown[]) => void) {
+    const result = subscribe(event, listener);
+
+    if (!armed && (event === 'data' || event === 'end')) {
+      armed = true;
+      process.nextTick(() => {
+        // An empty payload emits no `data` at all, which is what a genuinely
+        // empty request body looks like on the wire.
+        if (payload.length > 0) stream.emit('data', payload);
+        stream.emit('end');
+      });
+    }
+
+    return result;
+  } as typeof stream.on;
+}
+
+/**
  * Create Express middleware wrapper for HTTP transport
  */
 function createTransportMiddleware(
@@ -236,6 +341,15 @@ function createTransportMiddleware(
         ...context,
         deadline,
       };
+
+      // If a host body parser already drained the stream, replay it so the
+      // transport's listeners still fire (#147). Scoped to requests this
+      // middleware is actually handling — a sibling route in the host app is
+      // never touched. When nothing consumed the body this is a no-op and the
+      // transport reads the real stream exactly as before.
+      if (bodyAlreadyConsumed(req)) {
+        armBodyReplay(req);
+      }
 
       // Delegate to transport handler
       await handler(req, res);

@@ -114,6 +114,22 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- `expressMcp` no longer hangs when the host app registered its own body parser
+  (#147). A global `express.json()` — an ordinary thing for a host app to have —
+  drained the raw request stream before the MCP transport attached its
+  listeners, so `data` and `end` never fired and the request produced **no
+  response at all**: not an error, not a 500, a hang until the client timed out.
+  **Covered surface — adapter behaviour**, and strictly a repair: requests that
+  previously hung now succeed, and requests that already worked are untouched.
+  The adapter now replays an already-consumed body for its own routes only. A
+  sibling route in the host app still sees the body its own parser produced.
+  This is the Express counterpart to the Fastify pass-through parser added in
+  #41. The mechanisms differ because the frameworks do: Fastify can *prevent*
+  the parse inside its plugin scope, while in Express the host's middleware has
+  already run, so the body can only be reconstructed. `express.raw()` and
+  `express.text()` bodies are replayed byte-for-byte; an `express.json()` body
+  is re-serialized from the parsed value, which is semantically equal rather
+  than byte-identical.
 - The `diagnostics` support bundle no longer stamps a protocol version this
   server has never spoken (#190, completing #61). `versions.json` carried a
   hardcoded `2025-06-18` while the server announces `2024-11-05`; it now reports

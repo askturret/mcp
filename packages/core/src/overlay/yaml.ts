@@ -17,8 +17,17 @@
  * ## The safety property that makes a hand-written parser defensible
  *
  * **It refuses what it does not understand.** Every construct outside the
- * supported subset throws with a line number — anchors, aliases, flow
- * collections, multiple documents, tabs. It never guesses.
+ * supported subset throws with a line number — anchors, aliases, merge keys,
+ * directives, multiple documents, flow mappings (`{a: b}`), nested flow
+ * collections (`[[a], [b]]`), tabs. It never guesses.
+ *
+ * Flow SEQUENCES are the deliberate exception: they are SUPPORTED, one level
+ * deep and scalars only, because §55's documented overlay format uses them
+ * (`classifications: [financial]`). This list said "flow collections" until
+ * #182, which read as refusing the whole category — wrong in the PERMISSIVE
+ * direction, since the parser accepts what the claim said it rejected. That is
+ * the direction that costs a reader's trust in a safety argument, which is what
+ * this paragraph is.
  *
  * That is the whole argument. A partial YAML parser that silently mis-reads an
  * anchor produces an overlay that is subtly not what the adopter wrote, and
@@ -29,7 +38,8 @@
  * ## The supported subset
  *
  * Nested block mappings, block sequences (`- item`), plain and quoted scalars,
- * block scalars (`|` and `>`), comments, `null`/`~`/empty, booleans, numbers.
+ * block scalars (`|` and `>`), comments, `null`/`~`/empty, booleans, numbers,
+ * and single-level flow sequences of scalars (`[a, b]`).
  * That covers §55's documented overlay format completely.
  *
  * JSON is parsed by `JSON.parse`, not by this — a `.json` overlay never touches

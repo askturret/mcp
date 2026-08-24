@@ -114,6 +114,24 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- The adapter conformance suite bounds every request, so a hung adapter fails a
+  row instead of stalling the run (#151). `rpc` — the choke point `callTool` and
+  every category go through — now carries a deadline, default 15s, overridable
+  with `ASKTURRET_CONFORMANCE_REQUEST_TIMEOUT_MS`. A malformed override is an
+  error rather than a silent fallback, because falling back to *no* deadline
+  would restore the hang invisibly.
+  Not a covered surface — this is the conformance harness, not a published API.
+  An adapter that accepted a connection and never answered previously produced
+  no table at all: #42's QA watched it sit past 600 seconds, and CI reported
+  only a job timeout with nothing to read. The rejection now travels the
+  ordinary path, so `runBank` records a normal FAILED row carrying a `TIMEOUT:`
+  note that names the method, the URL and the budget.
+  The body read is inside the deadline too — a server can send headers and then
+  stall the body, which hangs just as effectively. A caller-supplied `signal` is
+  composed with the deadline rather than replaced, and only a deadline abort is
+  labelled a timeout, so a kit cancelling its own request is not told the
+  adapter hung.
+
 - `RedactionPipeline.add` no longer documents a security property that does not
   hold (#171). Its public type doc, and the matching comment in
   `createRedactionPipeline`, claimed that "a user rule cannot accidentally

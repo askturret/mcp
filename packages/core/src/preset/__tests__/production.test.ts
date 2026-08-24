@@ -181,8 +181,15 @@ describe('the §10.2 expansion', () => {
     expect(controls).toContain('audit.sink');
     expect(controls).toContain('redaction');
     expect(controls).toContain('outputValidation');
-    expect(controls).toContain('reloadMode');
     expect(pending.every((p) => typeof p.trackedBy === 'number' && p.detail.length > 0)).toBe(true);
+
+    // `reloadMode` was here until #131 and is now WIRED: createMcpServer reads
+    // it off this expansion and builds the controller from it. Asserted as an
+    // ABSENCE rather than deleted, because `pending` overstating what is broken
+    // is a description that does not match the code just as much as one that
+    // overstates what works — and this is the line that would catch a
+    // regression putting it back.
+    expect(controls).not.toContain('reloadMode');
   });
 
   it('maps bounds onto the names the transport actually uses', () => {

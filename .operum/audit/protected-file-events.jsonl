@@ -52,3 +52,4 @@
 {"ts":"2026-08-24T18:28:26Z","branch":"fix/issue-140-mcp-sdk-advisory","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T18:33:39Z","branch":"fix/issue-140-mcp-sdk-advisory","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T18:49:02Z","branch":"agent/engineer","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-24T23:01:22Z","branch":"agent/architect","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

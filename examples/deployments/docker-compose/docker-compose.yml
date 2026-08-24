@@ -1,0 +1,122 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Reference deployment, docker-compose flavour (#63, §11.2).
+#
+# This is the SMALL end of the reference architecture: same topology as the
+# Helm chart next door, sized for one host. See ../kubernetes for the
+# orchestrated version and docs/reference-architecture.md for the reasoning.
+#
+#   docker compose up --build
+#   open http://localhost:3000        # Grafana, dashboards already imported
+#
+# ---------------------------------------------------------------------------
+# Why TWO gateway instances and not one
+# ---------------------------------------------------------------------------
+#
+# §11.2 is a horizontally scaled topology, and the properties worth showing —
+# registry-hash consistency, per-instance breaker state, one shared audit sink
+# — are all invisible with a single instance. A one-pod example would look
+# simpler and would demonstrate none of them.
+#
+# With two, the Registry dashboard shows `mcp:registry_hashes:count = 1` across
+# both. To see the divergence detector work, point `mcp-b` at a DIFFERENT spec
+# and watch it go to 2 — then wait 5 minutes for the alert to leave its
+# debounce window.
+#
+# ---------------------------------------------------------------------------
+# What is mounted from where
+# ---------------------------------------------------------------------------
+#
+# Prometheus and Grafana mount `../../dashboards` — the SAME directory CI
+# checks with check-dashboard-metrics.mjs, not a copy. So the dashboards an
+# evaluator sees here are the ones the guard verified, and a copy cannot drift
+# out from under them. The spec and mock upstream are reused from
+# ../../gateway-compose for the same reason.
+
+name: askturret-mcp-reference
+
+services:
+  # --- the load balancer ---------------------------------------------------
+  #
+  # Round-robins across both instances. Its real job in this example is to make
+  # the inconsistency visible: if the two instances ever serve different
+  # registries, an agent's view of `tools/list` starts depending on which one
+  # it happened to reach.
+  lb:
+    image: nginx:1.27-alpine
+    depends_on: [mcp-a, mcp-b]
+    ports:
+      - '7000:7000'
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+  # --- application instances ----------------------------------------------
+  mcp-a: &mcp
+    build:
+      context: ../../..
+      dockerfile: packages/gateway/Dockerfile
+    environment:
+      # Distinguishes the two in logs, audit records and the readiness body.
+      OTEL_SERVICE_NAME: askturret-mcp
+    volumes:
+      - ./askturret.gateway.yaml:/etc/askturret/askturret.gateway.yaml:ro
+      - ../../gateway-compose/openapi.yaml:/etc/askturret/openapi.yaml:ro
+      - audit:/var/lib/askturret
+    depends_on: [upstream]
+    healthcheck:
+      # The LIVENESS endpoint, deliberately — see the long note in
+      # ../kubernetes/templates/deployment.yaml. Restarting on NOT-READY would
+      # turn the registry-divergence detector into a crash loop.
+      test: ['CMD', 'node', '-e', "fetch('http://localhost:7000/health/live').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    # #47 graceful shutdown: give in-flight calls time to finish before the
+    # runtime is killed. Compose's default is 10s, which is shorter than a slow
+    # upstream call and would truncate exactly the requests draining is for.
+    stop_grace_period: 30s
+
+  mcp-b:
+    <<: *mcp
+
+  # --- the upstream the spec describes ------------------------------------
+  upstream:
+    image: node:20-alpine
+    command: ['node', '/srv/mock-upstream.js']
+    volumes:
+      - ../../gateway-compose/mock-upstream.js:/srv/mock-upstream.js:ro
+
+  # --- telemetry -----------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - '9090:9090'
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # The real alert rules, from the directory CI verifies.
+      - ../../dashboards/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.retention.time=6h'
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    depends_on: [prometheus]
+    ports:
+      - '3000:3000'
+    environment:
+      # Evaluation convenience ONLY. Do not carry this into a real deployment.
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      # The dashboards CI checks — mounted, not copied.
+      - ../../dashboards:/var/lib/grafana/dashboards:ro
+
+volumes:
+  # Named so audit records outlive `docker compose down`. Both instances share
+  # it, which is the point: §11.2's audit topology is ONE durable sink behind N
+  # instances, not one file per pod.
+  audit:

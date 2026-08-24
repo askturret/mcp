@@ -1,0 +1,161 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "askturret-mcp.fullname" . }}
+  labels:
+    {{- include "askturret-mcp.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.rollout.maxUnavailable }}
+      maxSurge: {{ .Values.rollout.maxSurge }}
+  selector:
+    matchLabels:
+      {{- include "askturret-mcp.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{/*
+          Roll the pods when the config changes.
+
+          Without this, `helm upgrade` with an edited ConfigMap updates the
+          ConfigMap and leaves every pod running the OLD config until something
+          unrelated restarts them. The deployment then genuinely has two
+          configurations live — with no rollout in progress to explain it, and
+          no time limit on how long it lasts. That is the sustained-divergence
+          case #64 alerts on, arrived at by doing nothing wrong.
+        */}}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+      labels:
+        {{- include "askturret-mcp.selectorLabels" . | nindent 8 }}
+    spec:
+      terminationGracePeriodSeconds: {{ .Values.rollout.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - --config
+            - /etc/askturret/askturret.gateway.yaml
+          ports:
+            - name: mcp
+              containerPort: {{ .Values.config.port }}
+            - name: metrics
+              containerPort: {{ .Values.config.metricsPort }}
+
+          {{/*
+            ===================================================================
+            READINESS AND LIVENESS MUST NOT BE THE SAME ENDPOINT
+            ===================================================================
+
+            This is the single most consequential pair of settings in the
+            chart, and getting it wrong converts a safety feature into an
+            outage.
+
+            /health/ready reports NOT READY for conditions that should remove
+            an instance from the load balancer but must NOT kill it:
+
+              - draining during shutdown (#47)
+              - registry divergence, when Option B is wired (#64)
+
+            /health/live reports whether the PROCESS is functioning.
+
+            If liveness pointed at /health/ready, then a sustained registry
+            divergence — the exact condition #64 detects — would make every
+            replica fail its liveness probe at once. Kubernetes would restart
+            them all, they would come back with the same divergent config, and
+            fail again: a CrashLoopBackOff caused entirely by the detector
+            installed to prevent a quieter problem.
+
+            Divergence is meant to take a deployment OUT OF ROTATION, not to
+            destroy it. Removed-from-endpoints is recoverable by fixing the
+            config; a crash loop across every replica is an outage.
+          */}}
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: mcp
+            initialDelaySeconds: 3
+            periodSeconds: 5
+            {{/*
+              One failure removes the pod from endpoints. Cheap and reversible
+              — the pod returns the moment it reports ready again.
+            */}}
+            failureThreshold: 1
+
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: mcp
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            {{/*
+              Deliberately slack. Restarting a pod is destructive and throws
+              away in-flight work, so liveness should fire only for a process
+              that is genuinely wedged — never for one that is merely busy or
+              waiting on a slow upstream.
+            */}}
+            failureThreshold: 6
+            timeoutSeconds: 5
+
+          lifecycle:
+            preStop:
+              exec:
+                {{/*
+                  Pause before the runtime begins shutting down.
+
+                  Endpoint removal and SIGTERM race: the pod is removed from
+                  Service endpoints at about the same instant it is signalled,
+                  and in-flight kube-proxy updates take a moment to land. This
+                  sleep lets that propagate, so the runtime starts draining
+                  only once the LB has genuinely stopped sending it new work.
+                  Without it, clients see connection resets on every deploy.
+                */}}
+                command: ['/bin/sh', '-c', 'sleep {{ .Values.rollout.preStopDelaySeconds }}']
+
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/askturret
+              readOnly: true
+            {{- if .Values.audit.persistence.enabled }}
+            - name: audit
+              mountPath: /var/lib/askturret
+            {{- end }}
+            {{/*
+              readOnlyRootFilesystem is on, so anything that writes needs an
+              explicit writable mount. /tmp is the one the Node runtime needs.
+            */}}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "askturret-mcp.fullname" . }}-config
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.audit.persistence.enabled }}
+        - name: audit
+          persistentVolumeClaim:
+            claimName: {{ include "askturret-mcp.fullname" . }}-audit
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

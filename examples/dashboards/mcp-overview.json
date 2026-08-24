@@ -1,0 +1,171 @@
+{
+  "title": "MCP — Overview",
+  "uid": "askturret-mcp-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["askturret", "mcp", "overview"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "description": "Golden signals for an AskTurret MCP deployment: request rate, error rate, and latency. Every expression is checked against the emitted metric set by .github/scripts/check-dashboard-metrics.mjs, so a panel here cannot silently outlive the metric it queries.",
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Job",
+        "type": "query",
+        "datasource": { "type": "prometheus" },
+        "query": "label_values(mcp_requests_total, job)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate by method",
+      "type": "timeseries",
+      "description": "MCP protocol requests per second. A flat line at zero here while pods are up usually means the scrape is broken, not that traffic stopped.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (method) (rate(mcp_requests_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{method}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Error ratio",
+      "type": "timeseries",
+      "description": "Fraction of requests whose outcome is `error`. This is the SLO signal: the reference target is 99.9% of tools/call returning a TYPED result within deadline, so sustained values above 0.001 are burning budget.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.001 },
+              { "color": "red", "value": 0.01 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(mcp_requests_total{job=~\"$job\", outcome=\"error\"}[5m])) / clamp_min(sum(rate(mcp_requests_total{job=~\"$job\"}[5m])), 1)",
+          "legendFormat": "error ratio"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Tool call latency (p50 / p95 / p99)",
+      "type": "timeseries",
+      "description": "Per-tool duration quantiles. Read p99 against the deadline you configured — a p99 that sits just under it is a deployment one slow upstream away from shedding calls.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le, tool) (rate(mcp_tool_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p50 {{tool}}"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le, tool) (rate(mcp_tool_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p95 {{tool}}"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le, tool) (rate(mcp_tool_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99 {{tool}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Tool call rate by tool and outcome",
+      "type": "timeseries",
+      "description": "Which tools are actually used. A tool with no traffic is either dead configuration or an agent that never discovered it — both worth knowing before an upgrade.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tool, outcome) (rate(mcp_tool_calls_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{tool}} / {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Errors by code",
+      "type": "timeseries",
+      "description": "Broken down by typed error code rather than by count alone — a rise in UPSTREAM_UNAVAILABLE and a rise in POLICY_DENIED need opposite responses.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (error_code) (rate(mcp_tool_errors_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{error_code}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "In-flight calls by tool",
+      "type": "timeseries",
+      "description": "Concurrency actually observed per tool. Compare against the bulkhead limits on the Reliability dashboard: in-flight pinned at the limit is saturation, not throughput.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (tool) (mcp_tool_inflight{job=~\"$job\"})",
+          "legendFormat": "{{tool}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Request duration p99 by method",
+      "type": "timeseries",
+      "description": "End-to-end protocol latency, which includes policy evaluation and serialization — so it can diverge from tool latency when policy is the bottleneck.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, method) (rate(mcp_request_duration_seconds_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99 {{method}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Response size p99 by tool",
+      "type": "timeseries",
+      "description": "Serialized output bytes. A tool trending toward the configured response-size limit will start returning OUTPUT_TOO_LARGE before it returns anything wrong, so this is the earlier signal.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 33 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, tool) (rate(mcp_output_bytes_bucket{job=~\"$job\"}[5m])))",
+          "legendFormat": "p99 {{tool}}"
+        }
+      ]
+    }
+  ]
+}

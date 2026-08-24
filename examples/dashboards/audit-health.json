@@ -1,0 +1,114 @@
+{
+  "title": "MCP — Audit health",
+  "uid": "askturret-mcp-audit",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["askturret", "mcp", "audit", "compliance"],
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "description": "Audit delivery health. The reference SLO is ZERO dropped audit records under normal load: any non-zero drop counter means the deployment is configured to violate the audit delivery guarantee, and that loudness is deliberately not suppressable.",
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Job",
+        "type": "query",
+        "datasource": { "type": "prometheus" },
+        "query": "label_values(mcp_audit_appends_total, job)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Dropped audit records (24h) — must be zero",
+      "type": "stat",
+      "description": "The single number this dashboard exists for. Any value above zero means records that should have been durably written were discarded because a buffer overflowed in drop mode. This is a configuration decision, not a transient — it does not resolve itself.",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(mcp_audit_dropped_total{job=~\"$job\"}[24h]))",
+          "legendFormat": "dropped"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Drop rate by sink",
+      "type": "timeseries",
+      "description": "Which sink is losing records. Broken out because a deployment may run a durable sink alongside a best-effort one, and only the durable one carries the guarantee.",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (sink) (rate(mcp_audit_dropped_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{sink}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Append rate by sink and outcome",
+      "type": "timeseries",
+      "description": "Records written and whether the write succeeded. A failing append that is NOT accompanied by a drop means back-pressure is working — the dispatcher is being slowed rather than records being lost.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (sink, outcome) (rate(mcp_audit_appends_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{sink}} / {{outcome}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Buffer depth by sink and instance",
+      "type": "timeseries",
+      "description": "A gauge sitting near its configured bound means dispatch is being back-pressured by audit. That is INTENDED behaviour under a slow sink — it is how the delivery guarantee is kept — but it is not a state to leave running, because request latency is paying for it.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "max by (sink, instance) (mcp_audit_buffer_size{job=~\"$job\"})",
+          "legendFormat": "{{sink}} @ {{instance}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Append failure ratio",
+      "type": "timeseries",
+      "description": "Failed appends as a fraction of all appends. Rising here with a flat drop counter is the healthy failure mode; rising alongside drops is data loss in progress.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (sink) (rate(mcp_audit_appends_total{job=~\"$job\", outcome=\"error\"}[5m])) / clamp_min(sum by (sink) (rate(mcp_audit_appends_total{job=~\"$job\"}[5m])), 1)",
+          "legendFormat": "{{sink}}"
+        }
+      ]
+    }
+  ]
+}

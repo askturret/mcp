@@ -1,0 +1,28 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if .Values.audit.persistence.enabled }}
+{{/*
+  ONE claim, shared by every replica — §11.2's "point every instance at one
+  durable sink".
+
+  See the warning in values.yaml: ReadWriteMany is NOT the default access mode
+  on most managed clusters, and with replicaCount > 1 on a ReadWriteOnce class
+  the extra pods stay Pending. That failure at least announces itself. The
+  failure to avoid is "fixing" it by giving each pod its own volume, which
+  turns one audit trail into N partial ones that each look complete.
+*/}}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "askturret-mcp.fullname" . }}-audit
+  labels:
+    {{- include "askturret-mcp.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.audit.persistence.accessMode }}
+  resources:
+    requests:
+      storage: {{ .Values.audit.persistence.size }}
+  {{- with .Values.audit.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}
+{{- end }}

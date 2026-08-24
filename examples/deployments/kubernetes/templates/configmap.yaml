@@ -1,0 +1,23 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{/*
+  ONE ConfigMap, mounted by EVERY replica.
+
+  This is the mechanical reason §11.2's "all instances compile the same
+  configuration" holds. Per-replica config — a downward-API field, a per-pod
+  overlay, a sidecar that rewrites the file — is precisely how registry hashes
+  diverge, and the #64 detector exists because that mistake is invisible from
+  inside any single pod.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "askturret-mcp.fullname" . }}-config
+  labels:
+    {{- include "askturret-mcp.labels" . | nindent 4 }}
+data:
+  askturret.gateway.yaml: |
+    {{- toYaml .Values.config | nindent 4 }}
+  {{- with .Values.openapiSpec }}
+  openapi.yaml: |
+    {{- . | nindent 4 }}
+  {{- end }}

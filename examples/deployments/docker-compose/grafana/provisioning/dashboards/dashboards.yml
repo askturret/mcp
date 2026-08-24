@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Dashboard provisioning for the reference deployment (#63).
+#
+# Points at the mounted examples/dashboards directory, so the dashboards
+# imported here are literally the files CI verifies with
+# check-dashboard-metrics.mjs. An evaluator therefore sees the checked
+# artifact, not a copy of it that can rot.
+
+apiVersion: 1
+
+providers:
+  - name: askturret
+    type: file
+    disableDeletion: false
+    # Let the files win on restart: they are the source of truth, and a UI edit
+    # that survived a redeploy would silently diverge from the checked-in copy.
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

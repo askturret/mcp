@@ -1,0 +1,117 @@
+{
+  "title": "MCP — Policy activity",
+  "uid": "askturret-mcp-policy",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["askturret", "mcp", "policy", "security"],
+  "time": { "from": "now-24h", "to": "now" },
+  "refresh": "1m",
+  "description": "What the policy engine is deciding, and where. Policy is the surface where a misconfiguration is silent by design — a rule that denies everything and a rule that allows everything both return successfully. These panels are how that becomes visible.",
+  "templating": {
+    "list": [
+      {
+        "name": "job",
+        "label": "Job",
+        "type": "query",
+        "datasource": { "type": "prometheus" },
+        "query": "label_values(mcp_policy_decisions_total, job)",
+        "refresh": 1,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Decisions by phase and effect",
+      "type": "timeseries",
+      "description": "Grouped rather than filtered to specific effects on purpose: the panel shows whatever effects the engine actually emits, so a newly-added effect appears here instead of being silently excluded by a hardcoded selector.",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (phase, decision) (rate(mcp_policy_decisions_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{phase}} / {{decision}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Deny ratio",
+      "type": "timeseries",
+      "description": "Denials as a fraction of all decisions. Both directions are alarming: a spike means something legitimate started being refused; a drop to zero on a deployment that normally denies means a policy stopped loading.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(mcp_policy_decisions_total{job=~\"$job\", decision=\"deny\"}[5m])) / clamp_min(sum(rate(mcp_policy_decisions_total{job=~\"$job\"}[5m])), 1)",
+          "legendFormat": "deny ratio"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Decision volume by phase",
+      "type": "timeseries",
+      "description": "Discovery-phase and call-phase decisions have different volumes by nature — discovery runs once per listing, authorization once per call. A phase that goes quiet is the signal.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (phase) (rate(mcp_policy_decisions_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{phase}}"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Redaction hits by rule",
+      "type": "timeseries",
+      "description": "Which redaction rules are firing. A rule at a flat zero is either dead or guarding something that stopped happening — and you cannot tell which from the config alone, which is why the counter is per-rule.",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (rule) (rate(mcp_redaction_hits_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{rule}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Redaction hits by surface",
+      "type": "timeseries",
+      "description": "Where redaction is being applied — logs, metric labels, audit records, error payloads. An observable surface with zero hits while others are busy suggests that surface is not wired through the pipeline.",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (surface) (rate(mcp_redaction_hits_total{job=~\"$job\"}[5m]))",
+          "legendFormat": "{{surface}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Total policy decisions (24h)",
+      "type": "stat",
+      "description": "Sanity check that the engine is being consulted at all. Zero over a day on a serving deployment means policy is not in the request path.",
+      "gridPos": { "h": 5, "w": 24, "x": 0, "y": 25 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(mcp_policy_decisions_total{job=~\"$job\"}[24h]))",
+          "legendFormat": "decisions"
+        }
+      ]
+    }
+  ]
+}

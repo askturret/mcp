@@ -1,0 +1,35 @@
+{{/* SPDX-License-Identifier: Apache-2.0 */}}
+{{- if .Values.monitoring.prometheusRule.enabled }}
+{{/*
+  Ships the registry-divergence rules (#64) as a PrometheusRule.
+
+  The rule bodies are NOT copied into this chart. A copy would be a second
+  source of truth for the alert that detects configuration drift, which is a
+  joke with a long fuse — CI checks examples/dashboards/alerts.yaml, and
+  nothing would check the duplicate.
+
+  Instead the canonical file is injected at install time:
+
+    helm install mcp . \
+      --set monitoring.prometheusRule.enabled=true \
+      --set-file monitoring.prometheusRule.rules=../../dashboards/alerts.yaml
+
+  If the flag is on and no file was supplied, this template FAILS the render
+  rather than emitting an empty PrometheusRule. An empty rule object installs
+  cleanly, shows up in `kubectl get prometheusrules`, and alerts on nothing —
+  indistinguishable from working, which is the failure mode this whole issue
+  is about.
+*/}}
+{{- if not .Values.monitoring.prometheusRule.rules }}
+{{- fail "monitoring.prometheusRule.enabled=true requires --set-file monitoring.prometheusRule.rules=../../dashboards/alerts.yaml (refusing to install a PrometheusRule with no rules in it)" }}
+{{- end }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "askturret-mcp.fullname" . }}
+  labels:
+    {{- include "askturret-mcp.labels" . | nindent 4 }}
+spec:
+  {{- /* alerts.yaml is a document whose top-level key is `groups:`. */}}
+  {{- .Values.monitoring.prometheusRule.rules | nindent 2 }}
+{{- end }}

@@ -18,12 +18,17 @@
 # What is being detected
 # ---------------------------------------------------------------------------
 #
-# `mcp_registry_operations{registry_hash="…"}` is a gauge every instance emits,
-# labelled with the short hash of the snapshot it is serving. All instances of
-# one deployment compile the same configuration, so they must all report the
-# SAME hash. Two live hashes means two pods are answering `tools/list`
-# differently — an agent is told a tool exists by one instance and refused by
-# another, intermittently, by load-balancer luck.
+# `mcp_registry_hash_id` is a gauge every instance emits, whose VALUE is the
+# first 13 hex digits of the snapshot it is serving, read as a number. All
+# instances of one deployment compile the same configuration, so they must all
+# report the SAME value. Two live values means two pods are answering
+# `tools/list` differently — an agent is told a tool exists by one instance and
+# refused by another, intermittently, by load-balancer luck.
+#
+# The identity is a value rather than a label so that this detection cannot
+# reintroduce #136: a hash LABEL mints a permanent new series on every reload.
+# One series per instance is the whole budget here, which is why the rules below
+# use `count_values` rather than `count by (registry_hash)`.
 #
 # ---------------------------------------------------------------------------
 # Why `for: 5m` is the whole design
@@ -55,22 +60,35 @@ groups:
 
       # How many DISTINCT registry hashes are live in this deployment.
       #
-      # `count(count by (registry_hash) (...))` is the double-count idiom: the
-      # inner groups the series by hash, the outer counts the groups. 1 is
+      # `count(count_values(...))` is the double-count idiom: the inner groups
+      # instances by the hash they report, the outer counts the groups. 1 is
       # healthy; 2+ means instances disagree.
+      #
+      # `count_values` and not `count by (registry_hash)`, because the identity
+      # is the metric's VALUE and not a label on it. That is deliberate and it
+      # is what makes this bounded: a hash LABEL adds a permanent series on
+      # every reload, so the series count grows without limit for as long as the
+      # deployment lives (#136). As a value there is one series per instance
+      # forever, and `count_values` reconstructs the grouping at query time —
+      # where the cardinality is bounded by the hashes actually LIVE rather than
+      # by every hash ever served.
       #
       # Grouped by `job` so two separate deployments scraped by one Prometheus
       # are compared against themselves rather than against each other — §64's
       # scope rule, expressed in PromQL. Add any label that identifies a
       # deployment in your setup (`namespace`, `cluster`, `env`).
       - record: mcp:registry_hashes:count
-        expr: count by (job) (count by (job, registry_hash) (mcp_registry_operations))
+        expr: count by (job) (count_values by (job) ("registry_hash", mcp_registry_hash_id))
 
       # Instances per hash — what an operator wants the moment the alert fires,
       # because it says which side is the minority and therefore which pods to
       # look at first.
+      #
+      # The `registry_hash` label this synthesises holds the hash in DECIMAL,
+      # because it came from a metric value. Convert with `printf '%013x'` to
+      # get the prefix that /mcp/health/ready reports.
       - record: mcp:registry_instances_by_hash:count
-        expr: count by (job, registry_hash) (mcp_registry_operations)
+        expr: count_values by (job) ("registry_hash", mcp_registry_hash_id)
 
       # -- alerts ---------------------------------------------------------
 

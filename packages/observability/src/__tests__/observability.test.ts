@@ -11,6 +11,8 @@
 
 import { describe, it, expect } from '@jest/globals';
 
+import { METRIC_DEFINITIONS } from '@askturret/mcp-core';
+
 import { openTelemetry } from '../index.js';
 import type { OtelInstrumentLike, OtelMeterLike, OtelSpanLike, OtelTracerLike } from '../index.js';
 
@@ -163,13 +165,22 @@ describe('openTelemetry', () => {
     const { meter, created } = fakeMeter();
     openTelemetry({ meter });
 
-    // The thirteen from §9.2, plus mcp_bulkhead_rejected_total (#43), plus the
-    // two retry series (#45), plus the three audit series (#48), so a
-    // three audit series (#48) and mcp_redaction_hits_total (#49), so a
-    // dashboard can reference any of them.
-    expect(created).toHaveLength(20);
+    // The contract is "an instrument for EVERY declared metric", so assert it
+    // against the declaration rather than against a hand-kept literal. Not
+    // circular: `created` is what the adapter actually did with the meter, and
+    // METRIC_DEFINITIONS is the contract it must cover. A literal drifts on
+    // every added metric and reports only that a number changed — this reports
+    // WHICH series an adopter's dashboard would find missing.
+    //
+    // (`cardinality.test.ts` still pins the declared count with a literal. That
+    // is the right place for one: there the set itself is the subject.)
+    expect(new Set(created)).toEqual(new Set(METRIC_DEFINITIONS.map((d) => d.name)));
+    expect(created).toHaveLength(METRIC_DEFINITIONS.length);
+
     expect(created).toContain('mcp_requests_total');
     expect(created).toContain('mcp_registry_operations');
+    // Registry identity as a value (#136 QA) — the series Option A counts.
+    expect(created).toContain('mcp_registry_hash_id');
     expect(created).toContain('mcp_tool_queue_depth');
     expect(created).toContain('mcp_bulkhead_rejected_total');
     expect(created).toContain('mcp_retry_attempts_total');

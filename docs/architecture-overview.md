@@ -301,7 +301,7 @@ before it means anything:
 
 | | How | Cost |
 |---|---|---|
-| **A — external** (default) | Prometheus alerts when `count by (registry_hash)` exceeds one for longer than the debounce | A human's attention |
+| **A — external** (default) | Prometheus alerts when the number of distinct `mcp_registry_hash_id` values exceeds one for longer than the debounce | A human's attention |
 | **B — internal** (opt-in) | Instances announce their hash to an operator-provided store; sustained divergence flips `/health/ready` to 503 | **Availability** — the deployment leaves rotation |
 
 Every instance reports its hash on `/mcp/health/ready` regardless, so the

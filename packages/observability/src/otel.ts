@@ -171,9 +171,16 @@ function otelMetrics(meter: OtelMeterLike): MetricRecorder {
   //
   // Bounded by the label cardinality of the gauge metrics, which is exactly
   // what the §9.2 cardinality rule keeps finite — `tool` is bounded by the
-  // registry, `bulkhead` / `breaker` / `registry_hash` are bounded by
-  // construction. An unbounded label here would be a memory leak, and the
-  // guard that prevents it is already enforced on every call below.
+  // registry, `bulkhead` and `breaker` by construction. An unbounded label here
+  // is a memory leak, because nothing evicts from this map.
+  //
+  // That was not hypothetical. This comment used to list `registry_hash` among
+  // the bounded labels, and it was not one: the hash was truncated to 12
+  // characters, which bounds a label's WIDTH and not the number of values it
+  // can take. Every reload that changed the registry added an entry here that
+  // was never removed. #136 dropped the label; the guard below rejects the
+  // whole `hash` family now, so the claim this comment makes is enforced rather
+  // than asserted.
   const gaugeLevels = new Map<string, number>();
 
   const seriesKey = (name: MetricName, labels: MetricLabels): string => {

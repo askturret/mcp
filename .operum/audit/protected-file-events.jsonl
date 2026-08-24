@@ -41,3 +41,5 @@
 {"ts":"2026-08-24T06:26:59Z","branch":"feat/issue-107-doctor-readme-reconcile","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T10:25:25Z","branch":"feat/issue-110-collapse-status-wrappers","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T13:27:48Z","branch":"fix/issue-134-vacuous-typecheck","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-24T14:17:47Z","branch":"fix/issue-136-bound-registry-hash-label","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-24T14:23:15Z","branch":"fix/issue-136-bound-registry-hash-label","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

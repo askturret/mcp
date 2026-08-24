@@ -38,3 +38,8 @@ temp/
 
 # Supply-chain artifacts (generated in CI, published as release assets)
 sbom.cdx.json
+
+# Agent-runtime marker, written into the repo root by the harness. Runtime
+# state, never repository content — and while untracked it blocks any tooling
+# that refuses to merge with a dirty worktree.
+.operum-stash-recovery

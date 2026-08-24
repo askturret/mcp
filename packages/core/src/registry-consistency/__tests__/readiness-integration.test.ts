@@ -15,6 +15,7 @@ import { dirname, join } from 'node:path';
 
 import { evaluateReadiness } from '../../health/readiness.js';
 import { parseYamlSubset } from '../../overlay/yaml.js';
+import { METRIC_DEFINITIONS } from '../../telemetry/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ALERTS = join(__dirname, '../../../../../examples/dashboards/alerts.yaml');
@@ -104,8 +105,58 @@ describe('Option A — the reference alert rules', () => {
     const record = records.find((r) => r['record'] === 'mcp:registry_hashes:count');
 
     expect(record).toBeDefined();
-    // The double-count idiom: inner groups by hash, outer counts the groups.
-    expect(String(record?.['expr'])).toContain('count by (job, registry_hash) (mcp_registry_operations)');
+    // The double-count idiom: inner groups instances by the hash they report,
+    // outer counts the groups.
+    expect(String(record?.['expr'])).toContain(
+      'count_values by (job) ("registry_hash", mcp_registry_hash_id)',
+    );
+  });
+
+  // #136 QA — the assertion above is TEXT, and text is exactly what stayed
+  // green while the rule went inert.
+  //
+  // #136 removed the `registry_hash` label from `mcp_registry_operations`. The
+  // rule kept its expression, so every textual assertion in this block passed
+  // — but a missing label collapses to `""` on every series, so the inner
+  // grouping became one group per job and the count became a constant 1.
+  // `McpRegistryHashDivergence` (severity: critical) could never fire again,
+  // and nothing anywhere said so.
+  //
+  // So assert the rules against the METRIC CONTRACT rather than against their
+  // own text: every `mcp_*` series a rule reads must be declared, and every
+  // label it groups by must be declared ON one of those metrics. Those are the
+  // two facts whose absence made the rule inert.
+  it('keys on metrics and labels the runtime actually declares', () => {
+    const declared = new Map<string, readonly string[]>(
+      METRIC_DEFINITIONS.map((d) => [d.name as string, d.labels]),
+    );
+    // Attached by Prometheus at scrape time; no metric declares them.
+    const SCRAPE_LABELS = ['job', 'instance', 'pod', 'namespace', 'cluster', 'le'];
+
+    for (const rule of rules) {
+      const expr = String(rule['expr']);
+      const used = [...new Set(expr.match(/\bmcp_[a-z0-9_]+/g) ?? [])];
+
+      // The alerts read recording rules only, so they have nothing to check here.
+      if (used.length === 0) continue;
+
+      const allowed = new Set<string>(SCRAPE_LABELS);
+      for (const name of used) {
+        expect(declared.has(name)).toBe(true);
+        for (const label of declared.get(name) ?? []) allowed.add(label);
+      }
+
+      // `by (...)` / `without (...)` only. A quoted `count_values` output label
+      // is deliberately NOT one of these: it is synthesised from the metric's
+      // VALUE and so need not exist on the metric — which is precisely what
+      // lets the hash live in the value instead of in an unbounded label.
+      for (const match of expr.matchAll(/\b(?:by|without)\s*\(([^)]*)\)/g)) {
+        for (const raw of (match[1] ?? '').split(',')) {
+          const label = raw.trim();
+          if (label !== '') expect(allowed.has(label)).toBe(true);
+        }
+      }
+    }
   });
 
   it('groups by job, so two deployments are not compared with each other', () => {

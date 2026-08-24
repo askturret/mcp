@@ -18,7 +18,8 @@
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative, dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Scan root. Defaults to `packages`; an explicit argument keeps this guard
@@ -27,17 +28,59 @@ import { join, relative } from 'node:path';
  */
 const ROOTS = [process.argv[2] ?? 'packages'];
 
-/** §9.2 denylist, verbatim. */
-const DENYLIST = [
-  'user',
-  'tenant',
-  'principal',
-  'email',
-  'sub',
-  'requestId',
-  'input',
-  'arg',
-];
+/**
+ * The §9.2 denylist, READ FROM the runtime module rather than copied.
+ *
+ * ## Why it is extracted by regex and not imported
+ *
+ * Importing would mean importing `dist`, and the whole reason this guard parses
+ * source is that it must run when the build is broken. So it reads the array
+ * literal out of the TypeScript source instead — no build, one definition.
+ *
+ * ## Why it is not simply duplicated (#136)
+ *
+ * It was. There were two hand-maintained copies of these terms, and the comment
+ * on the second even pointed at the first. They agreed until they did not:
+ * `hash` was added to the runtime list to close an unbounded-cardinality label,
+ * every unit test went green, and THIS guard — the one CI runs, and the one
+ * readiness criterion 8 cites as evidence — still passed the reintroduced
+ * label. A guard that reports "0 violations" against a list it has not been
+ * told about is worse than no guard, because it is quoted as proof.
+ *
+ * Extraction failure is FATAL rather than a fallback to a hardcoded copy. A
+ * fallback is how this silently returns to two lists.
+ */
+function readDenylist() {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const source = resolve(here, '../../packages/core/src/telemetry/cardinality.ts');
+
+  let contents;
+  try {
+    contents = readFileSync(source, 'utf-8');
+  } catch (error) {
+    console.error(`Could not read the denylist source at ${source}: ${error.message}`);
+    console.error('This guard derives its terms from that file; it will not guess.');
+    process.exit(2);
+  }
+
+  const block = /export const LABEL_DENYLIST:[^=]*=\s*\[([^\]]*)\]/.exec(contents);
+  if (!block) {
+    console.error(`Could not find LABEL_DENYLIST in ${source}.`);
+    console.error('Refusing to fall back to a copied list — that is how the two drift apart.');
+    process.exit(2);
+  }
+
+  const terms = [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  if (terms.length === 0) {
+    console.error(`LABEL_DENYLIST in ${source} parsed as empty.`);
+    console.error('An empty denylist would pass every label, so this fails instead.');
+    process.exit(2);
+  }
+
+  return terms;
+}
+
+const DENYLIST = readDenylist();
 
 /**
  * Normalized comparison, matching `normalizeLabel` in

@@ -5,11 +5,7 @@
 
 import { describe, it, expect, jest } from '@jest/globals';
 import { AtomicRegistryReference } from '../../registry-reference.js';
-import {
-  createReloadController,
-  ReloadFailedError,
-  shortHash,
-} from '../controller.js';
+import { createReloadController, ReloadFailedError } from '../controller.js';
 import type { ReloadMetrics, ReloadOutcome, SnapshotViolation } from '../types.js';
 import { snapshot } from './fixtures.js';
 
@@ -175,7 +171,15 @@ describe('createReloadController', () => {
     expect(controller.readiness().ready).toBe(false);
   });
 
-  it('records reload outcomes and a short, bounded registry-hash label', async () => {
+  it('records reload outcomes and an UNLABELLED operation-count gauge (#136)', async () => {
+    // This asserted a 12-character `hash` on every gauge, under the comment
+    // "Low cardinality is the point of the short label". That was the defect
+    // stated as a requirement: shortening bounds the label's WIDTH, and the
+    // number of distinct values is what cardinality means. Two reloads produced
+    // two hashes here, and would produce two permanent series in a backend.
+    //
+    // The gauge now carries no label at all, so the assertion is about the
+    // COUNT of things recorded rather than their width.
     const v1 = snapshot(1, ['a']);
     const v2 = snapshot(2, ['a', 'b']);
     const ref = new AtomicRegistryReference(v1);
@@ -195,16 +199,18 @@ describe('createReloadController', () => {
 
     expect(reloads).toEqual(['success', 'invalid']);
 
-    // Construction gauge + one per successful swap.
+    // Construction gauge + one per successful swap. The rejected reload
+    // records no gauge, because nothing was published.
+    //
+    // The hash is asserted alongside the count, and it must be the hash of the
+    // snapshot now SERVING (#136 QA). Divergence detection compares this value
+    // across instances, so reporting the candidate's hash after a rejected
+    // reload — or a stale one after a rollback — would make a correctly
+    // converged deployment look split.
     expect(gauges).toEqual([
-      { hash: shortHash(v1.hash), count: 1 },
-      { hash: shortHash(v2.hash), count: 2 },
+      { hash: v1.hash, count: 1 },
+      { hash: v2.hash, count: 2 },
     ]);
-    // Low cardinality is the point of the short label.
-    for (const gauge of gauges) {
-      expect(gauge.hash.length).toBe(12);
-      expect(v1.hash.length).toBeGreaterThan(gauge.hash.length);
-    }
   });
 
   it('logs every reload with old and new hash', async () => {

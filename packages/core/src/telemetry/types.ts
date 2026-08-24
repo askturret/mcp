@@ -139,6 +139,7 @@ export const METRIC = {
   outputBytes: 'mcp_output_bytes',
   registryReloadTotal: 'mcp_registry_reload_total',
   registryOperations: 'mcp_registry_operations',
+  registryHashId: 'mcp_registry_hash_id',
   bulkheadRejectedTotal: 'mcp_bulkhead_rejected_total',
   retryAttemptsTotal: 'mcp_retry_attempts_total',
   retryExhaustedTotal: 'mcp_retry_exhausted_total',
@@ -245,10 +246,47 @@ export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
       'Registry reloads by outcome. `error_class` splits a benign superseded reload from a real failure (#37 QA note).',
   },
   {
+    // Unlabelled since #136. It carried `registry_hash`, shortened to 12
+    // characters — which bounds the label's WIDTH, not its cardinality. Every
+    // reload that changed the registry produced a new, permanent series.
+    // A gauge of the LIVE registry needs exactly one series; which registry is
+    // live belongs on a span or in the readiness payload, where
+    // high-cardinality identity costs nothing.
+    //
+    // This comment sits ABOVE the entry rather than inside it deliberately:
+    // `check-dashboard-metrics.mjs` matches `name … kind … labels` as one span,
+    // so a comment between those keys drops the metric from its view entirely.
     name: METRIC.registryOperations,
     kind: 'gauge',
-    labels: ['registry_hash'],
-    description: 'Operation count in the live registry, labelled by short registry hash.',
+    labels: [],
+    description:
+      'Operation count in the live registry. Deliberately unlabelled (#136): the registry ' +
+      'hash that labelled it is unbounded, and truncating it bounded only its width.',
+  },
+  {
+    // Registry identity, carried in the VALUE rather than in a label (#136 QA).
+    //
+    // Divergence detection needs to compare WHICH registry each instance
+    // serves, so removing the hash outright made `McpRegistryHashDivergence`
+    // permanently inert — a missing label collapses to "" for every series, so
+    // `count by (registry_hash)` was a constant 1.
+    //
+    // A label cannot carry it: this recorder models gauges as UpDownCounters,
+    // and a series that has been zeroed still EXISTS and is still counted by
+    // `count by (...)`. So there is no eviction that would bound a hash LABEL
+    // here — the old value would keep voting forever. The value has no such
+    // problem: one series per instance, whose value changes on reload.
+    //
+    // Query-side, `count_values` turns the value back into a label at query
+    // time, which is where that cardinality is bounded by the number of hashes
+    // actually live rather than by every hash ever served.
+    name: METRIC.registryHashId,
+    kind: 'gauge',
+    labels: [],
+    description:
+      'Identity of the live registry as a number: the first 13 hex digits of the snapshot ' +
+      'hash. One series per instance (#136 QA) — the identity is the VALUE, so cardinality ' +
+      'is bounded by deployment size rather than by reload count.',
   },
   {
     name: METRIC.bulkheadRejectedTotal,

@@ -300,274 +300,57 @@ jobs:
       - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/reliability
       - run: npm test --workspace=packages/reliability
 
-  # Status wrapper jobs for merge-coverage gate
-  adapter-test-status:
+  # One job normalises path-filtered skip/pass/fail into the single signal the
+  # merge-coverage gate reads. It replaces the 13 per-package `*-status` wrapper
+  # jobs that used to live here (#110) — each burned a full runner slot to echo a
+  # string, and together they were half of the 27 jobs a PR scheduled.
+  #
+  # The rule is UNCHANGED, and `ci-coverage-status.test.mjs` asserts it against
+  # the old wrapper rule combination by combination:
+  #
+  #   implicated = this package changed, or the change is workspace-wide
+  #   implicated     -> that package's test job MUST have concluded 'success'
+  #   not implicated -> satisfied; the job will have skipped
+  #
+  # This is also why a green signal alongside a skipped `test-core` is correct on
+  # a cli-only PR: core is not implicated, so there is nothing to have tested.
+  #
+  # `needs` below is the source of truth for what gets checked — the script
+  # derives each package from the `test-<key>` job names it is handed, so adding
+  # a test job here is all that is needed to have it covered. Keeping 13
+  # hand-written wrappers in sync by hand was the alternative.
+  #
+  # One behaviour deliberately changed: the old wrappers reported SUCCESS when the
+  # `changes` job failed. Empty filter outputs made every package look "not
+  # implicated", so all 13 went green having tested nothing — a false pass in
+  # exactly the runner-capacity shape (2026-08-21) that motivated this issue. The
+  # script refuses instead; see its header for the reasoning.
+  coverage-status:
     runs-on: ubuntu-latest
-    needs: [changes, test-adapter-test]
+    needs:
+      - changes
+      - test-core
+      - test-adapters-express
+      - test-adapters-fastify
+      - test-adapter-conformance
+      - test-adapter-test
+      - test-sources-openapi
+      - test-transports
+      - test-observability
+      - test-explorer
+      - test-gateway
+      - test-cli
+      - test-reliability
     if: always()
     steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.adapter-test }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-adapter-test.result }}" == "success" ]; then
-              echo "Adapter conformance kit passed"
-              exit 0
-            else
-              echo "Adapter conformance kit failed or was cancelled"
-              exit 1
-            fi
-          else
-            echo "Adapter conformance kit skipped (no changes)"
-            exit 0
-          fi
-
-  reliability-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-reliability]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.reliability }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-reliability.result }}" == "success" ]; then
-              echo "Reliability suite passed"
-              exit 0
-            else
-              echo "Reliability suite failed or was cancelled"
-              exit 1
-            fi
-          else
-            echo "Reliability suite skipped (no changes)"
-            exit 0
-          fi
-
-  core-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-core]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.core }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-core.result }}" == "success" ]; then
-              echo "Core tests passed"
-              exit 0
-            else
-              echo "Core tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "Core tests skipped (no changes)"
-            exit 0
-          fi
-
-  adapters-express-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-adapters-express]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.adapters-express }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-adapters-express.result }}" == "success" ]; then
-              echo "Adapters-express tests passed"
-              exit 0
-            else
-              echo "Adapters-express tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "Adapters-express tests skipped (no changes)"
-            exit 0
-          fi
-
-  adapters-fastify-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-adapters-fastify]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.adapters-fastify }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-adapters-fastify.result }}" == "success" ]; then
-              echo "Adapters-fastify tests passed"
-              exit 0
-            else
-              echo "Adapters-fastify tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "Adapters-fastify tests skipped (no changes)"
-            exit 0
-          fi
-
-  adapter-conformance-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-adapter-conformance]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.adapter-conformance }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-adapter-conformance.result }}" == "success" ]; then
-              echo "Adapter conformance passed on every registered adapter"
-              exit 0
-            else
-              echo "Adapter conformance failed or was cancelled"
-              exit 1
-            fi
-          else
-            echo "Adapter conformance skipped (no changes)"
-            exit 0
-          fi
-
-  sources-openapi-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-sources-openapi]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.sources-openapi }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-sources-openapi.result }}" == "success" ]; then
-              echo "Sources-openapi tests passed"
-              exit 0
-            else
-              echo "Sources-openapi tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "Sources-openapi tests skipped (no changes)"
-            exit 0
-          fi
-
-  transports-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-transports]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.transports }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-transports.result }}" == "success" ]; then
-              echo "Transports tests passed"
-              exit 0
-            else
-              echo "Transports tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "Transports tests skipped (no changes)"
-            exit 0
-          fi
-
-  observability-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-observability]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.observability }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-observability.result }}" == "success" ]; then
-              echo "Observability tests passed"
-              exit 0
-            else
-              echo "Observability tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "Observability tests skipped (no changes)"
-            exit 0
-          fi
-
-  explorer-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-explorer]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.explorer }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-explorer.result }}" == "success" ]; then
-              echo "Explorer tests passed"
-              exit 0
-            else
-              echo "Explorer tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "Explorer tests skipped (no changes)"
-            exit 0
-          fi
-
-  cli-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-cli]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.cli }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-cli.result }}" == "success" ]; then
-              echo "CLI tests passed"
-              exit 0
-            else
-              echo "CLI tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "CLI tests skipped (no changes)"
-            exit 0
-          fi
-
-  gateway-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-gateway]
-    if: always()
-    steps:
-      - name: Check test result
-        run: |
-          if [ "${{ needs.changes.outputs.gateway }}" == "true" ] || [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            if [ "${{ needs.test-gateway.result }}" == "success" ]; then
-              echo "Gateway tests passed"
-              exit 0
-            else
-              echo "Gateway tests failed or were cancelled"
-              exit 1
-            fi
-          else
-            echo "Gateway tests skipped (no changes)"
-            exit 0
-          fi
-
-  workspace-status:
-    runs-on: ubuntu-latest
-    needs: [changes, test-core, test-adapters-express, test-sources-openapi, test-transports, test-observability, test-explorer, test-cli, test-gateway]
-    if: always()
-    steps:
-      - name: Check workspace changes
-        run: |
-          if [ "${{ needs.changes.outputs.workspace }}" == "true" ]; then
-            # Workspace changes require all tests to pass
-            if [ "${{ needs.test-core.result }}" == "success" ] && \
-               [ "${{ needs.test-adapters-express.result }}" == "success" ] && \
-               [ "${{ needs.test-sources-openapi.result }}" == "success" ] && \
-               [ "${{ needs.test-transports.result }}" == "success" ] && \
-               [ "${{ needs.test-observability.result }}" == "success" ] && \
-               [ "${{ needs.test-explorer.result }}" == "success" ] && \
-               [ "${{ needs.test-cli.result }}" == "success" ] && \
-               [ "${{ needs.test-gateway.result }}" == "success" ]; then
-              echo "All tests passed for workspace changes"
-              exit 0
-            else
-              echo "Some tests failed for workspace changes"
-              exit 1
-            fi
-          else
-            echo "No workspace changes"
-            exit 0
-          fi
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Normalise per-package coverage into one signal
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node .github/scripts/ci-coverage-status.mjs
 
   # #79: tests that never run, or that cannot fail, report coverage that does
   # not exist. Eight instances were caught by hand in QA before this job; it
@@ -650,6 +433,16 @@ jobs:
 
       - name: Dashboards reference only metrics we emit
         run: node .github/scripts/check-dashboard-metrics.mjs
+
+      # #110: the coverage signal decides whether a diff was tested at all, so it
+      # is exactly the kind of logic that must not be trusted unverified. The
+      # self-test drives every refusal branch and, critically, checks the new
+      # signal against the 13 wrapper jobs it replaced on every reachable
+      # combination — the contract this collapse had to preserve. It also asserts
+      # every path-filtered test job is wired into the aggregate's `needs`, since
+      # a package omitted from that list would silently never be required.
+      - name: Self-test the coverage signal
+        run: node .github/scripts/ci-coverage-status.test.mjs
 
       # Needs dist/ — packages resolve each other through their built entry points.
       - run: npm run build

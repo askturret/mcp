@@ -43,6 +43,7 @@ const ALL_CODES: readonly OperationErrorCode[] = [
   'CANCELLED',
   'UPSTREAM_UNAVAILABLE',
   'OUTCOME_UNKNOWN',
+  'REQUEST_TOO_LARGE',
   'OUTPUT_TOO_LARGE',
   'INTERNAL_ERROR',
 ];

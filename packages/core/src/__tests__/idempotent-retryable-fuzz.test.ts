@@ -43,6 +43,7 @@ const ALL_CODES: readonly OperationErrorCode[] = [
   'CANCELLED',
   'UPSTREAM_UNAVAILABLE',
   'OUTCOME_UNKNOWN',
+  'REQUEST_TOO_LARGE',
   'OUTPUT_TOO_LARGE',
   'INTERNAL_ERROR',
 ];
@@ -86,7 +87,10 @@ describe('Idempotent+retryable fuzz (readiness #6)', () => {
     // Guards every loop below: a silently-empty matrix would make each
     // "never retries" assertion vacuously true.
     expect(EFFECT_COMBINATIONS).toHaveLength(16);
-    expect(ALL_CODES).toHaveLength(12);
+    // 13 since #125 added REQUEST_TOO_LARGE. Bumping this is the deliberate
+    // step the count exists to force: a new code has to be classified in
+    // NEVER_RETRY_CODES or TRANSIENT_CODES, not merely appended to the union.
+    expect(ALL_CODES).toHaveLength(13);
   });
 
   it('never retries OUTCOME_UNKNOWN, for any effect combination', () => {

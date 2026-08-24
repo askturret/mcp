@@ -377,8 +377,25 @@ export type OperationErrorCode =
   | 'CANCELLED'               // Request cancelled via AbortSignal
   | 'UPSTREAM_UNAVAILABLE'    // Upstream service unreachable
   | 'OUTCOME_UNKNOWN'         // Lost response, outcome uncertain (do NOT retry)
+  | 'REQUEST_TOO_LARGE'       // Request exceeds size limit (see note below)
   | 'OUTPUT_TOO_LARGE'        // Response exceeds size limit
   | 'INTERNAL_ERROR';         // Unexpected internal error
+
+/**
+ * A note on the two size codes (#125).
+ *
+ * `REQUEST_TOO_LARGE` is emitted by the TRANSPORT, before the body has been
+ * parsed or an operation resolved. Unlike every other code in this union it
+ * therefore can never originate from an executor, and the dispatcher never
+ * returns it. It lives here anyway so that the retry and breaker
+ * classifications keyed on `OperationErrorCode` cover it explicitly rather
+ * than by omission.
+ *
+ * That is also why it is absent from the executor-facing code lists in
+ * `adapter-conformance` (error-mapping) and `reliability` (chaos injection):
+ * those enumerate codes an executor may return, and injecting this one would
+ * exercise a path that cannot occur. Its absence there is deliberate.
+ */
 
 /**
  * Operation error - safe error projection across transport boundary.

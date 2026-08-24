@@ -30,16 +30,34 @@ class MockRequest {
   private chunks: Buffer[] = [];
   private ended = false;
   private closeHandler?: () => void;
+  private failure?: Error;
 
   setBody(body: string) {
     this.chunks = [Buffer.from(body, 'utf-8')];
   }
 
+  /**
+   * Make the stream fail instead of delivering a body (#125).
+   *
+   * Needed to distinguish "the client sent too much" from "the socket broke",
+   * which the transport must report differently. Before this the mock had no
+   * way to reach `req.on('error')` at all, so the non-size branch of the body
+   * read was untestable.
+   */
+  failWith(error: Error) {
+    this.failure = error;
+  }
+
   on(event: string, handler: (data?: any) => void) {
     if (event === 'data') {
-      this.chunks.forEach((chunk) => handler(chunk));
+      // A failing stream delivers no data and never ends — emitting either
+      // would settle the read before the error handler is even registered,
+      // and the test would silently exercise the success path.
+      if (!this.failure) this.chunks.forEach((chunk) => handler(chunk));
     } else if (event === 'end') {
-      handler();
+      if (!this.failure) handler();
+    } else if (event === 'error') {
+      if (this.failure) handler(this.failure);
     } else if (event === 'close') {
       this.closeHandler = handler;
     }
@@ -499,13 +517,44 @@ describe('HTTP Transport', () => {
 
       const handler = smallLimitTransport.handler();
 
-      // The handler catches the error and returns 500
       await handler(req, res);
+
+      // Asserted 500 / -32603 / "Internal server error" until #125. That was
+      // the defect, not the contract: an oversized payload is a normal,
+      // client-correctable condition, and reporting it as a server fault told
+      // the client to look in the wrong place — or to retry, since -32603 reads
+      // as transient.
+      //
+      // Now symmetric with the OUTPUT_TOO_LARGE case below: same 413, same
+      // shape, opposite direction.
+      expect(res.statusCode).toBe(413);
+      const response = JSON.parse(res.body);
+      expect(response.error.code).toBe('REQUEST_TOO_LARGE');
+      expect(response.error.message).toBe('Request exceeds size limit');
+      // `id` is null rather than absent: the body never parsed, so there is no
+      // id to echo, and JSON-RPC says to use null when it cannot be determined.
+      expect(response.jsonrpc).toBe('2.0');
+      expect(response.id).toBeNull();
+    });
+
+    it('still returns 500 when the body read fails for a reason other than size', async () => {
+      // The narrowing that makes the above safe. `readRequestBody` rejects for
+      // socket errors too, and turning EVERY body-read failure into 413 would
+      // trade one misreported condition for another — telling a client its
+      // payload was too big when the connection actually broke.
+      const transport = createHttpTransport({ registry, executors });
+
+      const req = new MockRequest();
+      const res = new MockResponse();
+      req.headers.host = 'localhost';
+      req.method = 'POST';
+      req.failWith(new Error('ECONNRESET'));
+
+      await transport.handler()(req, res);
 
       expect(res.statusCode).toBe(500);
       const response = JSON.parse(res.body);
       expect(response.error.code).toBe(-32603);
-      expect(response.error.message).toBe('Internal server error');
     });
 
     it('should reject response exceeding size limit with OUTPUT_TOO_LARGE', async () => {

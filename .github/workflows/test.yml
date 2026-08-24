@@ -523,8 +523,16 @@ jobs:
 
       # #65 / §17: Architectural readiness gate for 1.0.
       # Verifies that all 12 readiness criteria are met and reference passing tests.
-      # The readiness.md matrix is not just documentation — it is a prerequisite for
-      # release tagging. A tag matching v1.0.* is refused if any row is red.
+      #
+      # COMMIT-TIME ONLY (#233). This comment used to end "A tag matching v1.0.*
+      # is refused if any row is red" — which was never true here: this workflow
+      # triggers on pull_request and push to main, and no workflow in the repo
+      # has a tag trigger at all. docs/readiness.md carried the same false claim
+      # and is corrected in the same change. The tag-time gate is #269.
+      #
+      # Worth keeping the correction rather than just deleting the sentence: a
+      # grep for "tag" in this directory used to find only that comment, which
+      # read as evidence the gate existed.
       - name: Policy parity test (criterion #4)
         run: npm test --testPathPattern="discovery-invocation-parity"
 

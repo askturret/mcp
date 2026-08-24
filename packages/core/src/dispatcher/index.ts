@@ -37,7 +37,11 @@ import {
   type BulkheadRegistry,
   type BulkheadsConfig,
 } from '../bulkhead/index.js';
-import { buildAuditEvent, type AuditSink } from '../audit/index.js';
+import {
+  AUDIT_REGISTRY_HASH_UNRESOLVED,
+  buildAuditEvent,
+  type AuditSink,
+} from '../audit/index.js';
 import { redactAuditEvent, redactSerializedError } from '../redaction/surfaces.js';
 import {
   createBreakerRegistry,
@@ -460,7 +464,13 @@ class DefaultCommandDispatcher implements CommandDispatcher {
           ...(command.traceId === undefined ? {} : { traceId: command.traceId }),
           ...(command.principal === undefined ? {} : { principalId: command.principal.id }),
           operationId: command.operationId,
-          registryHash: audit.registryHash ?? command.registryHash ?? 'unknown',
+          // NOT `?? command.registryHash` (#218). Redaction exempts this field
+          // as non-sensitive by construction, so anything caller-controlled
+          // reaching it is both a misattribution — a reader takes it for a
+          // server-observed digest — and an unredacted channel into the audit
+          // log. The server-authored sentinel says what actually happened:
+          // dispatch never resolved the operation, so no hash was observed.
+          registryHash: audit.registryHash ?? AUDIT_REGISTRY_HASH_UNRESOLVED,
           policyDecision: audit.decision,
           input: command.input,
           outcome: result.isError ? (result.error?.code ?? 'INTERNAL_ERROR') : 'success',

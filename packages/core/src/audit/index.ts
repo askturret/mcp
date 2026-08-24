@@ -6,6 +6,7 @@
 export { DEFAULT_MAX_BUFFER_SIZE, bufferedSink } from './buffer.js';
 export { auditEventId, canonicalize, digestInput, principalRef } from './digest.js';
 export { buildAuditEvent } from './event.js';
+export { AUDIT_REGISTRY_HASH_UNRESOLVED } from './types.js';
 
 export { stdoutAuditSink } from './sinks/stdout.js';
 export type { AuditWritable, StdoutSinkOptions } from './sinks/stdout.js';

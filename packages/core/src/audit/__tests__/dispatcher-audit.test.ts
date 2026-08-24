@@ -15,7 +15,7 @@ import { createDispatcher, type DispatcherOptions } from '../../dispatcher/index
 import { createSnapshot } from '../../compiler/passes/freeze-and-hash.js';
 import { noopTracer } from '../../telemetry/tracer.js';
 import { createRecordingMetricRecorder } from '../../telemetry/metrics.js';
-import { bufferedSink } from '../index.js';
+import { AUDIT_REGISTRY_HASH_UNRESOLVED, bufferedSink } from '../index.js';
 import type { AuditEvent, AuditSink } from '../types.js';
 import type { OperationDefinition, OperationResult } from '../../types.js';
 import type { OperationExecutor } from '../../executor/index.js';
@@ -323,19 +323,23 @@ describe('pre-#48 behaviour is preserved', () => {
 });
 
 // ---------------------------------------------------------------------------
-// What `OperationCommand.registryHash` actually does (#129)
+// `OperationCommand.registryHash` never reaches the audit log (#129 → #218)
 //
-// #129 was filed on the premise that the field is never read. It IS read, on
-// exactly one path. Both halves are pinned here so the answer survives without
-// archaeology — which is what that issue asks for.
+// #129 was filed on the premise that the field is never read, and pinned the
+// one path that made that wrong: an unknown-operation call fell back to the
+// CALLER's value. #218 decided that fallback was the defect and removed it, so
+// the second test below now asserts the opposite of what it used to.
+//
+// That inversion is deliberate. The old test documented real behaviour
+// faithfully; #218 is the decision that the behaviour was wrong. Left as one
+// block so the reversal is visible to whoever reads it next, rather than
+// looking like the earlier assertion was simply mistaken.
 // ---------------------------------------------------------------------------
 
-describe('OperationCommand.registryHash (#129)', () => {
+describe('OperationCommand.registryHash never reaches the audit log (#218)', () => {
   it('is IGNORED for a resolved operation — the audit carries the server snapshot hash', async () => {
-    // The security-relevant half. A caller must not be able to relabel which
-    // snapshot served its own call, or the atomic-reload invariant #37 built
-    // would be caller-controllable. The dispatcher captures its own hash at
-    // stage 1 and audits that.
+    // A caller must not be able to relabel which snapshot served its own call,
+    // or the atomic-reload invariant #37 built would be caller-controllable.
     const sink = collector();
 
     await harness({ sink }).dispatch(command({ registryHash: 'CALLER-CLAIMED-HASH' }));
@@ -343,13 +347,16 @@ describe('OperationCommand.registryHash (#129)', () => {
     expect(sink.events).toHaveLength(1);
     expect(sink.events[0]?.registryHash).not.toBe('CALLER-CLAIMED-HASH');
     expect(sink.events[0]?.registryHash).toBeTruthy();
+    // And not the sentinel either — this path DID observe a hash. Without this
+    // the fix could satisfy every other assertion by blanking the field
+    // everywhere, which would destroy the log's usefulness rather than fix it.
+    expect(sink.events[0]?.registryHash).not.toBe(AUDIT_REGISTRY_HASH_UNRESOLVED);
   });
 
-  it('IS read as a last-resort audit label when dispatch fails before capturing one', async () => {
-    // The half that makes "never read" wrong. `auditTrace.registryHash` is
-    // assigned only AFTER stage 1 resolves the operation, so a command naming
-    // an operation that does not exist returns first and the unaudited-exit
-    // path falls back to the caller's value.
+  it('is IGNORED for an unknown operation too — the sentinel lands, not the claim', async () => {
+    // The #218 fix. `auditTrace.registryHash` is assigned only AFTER stage 1
+    // resolves the operation, so an unknown operation returns before there is
+    // one. That used to fall back to the caller's string.
     //
     // Not an exotic path: every call for an unknown operation takes it.
     const sink = collector();
@@ -359,6 +366,43 @@ describe('OperationCommand.registryHash (#129)', () => {
     );
 
     expect(sink.events).toHaveLength(1);
-    expect(sink.events[0]?.registryHash).toBe('CALLER-CLAIMED-HASH');
+    expect(sink.events[0]?.registryHash).toBe(AUDIT_REGISTRY_HASH_UNRESOLVED);
+    expect(sink.events[0]?.registryHash).not.toBe('CALLER-CLAIMED-HASH');
+  });
+
+  it('gives a caller no unredacted channel into the audit log through that field', async () => {
+    // The sharper half of #218, and the reason tagging the source would not
+    // have been enough. `registryHash` is in AUDIT_STRUCTURAL_FIELDS, so
+    // redaction deliberately preserves it verbatim — an exemption justified by
+    // the value being server-computed. While the caller could reach that field,
+    // it could post arbitrary text through a surface that strips everything
+    // else, including content redaction exists to catch.
+    const sink = collector();
+    const smuggled = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhdHRhY2tlciJ9.c2lnbmF0dXJl';
+
+    await harness({ sink }).dispatch(
+      command({ operationId: 'no-such-operation', registryHash: smuggled }),
+    );
+
+    expect(sink.events).toHaveLength(1);
+    // Asserted over the WHOLE record, not just the field: the point is that the
+    // value is absent from the audit log, wherever it might have been copied.
+    expect(JSON.stringify(sink.events[0])).not.toContain(smuggled);
+  });
+
+  it('proves that field really is exempt from redaction, so the guard above is not vacuous', async () => {
+    // Guards the guard. If `registryHash` were redacted like an ordinary field,
+    // the smuggling test would pass for the wrong reason — redaction would be
+    // catching it, and removing the #218 fix would not reintroduce the hole.
+    // A server hash that looks exactly like the high-entropy content redaction
+    // strips must still survive, which is what makes the exemption real and the
+    // fallback the only thing standing between a caller and this field.
+    const sink = collector();
+
+    await harness({ sink }).dispatch(command());
+
+    const hash = sink.events[0]?.registryHash ?? '';
+    expect(hash).not.toBe('[REDACTED]');
+    expect(hash.length).toBeGreaterThan(0);
   });
 });

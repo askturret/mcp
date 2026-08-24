@@ -18,6 +18,21 @@
 import type { PolicyEvidence } from '../policy/types.js';
 
 /**
+ * `AuditEvent.registryHash` when the server never observed one (#218).
+ *
+ * Dispatch assigns a snapshot hash only after stage 1 resolves the operation,
+ * so a call naming an operation that does not exist returns before there is
+ * one. The record still needs a value — `registryHash` is required, and
+ * removing it would be breaking under compatibility-policy §1 — so it gets this
+ * server-authored sentinel.
+ *
+ * It says WHY there is no hash rather than merely that there is none:
+ * resolution never happened. Exported so a log consumer can compare against a
+ * constant instead of a string literal it has to keep in step by hand.
+ */
+export const AUDIT_REGISTRY_HASH_UNRESOLVED = 'unresolved';
+
+/**
  * One audit record.
  *
  * ## The absences here are the design
@@ -50,6 +65,16 @@ export interface AuditEvent {
   readonly principalRef?: string;
 
   readonly operationId: string;
+
+  /**
+   * The snapshot digest the SERVER observed serving this call.
+   *
+   * Server-authored on every path (#218). When dispatch failed before stage 1
+   * captured a hash — which every call naming an unknown operation does — this
+   * is `AUDIT_REGISTRY_HASH_UNRESOLVED`, never the caller's claim. Redaction
+   * exempts this field as non-sensitive by construction, and that exemption is
+   * only sound while nothing caller-controlled can reach it.
+   */
   readonly registryHash: string;
 
   /** 'allow' | 'deny' | 'confirmation_required'. */

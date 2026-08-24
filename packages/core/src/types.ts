@@ -338,31 +338,34 @@ export interface OperationCommand {
    * for the dispatch context, the span attribute, the log fields and the audit
    * record. Setting this field cannot change any of them.
    *
-   * ## The one thing it does do
+   * ## It is now read nowhere (#129 → #218)
    *
-   * It is a last-resort label on the audit record, and only when dispatch
-   * failed before it had a hash of its own to use:
+   * #129 was filed on the premise that this field is never read. That was very
+   * nearly true: it was read on exactly one path, as a last-resort label on the
+   * audit record when dispatch failed before it had a hash of its own —
    *
    * ```ts
    * registryHash: audit.registryHash ?? command.registryHash ?? 'unknown'
    * ```
    *
-   * `audit.registryHash` is assigned only after stage 1 resolves the operation,
-   * so a command naming an operation that does NOT exist returns first and this
-   * value is what lands in the audit log. That is not an exotic path — every
-   * unknown-operation call takes it. Both halves are pinned by tests in
-   * `audit/__tests__/dispatcher-audit.test.ts`.
+   * — which every call naming an unknown operation took. #218 removed that
+   * fallback, because redaction exempts the audit `registryHash` field as
+   * non-sensitive by construction, and a caller-controlled string reaching it
+   * was both a misattribution and an unredacted channel into the audit log. The
+   * dispatcher now writes `AUDIT_REGISTRY_HASH_UNRESOLVED` there instead.
    *
-   * Note the consequence, which is a caller-controlled string reaching an audit
-   * field that redaction deliberately preserves: see the provenance caveat on
-   * `AUDIT_STRUCTURAL_FIELDS` in `redaction/rules.ts`.
+   * So the premise #129 started from is true today: nothing reads this field.
    *
    * ## So why is it still here
    *
-   * Because it is read, so removing it would change behaviour rather than
-   * delete dead weight — and because it is a required field on a public type,
-   * so removal is a breaking change under compatibility-policy §1. It is kept
-   * and described rather than removed or quietly demoted to optional.
+   * Because it is a required field on a public type, and removing it is a
+   * breaking change under compatibility-policy §1. It is kept and described as
+   * inert rather than removed or quietly demoted to optional.
+   *
+   * Setting it is harmless and has no observable effect. If that ever stops
+   * being true, the reason it was made inert is above — a caller must not be
+   * able to put its own content into an audit field readers trust as
+   * server-observed.
    */
   readonly registryHash: string;
 }

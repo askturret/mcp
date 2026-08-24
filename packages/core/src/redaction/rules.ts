@@ -84,18 +84,25 @@ const NORMALIZED_SENSITIVE = new Set(SENSITIVE_KEY_NAMES.map(normalizeKey));
  * layer up. The values are non-sensitive BY CONSTRUCTION: they are digests
  * and pseudonyms produced specifically so the raw value never appears.
  *
- * ## One exception to "by construction" (#129)
+ * ## The exception that used to exist here (#129, closed by #218)
  *
- * `registryHash` is server-produced on every path but one. When dispatch fails
- * before stage 1 captures a snapshot hash — which every call naming an unknown
- * operation does — the audit record falls back to `command.registryHash`, the
- * value the CALLER supplied. That string is arbitrary, and it is preserved here
- * verbatim, in a field a reader will reasonably take for a server-observed
- * digest.
+ * `registryHash` was server-produced on every path but one: when dispatch
+ * failed before stage 1 captured a snapshot hash — which every call naming an
+ * unknown operation does — the audit record fell back to
+ * `command.registryHash`, the value the CALLER supplied. That string was
+ * arbitrary and was preserved here verbatim, in a field a reader will
+ * reasonably take for a server-observed digest.
  *
- * Recorded rather than changed: #129 was a documentation cleanup, and altering
- * what the audit log stores is a behaviour change deserving its own issue and
- * its own review. Raised there rather than fixed in passing.
+ * #218 removed the fallback. The dispatcher now writes
+ * `AUDIT_REGISTRY_HASH_UNRESOLVED` instead, so every value in this field is
+ * server-authored and "non-sensitive by construction" is true without
+ * qualification.
+ *
+ * Kept as a note rather than deleted, because it names the property this list
+ * DEPENDS on: an exemption from redaction is only sound while nothing
+ * caller-controlled can reach the exempted field. Anything added to this list
+ * later has to clear that same bar, and the cheapest way to remember is to see
+ * what happened the one time it was not met.
  */
 export const AUDIT_STRUCTURAL_FIELDS: readonly string[] = [
   'eventId',

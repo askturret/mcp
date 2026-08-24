@@ -107,6 +107,21 @@ when `1.0.0` ships.
   because fourteen ADRs are already cited by number in source comments and none
   is written down; reusing one of those numbers would be worse than the gap.
 
+### Fixed
+- `migrate` no longer rewrites an identifier wherever it appears once a file
+  imports it. Each occurrence is now classified by syntactic position, and only
+  the import specifier and plain references are rewritten. Property accesses,
+  object keys, object shorthand and declaration bindings are reported as
+  `manual` findings with line numbers instead.
+  Two of those shapes silently corrupted adopter code AND compiled, so the
+  compile-error backstop the design relies on could not see them: `cfg.durability`
+  on the adopter's own object was renamed along with the import, and
+  `{ durability }` shorthand became `{ durable }` — a different emitted key.
+  No adopter was affected: no shipped migration has a `source` rule, so this
+  path has never run outside tests. Fixed ahead of the first one that does.
+  A file can now produce both a `rewrite` and a `manual` finding; previously the
+  engine kept only one finding per file per rule.
+
 ### Changed
 - A policy denial carrying `UNAUTHENTICATED` now reaches the caller as
   `UNAUTHENTICATED` rather than being collapsed into `FORBIDDEN`. Every other

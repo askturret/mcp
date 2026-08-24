@@ -213,6 +213,12 @@ Every adapter — ours and yours — must pass the same test bank. This is the
 contract a new adapter (NestJS, Koa, a community one) has to satisfy before it
 can be called an AskTurret MCP adapter.
 
+> **Adapter changes need two approvals, not one:** a green conformance run
+> *and* a review from the adapter owners. Neither substitutes for the other —
+> the bank proves wire-level parity but cannot judge whether an adapter is
+> idiomatic or leaks scope into a host app, and a reviewer cannot check eight
+> categories by reading a diff. See [Repository Ownership](docs/ownership.md).
+
 ```bash
 npm run test:conformance                      # every registered adapter
 npm run test:conformance -- --adapter express # one of them
@@ -469,6 +475,7 @@ const server = createMcpServer({
 - **[Changelog](CHANGELOG.md)** — Every entry classified against the policy above.
 - **[Generated-Output Licensing](docs/generated-output-license.md)** — Who owns the output AskTurret produces. A versioned contract.
 - **[Telemetry Policy](docs/telemetry-policy.md)** — Zero telemetry by default; any future collection is opt-in only. A versioned contract.
+- **[Repository Ownership](docs/ownership.md)** — Who reviews what, why the boundaries are drawn there, and how to become a maintainer. Routing lives in [`.github/CODEOWNERS`](.github/CODEOWNERS).
 - **[Roadmap](docs/roadmap.md)** — What's planned for future releases.
 - **[Why not just generate code?](docs/why-not-generate.md)** — Comparison with code-gen approaches.
 

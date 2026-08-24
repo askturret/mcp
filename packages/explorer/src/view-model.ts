@@ -8,6 +8,7 @@
 
 import { redactExplorerModel } from '@askturret/mcp-core';
 import type { RegistrySnapshot } from '@askturret/mcp-core';
+import { buildProvenanceView } from './panels.js';
 import type { ExplorerToolView, ExplorerViewModel } from './types.js';
 
 /**
@@ -35,6 +36,12 @@ export function buildExplorerViewModel(
     },
     // Deliberately only the type — see ExplorerToolView.executorType.
     executorType: op.executor.type,
+    // Panel 1 (#56). Built here, per tool, because the page routes between
+    // tools client-side: a single provenance panel chosen at render time could
+    // only have been right for one of them. `buildProvenanceView` is the same
+    // builder the panels API exposes, so the rendered table and a programmatic
+    // reader cannot disagree about what the compiler applied.
+    provenance: buildProvenanceView(op),
   }));
 
   // Stable, predictable ordering. Map iteration order is insertion order, which

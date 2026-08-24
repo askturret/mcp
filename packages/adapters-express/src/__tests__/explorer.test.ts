@@ -15,6 +15,7 @@ import request from 'supertest';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { fromDefinitions, viaHandler, type OperationExecutor } from '@askturret/mcp-core';
+import type { ExplorerPanels } from '@askturret/mcp-explorer';
 
 import { mcpFromOpenApi, expressMcp } from '../index.js';
 
@@ -293,5 +294,94 @@ describe('production disable switch (§10.1 invariant 9)', () => {
 
     const messages = warnings();
     expect(messages).not.toContain('enableExplorer: true');
+  });
+});
+
+describe('explorerPanels supplier (#56)', () => {
+  /** A panel set whose values are recognisable in the served page. */
+  function somePanels(marker: string): ExplorerPanels {
+    return {
+      traces: { available: false, reason: marker, spans: [] },
+      runtime: {
+        breakersConfigured: false,
+        bulkheadsConfigured: false,
+        breakers: [],
+        bulkheads: [],
+        pollIntervalMs: 2000,
+        refreshStrategy: 'polling',
+      },
+      diff: { available: false, reason: 'only one snapshot', snapshots: [], changes: [] },
+    };
+  }
+
+  it('embeds what the supplier returned', async () => {
+    const { app, ready } = mount(
+      '/mcp',
+      expressMcp({ sources: [fromDefinitions([])], explorerPanels: () => somePanels('MARKER-A') }),
+    );
+    await ready;
+
+    const res = await request(app).get('/mcp/explorer').expect(200);
+    expect(res.text).toContain('MARKER-A');
+  });
+
+  it('calls the supplier per request, so live state is not frozen at startup', async () => {
+    let calls = 0;
+    const { app, ready } = mount(
+      '/mcp',
+      expressMcp({
+        sources: [fromDefinitions([])],
+        explorerPanels: () => {
+          calls += 1;
+          return somePanels(`MARKER-${calls}`);
+        },
+      }),
+    );
+    await ready;
+
+    await request(app).get('/mcp/explorer').expect(200);
+    const second = await request(app).get('/mcp/explorer').expect(200);
+
+    expect(calls).toBe(2);
+    // Not the first render's value — a cached panel set would show breaker
+    // states from startup while looking current.
+    expect(second.text).toContain('MARKER-2');
+    expect(second.text).not.toContain('MARKER-1');
+  });
+
+  it('awaits an async supplier', async () => {
+    const { app, ready } = mount(
+      '/mcp',
+      expressMcp({
+        sources: [fromDefinitions([])],
+        explorerPanels: async () => Promise.resolve(somePanels('MARKER-ASYNC')),
+      }),
+    );
+    await ready;
+
+    const res = await request(app).get('/mcp/explorer').expect(200);
+    expect(res.text).toContain('MARKER-ASYNC');
+  });
+
+  it('degrades to the tool browser when the supplier throws, and says so in the log', async () => {
+    process.env['NODE_ENV'] = 'development';
+    const { app, ready } = mount(
+      '/mcp',
+      expressMcp({
+        sources: [fromDefinitions([])],
+        explorerPanels: () => {
+          throw new Error('metrics registry unavailable');
+        },
+      }),
+    );
+    await ready;
+
+    // The Explorer is what an operator opens WHEN something is already wrong.
+    // A failing metrics read must not take the whole page away.
+    const res = await request(app).get('/mcp/explorer').expect(200);
+    expect(res.text.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(res.text).toContain('window.__EXPLORER_PANELS__=null;');
+    // Degraded, never silent.
+    expect(warnings()).toContain('Explorer panel supplier threw');
   });
 });

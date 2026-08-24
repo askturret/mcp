@@ -34,6 +34,7 @@ import {
 import { fromOpenApi } from '@askturret/mcp-sources-openapi';
 import { createHttpTransport } from '@askturret/mcp-transports';
 import { buildExplorerViewModel, renderExplorerHtml } from '@askturret/mcp-explorer';
+import type { ExplorerPanels, ExplorerPanelsSupplier } from '@askturret/mcp-explorer';
 import type { FastifyMcpOptions, McpFromOpenApiOptions, RequestContext } from './types.js';
 
 /**
@@ -136,6 +137,7 @@ export function fastifyMcp(options: FastifyMcpOptions): FastifyPluginAsync {
       logger,
       registry,
       ready,
+      ...(options.explorerPanels !== undefined && { explorerPanels: options.explorerPanels }),
     });
 
     // The MCP endpoint itself. Registered at the plugin's own root so that
@@ -248,10 +250,12 @@ interface ExplorerRouteOptions {
   readonly logger: ReturnType<typeof createFacadeLogger>;
   readonly registry: { current: () => Parameters<typeof buildExplorerViewModel>[0] };
   readonly ready: Promise<void>;
+  readonly explorerPanels?: ExplorerPanelsSupplier;
 }
 
 function registerExplorerRoute(fastify: FastifyInstance, options: ExplorerRouteOptions): void {
-  const { enableExplorer, explicitlyEnabled, basePath, logger, registry, ready } = options;
+  const { enableExplorer, explicitlyEnabled, basePath, logger, registry, ready, explorerPanels } =
+    options;
 
   if (!enableExplorer) {
     fastify.get('/explorer', async (_request: FastifyRequest, reply: FastifyReply) => {
@@ -278,12 +282,28 @@ function registerExplorerRoute(fastify: FastifyInstance, options: ExplorerRouteO
 
     const model = buildExplorerViewModel(registry.current(), basePath);
 
+    // Resolved per request — see the same block in the Express adapter for why
+    // live panel state cannot be captured once at construction (#56), and why a
+    // throwing supplier degrades to the tool browser instead of 500-ing the
+    // page an operator reaches for when something is already wrong.
+    let panels: ExplorerPanels | undefined;
+    if (explorerPanels !== undefined) {
+      try {
+        panels = await explorerPanels();
+      } catch (error) {
+        logger.warn('Explorer panel supplier threw; rendering without diagnostic panels', {
+          error: error instanceof Error ? error.message : String(error),
+          path: `${basePath}/explorer`,
+        });
+      }
+    }
+
     return reply
       .header('Content-Type', 'text/html; charset=utf-8')
       // Dev tool: never cache, never index.
       .header('Cache-Control', 'no-store')
       .header('X-Robots-Tag', 'noindex, nofollow')
-      .send(renderExplorerHtml(model));
+      .send(renderExplorerHtml(model, panels));
   });
 }
 

@@ -17,3 +17,17 @@
 export * from './types.js';
 export { buildExplorerViewModel } from './view-model.js';
 export { renderExplorerHtml } from './html.js';
+export {
+  buildBreakerView,
+  buildDiffView,
+  buildExplorerPanels,
+  buildPolicyExplanationView,
+  buildPrincipalSurfaceView,
+  buildProvenanceView,
+  buildTraceView,
+  type BreakerStatsLike,
+  type BuildPanelsInput,
+  type BulkheadStatsLike,
+  type PolicyDecisionLike,
+  type RecordedSpanLike,
+} from './panels.js';

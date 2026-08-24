@@ -29,6 +29,23 @@ const html = renderExplorerHtml(buildExplorerViewModel(registry.current(), baseP
 only has to serve the string. The Express adapter mounts it at
 `${basePath}/explorer`.
 
+### Diagnostic panels (#56)
+
+`renderExplorerHtml` takes an optional second argument — the six diagnostic
+panels from `buildExplorerPanels`:
+
+```ts
+const html = renderExplorerHtml(model, buildExplorerPanels({ /* live state */ }));
+```
+
+Omit it and the page is unchanged apart from per-tool provenance, which rides
+on the view model and needs nothing from the host. Adapters expose this as the
+`explorerPanels` option, called per request. See
+[`docs/explorer-panels.md`](../../docs/explorer-panels.md).
+
+Everything embedded in the page is redacted at serialization, so a hand-built
+panel set cannot route around the pipeline the builders apply.
+
 ## Production
 
 Per §10.1 invariant 9, the Explorer is **disabled by default when

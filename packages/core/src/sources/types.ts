@@ -14,8 +14,46 @@ import type { OperationDefinition, JSONSchema } from '../types.js';
 // =============================================================================
 
 /**
- * Logger interface for discovery context.
- * Minimal subset - full logging integration deferred to observability epic.
+ * Logger interface for discovery context. **Legacy — new code should use
+ * `StructuredLogger`** (`logging/types.ts`).
+ *
+ * Minimal subset: `debug`/`info`/`warn`/`error` with an unconstrained
+ * `Record<string, unknown>` of metadata.
+ *
+ * ## Two logger types exist, and this is the older one (#133)
+ *
+ * `StructuredLogger` (#38, §9.3) is a strict superset — it adds `trace` and
+ * `child()`, and its methods are generic so that logging a §9.4 forbidden field
+ * such as `rawInput` is a COMPILE error. This interface has neither: no
+ * `child()` for request-scoped fields, no `trace`, and `meta` accepts anything.
+ *
+ * There is no name collision to trip over — the two are `Logger` and
+ * `StructuredLogger` — so a call site that needs `child()` and holds this type
+ * gets a compile error rather than a surprise. The hazard is subtler: you can
+ * quite reasonably reach for this one, log a forbidden field, and have nothing
+ * object.
+ *
+ * ## Why it still exists
+ *
+ * It sits on two documented public seams — `DiscoveryContext.logger` (below)
+ * and `CompilerContext.logger`. Widening those to `StructuredLogger` is safe
+ * for CONSUMERS (a superset still has `.info()`), but every CONSTRUCTOR of
+ * those contexts would then have to supply `trace` and `child`: both
+ * `NOOP_LOGGER` constants in `reload/`, every adapter fixture, and every test
+ * that builds a discovery context. That is a real migration, on a public seam,
+ * and it is scheduled rather than skipped.
+ *
+ * **Retirement trigger: Epic #3 / #49**, which opens these files anyway to
+ * replace the `RedactionFn` placeholder with the central redaction pipeline.
+ * Migrating before that target exists risks moving the same call sites twice.
+ *
+ * Full reasoning, and the decision record:
+ * `docs/adr/ADR-021-two-logger-types.md`.
+ *
+ * To bridge from a `StructuredLogger` to this type — which is what the gateway
+ * does to satisfy `DiscoveryContext` — use `asLegacyLogger`. It enforces the
+ * §9.4 forbidden-field list at runtime, because the compile-time guard cannot
+ * reach across this interface's signature.
  */
 export interface Logger {
   debug(message: string, meta?: Record<string, unknown>): void;

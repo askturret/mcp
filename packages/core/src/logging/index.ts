@@ -8,6 +8,7 @@ export {
   jsonStdoutSink,
   silentSink,
   asLegacyLogger,
+  DROPPED_FIELDS_KEY,
 } from './logger.js';
 
 export {
@@ -23,6 +24,7 @@ export {
 export { pinoSink, type PinoLike } from './pino.js';
 
 export {
+  FORBIDDEN_FIELD_KEYS,
   LOG_LEVEL_SEVERITY,
   type CanonicalLogFields,
   type ForbiddenFieldKey,

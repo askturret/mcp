@@ -114,6 +114,25 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- The DCO check no longer certifies commits it never examined (#141).
+  `.github/scripts/dco-check.sh` selected commits with `git rev-list
+  --no-merges`, so **any** commit carrying two parents was excluded — not
+  failed, never looked at. A commit can acquire a second parent by accident:
+  tooling that leaves `MERGE_HEAD` set turns the next ordinary commit into one,
+  and libgit2-based tooling does not drop the redundant parent the way `git
+  commit` does. On #135's branch that happened to every commit at once, so the
+  job filtered the branch down to nothing and reported success having verified
+  zero commits.
+  Not a covered surface — this is repository CI, not a published API. It is
+  nonetheless a real gap: nine such commits exist on `main`, and one
+  (`36dfdeb0`) carries no trailer at all and passed this check in silence.
+  A merge is now exempt only if it is *genuine* — some extra parent brings in
+  history the first parent did not already have. A merge in shape only is
+  verified like the ordinary commit it is, while forge-generated merges stay
+  exempt as before. Two supporting changes: a run that examines zero commits
+  out of a non-empty range now fails instead of passing, and the counts of
+  skipped and degenerate merges are printed, because the original defect
+  survived precisely by being invisible.
 - `expressMcp` no longer hangs when the host app registered its own body parser
   (#147). A global `express.json()` — an ordinary thing for a host app to have —
   drained the raw request stream before the MCP transport attached its

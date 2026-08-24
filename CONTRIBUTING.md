@@ -99,6 +99,13 @@ This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDU
 - Run `npm test` before committing
 - For integration tests, see `packages/*/tests/`
 
+**A test must go RED when the fix it guards is reverted.** If you are fixing a
+bug, comment out the fix and watch the test fail before you open the PR; if you
+cannot produce a deterministic RED-on-revert, say so in the PR rather than
+leaving it unsaid. See [docs/TESTING.md](docs/TESTING.md) for that rule in full
+and for five named ways a test passes without guarding anything — each drawn from
+a defect that reached review in this repository.
+
 ## Coding Standards
 
 ### TypeScript

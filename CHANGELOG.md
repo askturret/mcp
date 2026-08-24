@@ -133,9 +133,10 @@ when `1.0.0` ships.
 - Six dead documentation links across four files, including `../ARCHITECTURE.md`
   (referenced twice, never existed) and the same phantom `quick-start.md` /
   `policies.md` names in three separate files. `docs/readiness.md` criterion 12
-  is downgraded to ⚠️ partial: its evidence link pointed at a directory that
-  does not exist, and the example that does exist demonstrates an exporter
-  plugin rather than the source or executor the criterion names (#233).
+  cited a plugin example directory that does not exist; it now cites the
+  `registerSource` / `registerExecutor` capability gate and the plugin tests
+  that exercise it, which is what actually evidences the criterion. A
+  source/executor *example* remains worth adding (#233).
 - `mcp_registry_operations` no longer carries a `registry_hash` label, and
   `hash` joins the §9.2 label denylist.
   The label was truncated to 12 characters, and three separate comments called

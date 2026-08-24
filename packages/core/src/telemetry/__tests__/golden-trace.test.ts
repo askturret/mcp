@@ -294,3 +294,61 @@ describe('metric emission', () => {
     expect(metrics.forMetric(METRIC.toolQueueDepth)[0]?.value).toBe(0);
   });
 });
+
+/**
+ * `mcp.protocol.version` reports the SESSION's negotiated version (#61, #190).
+ *
+ * ## Why these two tests exist when the golden trace already asserts the value
+ *
+ * The golden trace's `command()` helper supplies no `protocolVersion`, so it
+ * only ever exercises the `??` FALLBACK. QA proved what that costs: mutating
+ * the dispatcher to
+ *
+ *     [SPAN_ATTR.protocolVersion]: MCP_PROTOCOL_VERSION,
+ *
+ * — dropping the negotiated value entirely — kept **738 core and 64 transport
+ * tests green**. Not a gap in test-writing but a structural one:
+ * `SUPPORTED_MCP_PROTOCOL_VERSIONS` has exactly one entry, so
+ * `command.protocolVersion` is always EQUAL to `MCP_PROTOCOL_VERSION` and the
+ * two implementations are observationally identical against today's data.
+ *
+ * That is the same failure shape as the original bug — a value free to drift
+ * from reality with nothing watching. Someone "simplifying" the `??` away gets
+ * a green build, and the defect returns the moment a second version is
+ * supported, which is exactly when negotiation starts doing real work.
+ *
+ * No second supported version is needed to close it: the dispatcher reports
+ * whatever the command carries, so an arbitrary value distinguishes the two
+ * implementations today. Both branches are pinned, because a test for only the
+ * negotiated case would leave the fallback free to change unnoticed.
+ */
+describe('mcp.protocol.version threading', () => {
+  it('uses command.protocolVersion when the transport supplied one', async () => {
+    const { tracer, dispatcher } = harness();
+
+    await dispatcher.dispatch(command({ protocolVersion: '2099-01-01' }));
+
+    const root = tracer.all().find((s) => s.name === 'mcp.request');
+
+    expect(root?.attributes[SPAN_ATTR.protocolVersion]).toBe('2099-01-01');
+    // Named explicitly: this is the assertion that dies if the `??` is dropped,
+    // and '2099-01-01' is deliberately a value no build could ever announce, so
+    // it cannot coincide with the constant however the supported list grows.
+    expect(root?.attributes[SPAN_ATTR.protocolVersion]).not.toBe(MCP_PROTOCOL_VERSION);
+  });
+
+  it('falls back to the announced constant when the transport supplied none', async () => {
+    // The other branch of the same `??`. A client may legitimately omit
+    // `protocolVersion` — negotiation treats omission as "accept" rather than
+    // a refusal — so the span must still carry the version we announce rather
+    // than `undefined`.
+    const { tracer, dispatcher } = harness();
+
+    await dispatcher.dispatch(command());
+
+    const root = tracer.all().find((s) => s.name === 'mcp.request');
+
+    expect(root?.attributes[SPAN_ATTR.protocolVersion]).toBe(MCP_PROTOCOL_VERSION);
+    expect(root?.attributes[SPAN_ATTR.protocolVersion]).toBeDefined();
+  });
+});

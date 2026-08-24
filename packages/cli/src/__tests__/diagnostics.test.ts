@@ -11,6 +11,7 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
+import { MCP_PROTOCOL_VERSION } from '@askturret/mcp-core';
 import { gunzipSync } from 'node:zlib';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -417,6 +418,32 @@ describe('the README tells the truth about this build', () => {
       expect(typeof reasons[section]).toBe('string');
       expect(reasons[section]?.length ?? 0).toBeGreaterThan(0);
     }
+  });
+
+  it('stamps the protocol version this build announces, not a local literal', async () => {
+    // #61/#190: this field carried a hardcoded '2025-06-18' — a version nothing
+    // in the system has ever spoken — while core announced '2024-11-05'. The
+    // bundle is what someone reads while already debugging a version problem,
+    // so a wrong value here is worse than an absent one.
+    //
+    // Asserted against core's exported constant rather than a literal, so the
+    // test tracks the source of truth instead of pinning a second copy of it —
+    // a copy here would be the very thing the fix removed.
+    const collected = await collectBundleInputs(parseDiagnosticsArgs([]));
+
+    expect(collected.versions.mcpProtocol).toBe(MCP_PROTOCOL_VERSION);
+    expect(collected.versions.mcpProtocol).not.toBe('2025-06-18');
+  });
+
+  it('carries that version into versions.json in the finished archive', async () => {
+    // The value being right in the collected object is not the deliverable —
+    // reaching the file an operator opens is. Asserted on the archive bytes,
+    // matching how the rest of this suite treats the bundle.
+    const collected = await collectBundleInputs(parseDiagnosticsArgs([]));
+    const versionsFile = buildBundleEntries(collected).find((e) => e.name === 'versions.json');
+
+    expect(versionsFile?.content).toContain(MCP_PROTOCOL_VERSION);
+    expect(versionsFile?.content).not.toContain('2025-06-18');
   });
 
   it('lists sections that could not be collected, with reasons', () => {

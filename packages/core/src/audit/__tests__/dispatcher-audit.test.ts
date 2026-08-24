@@ -321,3 +321,44 @@ describe('pre-#48 behaviour is preserved', () => {
     expect(seen).toEqual(['hook']);
   });
 });
+
+// ---------------------------------------------------------------------------
+// What `OperationCommand.registryHash` actually does (#129)
+//
+// #129 was filed on the premise that the field is never read. It IS read, on
+// exactly one path. Both halves are pinned here so the answer survives without
+// archaeology — which is what that issue asks for.
+// ---------------------------------------------------------------------------
+
+describe('OperationCommand.registryHash (#129)', () => {
+  it('is IGNORED for a resolved operation — the audit carries the server snapshot hash', async () => {
+    // The security-relevant half. A caller must not be able to relabel which
+    // snapshot served its own call, or the atomic-reload invariant #37 built
+    // would be caller-controllable. The dispatcher captures its own hash at
+    // stage 1 and audits that.
+    const sink = collector();
+
+    await harness({ sink }).dispatch(command({ registryHash: 'CALLER-CLAIMED-HASH' }));
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]?.registryHash).not.toBe('CALLER-CLAIMED-HASH');
+    expect(sink.events[0]?.registryHash).toBeTruthy();
+  });
+
+  it('IS read as a last-resort audit label when dispatch fails before capturing one', async () => {
+    // The half that makes "never read" wrong. `auditTrace.registryHash` is
+    // assigned only AFTER stage 1 resolves the operation, so a command naming
+    // an operation that does not exist returns first and the unaudited-exit
+    // path falls back to the caller's value.
+    //
+    // Not an exotic path: every call for an unknown operation takes it.
+    const sink = collector();
+
+    await harness({ sink }).dispatch(
+      command({ operationId: 'no-such-operation', registryHash: 'CALLER-CLAIMED-HASH' }),
+    );
+
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]?.registryHash).toBe('CALLER-CLAIMED-HASH');
+  });
+});

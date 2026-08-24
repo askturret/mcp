@@ -324,8 +324,45 @@ export interface OperationCommand {
   readonly signal: AbortSignal;
 
   /**
-   * Registry snapshot hash this command executes against.
-   * Enables audit trail showing which operation version executed.
+   * The registry snapshot hash the CALLER believes it is addressing.
+   *
+   * ## It does not select anything (#129)
+   *
+   * Reading this field's old description — "the hash this command executes
+   * against" — it is natural to assume the dispatcher uses it to pin which
+   * snapshot serves the call. It does not, and it must not: a caller able to
+   * name its own snapshot could relabel which version of an operation served
+   * it, which is exactly the invariant atomic reload (#37) exists to hold.
+   *
+   * Dispatch stage 1 captures `this.registry.current()` ONCE and uses that hash
+   * for the dispatch context, the span attribute, the log fields and the audit
+   * record. Setting this field cannot change any of them.
+   *
+   * ## The one thing it does do
+   *
+   * It is a last-resort label on the audit record, and only when dispatch
+   * failed before it had a hash of its own to use:
+   *
+   * ```ts
+   * registryHash: audit.registryHash ?? command.registryHash ?? 'unknown'
+   * ```
+   *
+   * `audit.registryHash` is assigned only after stage 1 resolves the operation,
+   * so a command naming an operation that does NOT exist returns first and this
+   * value is what lands in the audit log. That is not an exotic path — every
+   * unknown-operation call takes it. Both halves are pinned by tests in
+   * `audit/__tests__/dispatcher-audit.test.ts`.
+   *
+   * Note the consequence, which is a caller-controlled string reaching an audit
+   * field that redaction deliberately preserves: see the provenance caveat on
+   * `AUDIT_STRUCTURAL_FIELDS` in `redaction/rules.ts`.
+   *
+   * ## So why is it still here
+   *
+   * Because it is read, so removing it would change behaviour rather than
+   * delete dead weight — and because it is a required field on a public type,
+   * so removal is a breaking change under compatibility-policy §1. It is kept
+   * and described rather than removed or quietly demoted to optional.
    */
   readonly registryHash: string;
 }

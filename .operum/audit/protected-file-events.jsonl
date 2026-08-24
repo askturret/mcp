@@ -30,4 +30,6 @@
 {"ts":"2026-08-23T23:48:08Z","branch":"agent/engineer","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T00:55:05Z","branch":"agent/engineer","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T01:46:08Z","branch":"feat/issue-57-gateway","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-24T02:25:41Z","branch":"docs/issue-58-ownership-boundaries","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-24T02:38:51Z","branch":"docs/issue-59-compatibility-policy","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-24T02:12:45Z","branch":"fix/issue-128-gitattributes-union","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

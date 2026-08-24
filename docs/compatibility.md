@@ -135,5 +135,6 @@ worse than no matrix, because it converts an unknown into a false assurance.
 ## Related
 
 - [`compatibility.json`](compatibility.json) — the same matrix, machine-readable and authoritative
+- [Compatibility and deprecation policy](compatibility-policy.md) — this page says *which versions* are supported; that one says *which parts of the API* are promised to be stable, and what happens when one must change
 - [Generated-output licensing](generated-output-license.md) — who owns what AskTurret produces, also a versioned contract
 - [Roadmap](roadmap.md) — what is planned for future releases

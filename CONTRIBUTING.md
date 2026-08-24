@@ -9,6 +9,7 @@ Thank you for your interest in contributing to AskTurret MCP! We welcome contrib
 - [Development Environment](#development-environment)
 - [Making Changes](#making-changes)
 - [Coding Standards](#coding-standards)
+- [Compatibility](#compatibility)
 - [Commit Standards](#commit-standards)
 - [Dependency Licences](#dependency-licences)
 - [Submitting a Pull Request](#submitting-a-pull-request)
@@ -129,6 +130,25 @@ This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDU
 - Document complex logic with inline comments
 - Keep comments concise and meaningful
 - Update documentation when changing behavior
+
+## Compatibility
+
+Before changing anything exported, printed as JSON, or accepted as a CLI flag or
+config key, check the
+[compatibility and deprecation policy](docs/compatibility-policy.md). It defines
+which surfaces are under semver, and it answers the questions that are easy to
+get wrong — notably that **widening a type is breaking when the value flows
+outward** (an added union member breaks an adopter's exhaustive `switch`) and
+that **CLI flags and config keys are covered**, because a renamed flag breaks
+every deployment script that used it.
+
+If your change touches a covered surface, say so in the PR and add a
+[`CHANGELOG.md`](CHANGELOG.md) entry naming the surface. Removing anything needs
+a deprecation first — at minimum one MINOR, with a `deprecation`-tagged log
+record — never a removal in the same release as the notice.
+
+Pre-1.0 none of this binds yet, and that is precisely when a shape is cheapest
+to get right.
 
 ## Commit Standards
 

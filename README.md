@@ -125,7 +125,7 @@ mcp diff snapshot-v1.json snapshot-v2.json
 npm install @askturret/mcp
 ```
 
-**Requirements:** Node.js 20+, TypeScript 5.5+ — see the [compatibility matrix](docs/compatibility.md) for the full supported-version contract.
+**Requirements:** Node.js 20+, TypeScript 5.5+ — see the [compatibility matrix](docs/compatibility.md) for the full supported-version contract, and the [compatibility policy](docs/compatibility-policy.md) for what we promise about changing it.
 
 ---
 
@@ -471,6 +471,8 @@ const server = createMcpServer({
 
 - **[Architecture Overview](docs/architecture-overview.md)** — How AskTurret MCP works internally.
 - **[Compatibility Matrix](docs/compatibility.md)** — Supported Node, TypeScript, adapter, OpenAPI and MCP versions. A versioned contract.
+- **[Compatibility & Deprecation Policy](docs/compatibility-policy.md)** — Which surfaces are under semver, what a MAJOR means, and the deprecation process. What the 1.0 label will actually promise.
+- **[Changelog](CHANGELOG.md)** — Every entry classified against the policy above.
 - **[Generated-Output Licensing](docs/generated-output-license.md)** — Who owns the output AskTurret produces. A versioned contract.
 - **[Telemetry Policy](docs/telemetry-policy.md)** — Zero telemetry by default; any future collection is opt-in only. A versioned contract.
 - **[Repository Ownership](docs/ownership.md)** — Who reviews what, why the boundaries are drawn there, and how to become a maintainer. Routing lives in [`.github/CODEOWNERS`](.github/CODEOWNERS).

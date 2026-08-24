@@ -1,0 +1,63 @@
+# SPDX-License-Identifier: Apache-2.0
+#
+# Append-only audit logs union-merge instead of conflicting (#128).
+#
+# ## The failure this prevents
+#
+# `.operum/audit/*.jsonl` files are APPEND-ONLY logs written automatically by
+# agent tooling — `protected-file-events.jsonl` gets a row every time a branch
+# restores the auto-generated `repo-map.toml`, which is to say on essentially
+# every branch that runs a build. Two concurrent branches therefore append to
+# the same file at the same EOF, constantly.
+#
+# Without a merge driver that conflict presents as an ordinary "pick a side":
+#
+#     <<<<<<< HEAD
+#     {"ts":"…","branch":"my-branch",…}
+#     =======
+#     {"ts":"…","branch":"other",…}   × 4
+#     >>>>>>> main
+#
+# Both one-key resolutions silently destroy history — `--ours` drops the four
+# rows from main, `--theirs` drops the one from this branch. Neither leaves a
+# trace, and **no test can catch it after the fact**: an append-only log has no
+# append-only assertion, so a dropped row is simply a row that was never there.
+#
+# That is not hypothetical. It fired twice in one session (PRs #164 and #165),
+# and it is the same shape as the incident the concealment doctrine records,
+# where a whole-file restore destroyed three entries.
+#
+# `merge=union` is a built-in git driver: it keeps BOTH sides' lines. For a
+# line-oriented JSONL log that is not a heuristic, it is the correct answer —
+# the union of two sets of appended records IS the merged log.
+#
+# ## Two patterns, because `*` does not cross a `/`
+#
+# gitattributes patterns follow gitignore syntax, where `*` matches within one
+# path segment only. So the first line below covers the logs sitting directly in
+# `.operum/audit/`, and the second covers the one-file-per-entry captures under
+# `.operum/audit/concealment-reminders/`.
+#
+# Those per-entry files are named to avoid collisions and so should never
+# conflict — but the directory already contains names disambiguated by hand with
+# `-a` / `-b` suffixes, which is evidence that same-name collisions do happen.
+# When one does, union is still the right merge for a JSONL file, so the second
+# line costs nothing and closes the gap rather than assuming it away.
+.operum/audit/*.jsonl merge=union
+.operum/audit/**/*.jsonl merge=union
+
+# ## Deliberately NOT here: `* text=auto`
+#
+# A fresh `.gitattributes` invites adding line-ending normalisation, and this
+# one does not. Enabling it would renormalise every file in the repository on
+# the next checkout — a large, unrelated diff riding along with a two-line fix,
+# on a change whose whole purpose is to stop content going missing. If the
+# project wants it, it deserves its own PR and its own verification.
+#
+# ## Scope note for anyone relying on this
+#
+# `merge=union` is a driver applied by whichever client performs the merge, so
+# it only takes effect once this file is checked out on that side. It does not
+# retroactively fix branches already in flight — those still need a manual
+# union — and it does not protect against a hand-edit or a whole-file restore,
+# which is what `.github/scripts/check-audit-append-only.mjs` is for.

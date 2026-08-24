@@ -573,6 +573,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The append-only audit guard (#128) diffs against the PR's base, so
+          # the base ref has to be present. The default shallow checkout does
+          # not have it, and the guard would exit 2 ("could not check") rather
+          # than silently passing — correct, but useless. Full history is what
+          # lets it actually answer.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -582,6 +589,20 @@ jobs:
       # are meaningless.
       - name: Self-test the guards
         run: node .github/scripts/check-guards.test.mjs
+
+      # #128: the union merge driver and the append-only guard, tested together
+      # against a REAL git merge — including the control case that proves the
+      # clean merge is caused by .gitattributes rather than coincident with it.
+      - name: Self-test the audit append-only guard
+        run: node .github/scripts/check-audit-append-only.test.mjs
+
+      # #128: merge=union protects the MERGE. Nothing protects a hand-edit, a
+      # whole-file restore, or a conflict resolved by taking one side — and an
+      # append-only log has no append-only assertion, so a dropped row is
+      # invisible once the branch is gone. The diff against the base is the only
+      # moment both states still exist.
+      - name: Append-only audit logs lose no rows
+        run: node .github/scripts/check-audit-append-only.mjs
 
       - name: No placeholder or assertion-free tests
         run: node .github/scripts/check-placeholder-tests.mjs

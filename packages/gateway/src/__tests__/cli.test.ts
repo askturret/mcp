@@ -1,11 +1,17 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * CLI entry-point tests (#57).
+ * CLI entry-point tests (#57, extended by #128).
  *
- * `runFromArgv` is exercised rather than a spawned child process. Spawning
- * would test the same code through a slower, flakier path and would make a
- * failure show up as "exit code 2 with some stderr" rather than as the typed
- * error that caused it.
+ * Two layers, and the second exists because the first was not enough.
+ *
+ * **In-process** — most of this file imports `runFromArgv` / `main` directly.
+ * Fast, and a failure surfaces as the typed error that caused it rather than as
+ * "exit code 2 with some stderr".
+ *
+ * **Spawned** — the last block runs the BUILT `dist/cli.js` as a real process.
+ * Importing the module can never exercise its own auto-invoke branch, and that
+ * blind spot shipped a dead entrypoint in #57: the container started, printed
+ * nothing, and exited 0. Everything in the first layer passed throughout.
  *
  * `main` is covered only where it does not park forever — on success it returns
  * a promise that never resolves by design, because the process stays up until a
@@ -14,7 +20,9 @@
 
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -180,5 +188,65 @@ describe('main', () => {
     // the control and the fix better than a paraphrase would.
     expect(messages.join('')).toContain('RegulatedPresetRefusal');
     expect(messages.join('')).toContain('durable audit sink');
+  });
+});
+
+describe('the built binary, invoked as a process', () => {
+  /**
+   * Everything above imports `main` / `runFromArgv` directly, which is fast and
+   * gives typed failures — but it means the module's own auto-invoke branch is
+   * NEVER the thing under test.
+   *
+   * That gap shipped a dead entrypoint in #57: `invokedDirectly` compared
+   * `import.meta.url` against a hand-built `file://${process.argv[1]}`, which
+   * never matches a relative argv[1] (what the Dockerfile's ENTRYPOINT passes)
+   * and never matches a path containing a space. The container started, printed
+   * nothing and exited 0.
+   *
+   * So these spawn the real built file the way a container and an `npx` shim
+   * actually do. They need `dist/`, and skip rather than fail when it is absent
+   * — a missing build is a different problem, and failing here would report it
+   * as this one.
+   */
+  const DIST_CLI = join(__dirname, '../../dist/cli.js');
+
+  function runBuilt(args: string[], cwd: string) {
+    return spawnSync(process.execPath, [args[0] as string, ...args.slice(1)], {
+      cwd,
+      encoding: 'utf-8',
+    });
+  }
+
+  it('prints its version when invoked by RELATIVE path, as the Dockerfile does', () => {
+    if (!existsSync(DIST_CLI)) return;
+
+    // `node packages/gateway/dist/cli.js --version`, run from the repo root —
+    // byte for byte the ENTRYPOINT's shape.
+    const repoRoot = join(__dirname, '../../../..');
+    const result = runBuilt(['packages/gateway/dist/cli.js', '--version'], repoRoot);
+
+    expect(result.status).toBe(0);
+    // The assertion that matters: it produced OUTPUT. A dead entrypoint also
+    // exits 0, so a status check alone would have passed on the broken build.
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it('prints help when invoked by ABSOLUTE path', () => {
+    if (!existsSync(DIST_CLI)) return;
+
+    const result = runBuilt([DIST_CLI, '--help'], tmpdir());
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('--spec');
+  });
+
+  it('exits non-zero with a message when given no spec', () => {
+    if (!existsSync(DIST_CLI)) return;
+
+    const result = runBuilt([DIST_CLI], tmpdir());
+
+    // A dead entrypoint exits 0 silently, so this pins that failures are real.
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('No OpenAPI spec supplied');
   });
 });

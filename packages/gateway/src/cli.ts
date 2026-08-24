@@ -10,6 +10,8 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 import {
   GatewayConfigError,
@@ -97,10 +99,44 @@ function describe(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
-// `import.meta.url` comparison rather than `require.main === module`: this is an
-// ES module, and the check must not fire when a test imports this file.
-const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
+/**
+ * Is this module the process entry point?
+ *
+ * `import.meta.url` compared against argv[1], because this is an ES module and
+ * the check must not fire when a test imports the file.
+ *
+ * The comparison has to normalise argv[1] THREE ways, and every one of them
+ * fails SILENTLY when missed — the process starts, does nothing, exits 0:
+ *
+ *   1. **Relative** — argv[1] is whatever was typed, so
+ *      `node packages/gateway/dist/cli.js` (exactly what the Dockerfile's
+ *      ENTRYPOINT passes) gives a relative path while `import.meta.url` is
+ *      always absolute.
+ *   2. **Percent-encoding** — `import.meta.url` is a URL, so any space in the
+ *      install path breaks a hand-built `file://${...}` even when absolute.
+ *   3. **Symlinks** — node reports the RESOLVED path in `import.meta.url`, so
+ *      launching through a symlinked directory (an agent worktree, a
+ *      `node_modules/.bin` shim, `/tmp` on macOS) mismatches unless argv[1] is
+ *      realpath'd too.
+ *
+ * Shipped broken in #57 on the first two, caught in #128, and the third was
+ * found while fixing it. The unit tests could not see any of it: they import
+ * `main` and `runFromArgv` directly, so this branch was never the thing under
+ * test. `cli.test.ts` now spawns the built file to close exactly that gap.
+ */
+function isProcessEntryPoint(): boolean {
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
+  try {
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    // argv[1] does not resolve to a real file. Not the entry point, and not
+    // worth crashing over — the caller is doing something unusual.
+    return false;
+  }
+}
+
+const invokedDirectly = isProcessEntryPoint();
 
 if (invokedDirectly) {
   void main(process.argv.slice(2)).then((code) => {

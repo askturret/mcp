@@ -114,6 +114,33 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- A conformance category that hangs in CLEANUP now reports a failed row (#253).
+  #151 bounded every request, at `rpc`. The `cancellation` category does not go
+  through `rpc` — it uses a direct `fetch`, because it aborts one specific
+  in-flight request — and its `finally { server.close() }` waited on the
+  half-dead connection it deliberately leaves behind. No request deadline
+  reaches a close.
+  Not a covered surface — this is the conformance harness. The symptom was a
+  missing verdict rather than a wrong one: the category ran past the suite's own
+  30s jest cap, and when jest kills a test it ABANDONS the function, so the
+  `finally` that records the row never ran. The table printed `—`, which a
+  reader could not tell from "not applicable".
+  Every category now runs through one bounded entry point, `runCategory`,
+  whose budget (20s, overridable with
+  `ASKTURRET_CONFORMANCE_CATEGORY_TIMEOUT_MS`) deliberately sits *below* the
+  harness cap — that ordering is the fix, since only a rejection lets the row be
+  recorded at all.
+  The empty cell is also now labelled `NOT RUN`, with a legend printed only when
+  one appears. It had meant two different things in a table whose entire purpose
+  is to be self-explanatory; a hang reports `FAIL`, so the cell has one meaning
+  left and says so.
+  Separately, `rpc` no longer calls `AbortSignal.any`, which landed partway
+  through the Node 20 line while this package declares `engines: >=20.0.0` — on
+  the earliest 20.x a caller-supplied signal produced a `TypeError` instead of a
+  timeout, and `rpc` is exported for the adapter-test kit, so that is the
+  intended public use. Composed by hand instead, which keeps the declared floor
+  honest without dropping support for runtimes where everything else works.
+
 - `doctor` accepts `--flag=value`, and refuses flags it does not recognise
   (#256). `parseArgs` matched flags by exact string equality with no final
   `else`, so every `=` spelling and every unrecognised `--` token was discarded

@@ -17,6 +17,7 @@ import {
   recordingExecutor,
   renderTable,
   rpc,
+  runCategory,
   staticSource,
   type CategoryResult,
 } from '../bank.js';
@@ -54,7 +55,12 @@ describe('adapter conformance', () => {
           let note = '';
           let passed = false;
           try {
-            note = await category.run({ adapter, start: getAdapter(adapter) });
+            // `runCategory`, not `category.run` (#253). The category budget
+            // rejects BELOW the jest cap on this test, and that ordering is the
+            // whole fix: when jest kills a test it ABANDONS the function, so
+            // the `finally` that records the row never runs — the failure is
+            // loud in jest's output and absent from the table CI publishes.
+            note = await runCategory(category, { adapter, start: getAdapter(adapter) });
             passed = true;
           } catch (error) {
             note = error instanceof Error ? error.message : String(error);

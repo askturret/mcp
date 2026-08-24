@@ -32,6 +32,7 @@
  */
 
 import { describe, it, expect, afterEach } from '@jest/globals';
+import { getEventListeners } from 'node:events';
 import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 
@@ -181,6 +182,74 @@ describe('per-request timeout (#151)', () => {
     } finally {
       await hung.close();
     }
+  });
+
+  describe('composing a caller signal with the deadline (#253)', () => {
+    // `AbortSignal.any` would do this natively but landed partway through the
+    // Node 20 line, while the package declares `engines: >=20.0.0` — so on the
+    // earliest 20.x a caller-supplied signal produced a TypeError instead of a
+    // timeout. The composition is done by hand instead, which needs no version
+    // claim; these cover the paths that hand-rolling introduces.
+
+    it('still enforces the DEADLINE when a caller signal is present', async () => {
+      // The case the old code got for free and hand-rolling has to earn: the
+      // composed signal must forward the deadline, not only the caller's abort.
+      // Nothing before #253 covered it — the existing caller-abort test uses a
+      // 10s budget, so its deadline never fires.
+      process.env[TIMEOUT_ENV] = '250';
+      const hung = await startHangingServer();
+      const controller = new AbortController();
+
+      try {
+        await expect(
+          rpc(hung.url, 'tools/list', {}, { signal: controller.signal }),
+        ).rejects.toThrow(/TIMEOUT/);
+      } finally {
+        await hung.close();
+      }
+    });
+
+    it('aborts immediately when the caller signal is ALREADY aborted', async () => {
+      // An already-aborted input never emits `abort`, so a composition that only
+      // subscribed would wait out the whole deadline on a request the caller
+      // had already given up on.
+      process.env[TIMEOUT_ENV] = '10000';
+      const hung = await startHangingServer();
+
+      try {
+        const started = Date.now();
+        await expect(
+          rpc(hung.url, 'tools/list', {}, { signal: AbortSignal.abort() }),
+        ).rejects.toThrow();
+        // Far below the 10s budget — proof it did not simply wait it out.
+        expect(Date.now() - started).toBeLessThan(2_000);
+      } finally {
+        await hung.close();
+      }
+    });
+
+    it('removes its listeners, so a signal reused across requests does not leak', async () => {
+      // The #54 kit may hold ONE signal for a whole run. Without teardown every
+      // request leaves a listener on it, and Node starts warning at 11 — a leak
+      // that only appears in a long run, which is the worst time to find it.
+      process.env[TIMEOUT_ENV] = '150';
+      const hung = await startHangingServer();
+      const controller = new AbortController();
+
+      try {
+        for (let i = 0; i < 12; i++) {
+          await rpc(hung.url, 'tools/list', {}, { signal: controller.signal }).catch(
+            () => undefined,
+          );
+        }
+
+        // Counted, not inferred: `getEventListeners` reads the real registry on
+        // any EventTarget, so this fails if `dispose` stops being called.
+        expect(getEventListeners(controller.signal, 'abort')).toHaveLength(0);
+      } finally {
+        await hung.close();
+      }
+    });
   });
 
   describe('the budget itself', () => {

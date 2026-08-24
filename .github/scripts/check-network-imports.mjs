@@ -37,6 +37,15 @@
  *     so they cannot open a socket. Failing them would be theatre.
  *   - test files. They never ship to an adopter. Skipped deliberately, and
  *     counted in the summary so the exclusion is visible rather than assumed.
+ *
+ * NOT SCANNED AT ALL:
+ *   Anything outside `packages/<pkg>/src`. The scan roots are built by joining
+ *   `src` onto each entry of `packages/`, so a file in `packages/<pkg>/bench/`,
+ *   in `scripts/`, or at a package root is never read — it does not pass the
+ *   guard, it never meets it.
+ *   Stated explicitly because an earlier comment here claimed the opposite, and
+ *   because `packages/gateway/bench/` deliberately relies on it (#197). Widening
+ *   the roots is a real option; assuming they are already wide is not.
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -72,11 +81,20 @@ const NETWORK_MODULES = new Set([
 /**
  * Files permitted to reach the network.
  *
- * Each entry is matched as a substring of the repo-relative POSIX path, and each
- * is a file whose ENTIRE PURPOSE is to make a call the adopter asked for.
- * Entries are deliberately file-precise rather than directory-wide: a NEW file
- * that starts making calls should be flagged even if it sits beside one that
- * legitimately does.
+ * Each entry is matched as a substring of the repo-relative POSIX path.
+ *
+ * PREFER A FILE. A directory entry exempts every file added under it later,
+ * including ones nobody weighed against this promise — so a NEW file that starts
+ * making calls should be flagged even when it sits beside one that legitimately
+ * does. Each file below names something whose ENTIRE PURPOSE is to make a call
+ * the adopter asked for.
+ *
+ * The directory entries that remain are packages where the network surface IS
+ * the package — the transports, the Express adapter, and the conformance bank
+ * that speaks to a loopback server it started itself. Each is argued at its own
+ * entry. `packages/gateway/src/` used to be on that list and was narrowed to one
+ * file in #181, because the gateway is an ordinary package that happens to
+ * listen, not a package that exists to carry traffic.
  *
  * Adding to this list widens the promise in docs/telemetry-policy.md. Argue for
  * it in the pull request that does it.
@@ -110,10 +128,19 @@ const ALLOWLIST = [
   // and it reaches there through core's already-allowlisted `via-http.ts` —
   // nothing in this package opens a client socket.
   //
-  // Scoped to `src/` rather than to `src/server.ts` so the entry does not have
-  // to be revisited if the listeners are split across files; anything under
-  // `packages/gateway/` outside `src/` still trips the guard.
-  'packages/gateway/src/',
+  // A single FILE, matching `sinks/http.ts` above (#181). This was `src/` until
+  // QA demonstrated the cost: an outbound `node:https` call appended to
+  // `src/version.ts` passed the guard silently, because the whole directory was
+  // exempt. The directory form was chosen so the entry would not need revisiting
+  // if the listeners were split across files — but revisiting it is precisely
+  // when this reasoning should be re-checked, which is the argument the
+  // `sinks/http.ts` comment already makes. Of all the packages to hold a
+  // directory-wide exemption, the one that is itself a long-running network
+  // process is the worst candidate.
+  //
+  // If a listener genuinely moves to a second file, add that file here. That is
+  // a one-line diff a reviewer stops on, which is the entire point.
+  'packages/gateway/src/server.ts',
 
   // CLI commands that fetch a URL the user typed on the command line. The user
   // supplying the address IS the opt-in.

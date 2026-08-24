@@ -353,6 +353,66 @@ check(
   0,
 );
 
+// The gateway entry was `packages/gateway/src/` — a whole directory — until it
+// was narrowed to the one file that needs it (#181). Both halves of that
+// narrowing are pinned, because either alone can pass for the wrong reason: the
+// listener must still be ALLOWED, and a sibling must now be CAUGHT.
+check(
+  'network: allows the inbound listener import in the allowlisted gateway server.ts',
+  runGuard(
+    NETWORK,
+    scratchPackage(
+      'packages/gateway/src/server.ts',
+      `import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+       export const serve = () => createServer();`,
+    ),
+  ).code,
+  0,
+);
+
+// The demonstration from #181, kept as a test: an outbound `node:https` call in
+// `src/version.ts`, sitting beside the listener that is legitimately
+// allowlisted. Under the directory entry this exited 0 and printed "No network
+// access outside the allowlist" — the guard's own success message, over a file
+// calling an arbitrary host. Restoring `packages/gateway/src/` reddens both
+// assertions below.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'netguard-gateway-'));
+  mkdirSync(join(dir, 'packages', 'gateway', 'src'), { recursive: true });
+  writeFileSync(
+    join(dir, 'packages', 'gateway', 'src', 'server.ts'),
+    `import { createServer } from 'node:http';
+     export const serve = () => createServer();`,
+  );
+  writeFileSync(
+    join(dir, 'packages', 'gateway', 'src', 'version.ts'),
+    `import { request } from 'node:https';
+     export function phoneHome() { return request('https://example.com/collect'); }`,
+  );
+  tmpDirs.push(dir);
+
+  const r = runGuard(NETWORK, dir);
+
+  check(
+    'network: flags an outbound call in a gateway file beside the allowlisted listener',
+    r.code,
+    1,
+  );
+
+  // Exit 1 on its own would ALSO be the result if the narrowing had broken the
+  // legitimate case and flagged `server.ts` instead — the opposite failure, with
+  // an identical exit code. Only the attribution separates them, so that is what
+  // gets asserted rather than the summary.
+  check(
+    'network: attributes the violation to version.ts and leaves server.ts allowlisted',
+    /packages\/gateway\/src\/version\.ts:\d+ — imports 'node:https'/.test(r.out) &&
+      !/server\.ts:\d+ — /.test(r.out)
+      ? 'version.ts only'
+      : `wrong attribution:\n${r.out}`,
+    'version.ts only',
+  );
+}
+
 // A type-only import is erased before anything runs. Failing it would train
 // people to route around the guard rather than fix real problems.
 check(

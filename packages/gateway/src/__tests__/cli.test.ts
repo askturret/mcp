@@ -197,11 +197,19 @@ describe('the built binary, invoked as a process', () => {
    * gives typed failures — but it means the module's own auto-invoke branch is
    * NEVER the thing under test.
    *
-   * That gap shipped a dead entrypoint in #57: `invokedDirectly` compared
+   * That gap shipped a broken entrypoint in #57: `invokedDirectly` compared
    * `import.meta.url` against a hand-built `file://${process.argv[1]}`, which
-   * never matches a relative argv[1] (what the Dockerfile's ENTRYPOINT passes)
-   * and never matches a path containing a space. The container started, printed
-   * nothing and exited 0.
+   * never matches a path containing a space, nor one reached through a symlink
+   * — `import.meta.url` percent-encodes and resolves symlinks, the template
+   * literal does neither. The module loads, the branch is skipped, and the
+   * process exits 0 having done nothing.
+   *
+   * NOT because argv[1] is relative. An earlier version of this comment said so
+   * and #184 disproved it: node resolves argv[1] to an absolute path, so the
+   * Dockerfile's `ENTRYPOINT` form compares EQUAL even under the old idiom.
+   * `/app` carries no space and no symlink either, so the shipped container was
+   * not dead — a rebuilt pre-fix image runs fine. The real exposure is a
+   * checkout path containing a space, which is how this surfaced.
    *
    * So these spawn the real built file the way a container and an `npx` shim
    * actually do. They need `dist/`, and skip rather than fail when it is absent

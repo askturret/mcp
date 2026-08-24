@@ -155,20 +155,26 @@ export function check(baseRef, repoDir = '.') {
 /**
  * Run only when invoked directly, so the self-test can import `check`.
  *
- * argv[1] must be normalised three ways, and missing any of them fails
- * SILENTLY: the script does nothing and exits 0 — which, for a guard, means
- * reporting success without having checked anything.
+ * `import.meta.url` is a percent-encoded, symlink-resolved URL; a hand-built
+ * `file://${argv[1]}` is neither. argv[1] must be normalised TWO ways, and
+ * missing either fails SILENTLY: the script does nothing and exits 0 — which,
+ * for a guard, means reporting success without having checked anything.
  *
- *   1. **Relative** — `node .github/scripts/x.mjs` gives a relative argv[1]
- *      while `import.meta.url` is always absolute. This is how CI invokes it.
- *   2. **Percent-encoding** — `import.meta.url` is a URL, so a space anywhere
+ *   1. **Percent-encoding** — `import.meta.url` is a URL, so a space anywhere
  *      in the path breaks a hand-built `file://${...}`.
- *   3. **Symlinks** — node reports the resolved path, so a checkout reached
+ *   2. **Symlinks** — node reports the resolved path, so a checkout reached
  *      through a symlink mismatches unless argv[1] is realpath'd too.
  *
- * The same defect shipped in the gateway's CLI (#57) and is fixed there in this
- * change. A guard that quietly no-ops is strictly worse than no guard, because
- * the green check says it ran.
+ * A relative INVOCATION is not a third mode, though an earlier version of this
+ * comment claimed it was, and cited `node .github/scripts/x.mjs` — the way CI
+ * invokes this — as the example (#184). Node resolves argv[1] to an absolute,
+ * normalised path before the module runs, so that invocation compares EQUAL
+ * even under the old idiom. CI was never the exposure; a space in the checkout
+ * path is, and that is the likelier accident of the two.
+ *
+ * The same defect shipped in the gateway's CLI (#57) and was fixed alongside
+ * this one. A guard that quietly no-ops is strictly worse than no guard,
+ * because the green check says it ran.
  */
 function isProcessEntryPoint() {
   const entry = process.argv[1];

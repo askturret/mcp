@@ -105,24 +105,35 @@ function describe(error: unknown): string {
  * `import.meta.url` compared against argv[1], because this is an ES module and
  * the check must not fire when a test imports the file.
  *
- * The comparison has to normalise argv[1] THREE ways, and every one of them
- * fails SILENTLY when missed — the process starts, does nothing, exits 0:
+ * `import.meta.url` is a percent-encoded, symlink-resolved URL; a hand-built
+ * `file://${argv[1]}` is neither. So argv[1] has to be normalised TWO ways, and
+ * both fail SILENTLY when missed — the process starts, does nothing, exits 0:
  *
- *   1. **Relative** — argv[1] is whatever was typed, so
- *      `node packages/gateway/dist/cli.js` (exactly what the Dockerfile's
- *      ENTRYPOINT passes) gives a relative path while `import.meta.url` is
- *      always absolute.
- *   2. **Percent-encoding** — `import.meta.url` is a URL, so any space in the
- *      install path breaks a hand-built `file://${...}` even when absolute.
- *   3. **Symlinks** — node reports the RESOLVED path in `import.meta.url`, so
+ *   1. **Percent-encoding** — `import.meta.url` is a URL, so any space in the
+ *      install path breaks the comparison: a file under `/opt/my app/` arrives
+ *      as `file:///opt/my%20app/...` while the template literal keeps the space.
+ *   2. **Symlinks** — node reports the RESOLVED path in `import.meta.url`, so
  *      launching through a symlinked directory (an agent worktree, a
  *      `node_modules/.bin` shim, `/tmp` on macOS) mismatches unless argv[1] is
  *      realpath'd too.
  *
- * Shipped broken in #57 on the first two, caught in #128, and the third was
- * found while fixing it. The unit tests could not see any of it: they import
- * `main` and `runFromArgv` directly, so this branch was never the thing under
- * test. `cli.test.ts` now spawns the built file to close exactly that gap.
+ * A relative INVOCATION is not a third mode, though an earlier version of this
+ * comment claimed it was (#184). Node resolves argv[1] to an absolute,
+ * normalised path before the module runs, so `node dist/cli.js`,
+ * `node ./dist/cli.js` and `node ../pkg/dist/cli.js` all compare EQUAL under
+ * the old idiom. Dropping the claim strengthens the argument rather than
+ * weakening it: the real trigger is a space in the install path, which is far
+ * easier to hit by accident than anything about how the command was typed.
+ *
+ * That correction also revises what shipped. This was wrong in #57 and fixed in
+ * #128, but it did NOT break the container: `/app` holds no space and no
+ * symlink, so neither mode above can fire there, and a rebuilt pre-fix image
+ * runs fine (#184). What it broke is any checkout whose path contains a space —
+ * which is where it actually surfaced.
+ *
+ * The unit tests could not see any of it: they import `main` and `runFromArgv`
+ * directly, so this branch was never the thing under test. `cli.test.ts` now
+ * spawns the built file to close exactly that gap.
  */
 function isProcessEntryPoint(): boolean {
   const entry = process.argv[1];

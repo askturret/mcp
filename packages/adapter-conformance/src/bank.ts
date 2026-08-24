@@ -89,21 +89,60 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const TIMEOUT_ENV = 'ASKTURRET_CONFORMANCE_REQUEST_TIMEOUT_MS';
 
-export function requestTimeoutMs(): number {
-  const raw = process.env[TIMEOUT_ENV];
-  if (raw === undefined || raw.trim() === '') return DEFAULT_REQUEST_TIMEOUT_MS;
+/**
+ * A positive-millisecond budget from the environment, or the default.
+ *
+ * Loudly, not silently, on a bad value. A typo'd override that fell back to the
+ * default would be survivable; one that fell back to NO deadline would restore
+ * the exact hang these budgets exist to prevent, and it would do it invisibly —
+ * the failure mode every other guard in this package is written against.
+ */
+function budgetFromEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
 
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) {
-    // Loudly, not silently. A typo'd override that fell back to the default
-    // would be survivable; one that fell back to NO deadline would restore the
-    // exact hang this exists to prevent, and it would do it invisibly — which
-    // is the failure mode every other guard in this package is written against.
-    throw new Error(
-      `${TIMEOUT_ENV} must be a positive number of milliseconds; got '${raw}'.`,
-    );
+    throw new Error(`${name} must be a positive number of milliseconds; got '${raw}'.`);
   }
   return parsed;
+}
+
+export function requestTimeoutMs(): number {
+  return budgetFromEnv(TIMEOUT_ENV, DEFAULT_REQUEST_TIMEOUT_MS);
+}
+
+/**
+ * Ceiling on a whole category, including its CLEANUP (#253).
+ *
+ * #151 bounded every request. It did not bound everything: the `cancellation`
+ * category speaks to the socket with a direct `fetch` — it has to, since it
+ * aborts one specific in-flight request — and its `finally { server.close() }`
+ * then waits on the half-dead connection it deliberately left behind. That is a
+ * close-side hang, and no request deadline reaches it.
+ *
+ * The consequence was not a wrong verdict but a MISSING one: the category ran
+ * past `conformance.test.ts`'s own 30s jest cap, so the harness killed the test
+ * before `runBank` could record anything, and the table printed `—`. A reader
+ * could not tell "this hung" from "not applicable".
+ *
+ * So the bound goes around the WHOLE category, at the one place every category
+ * passes through — the same choke-point reasoning as #151's `rpc` deadline. A
+ * hang anywhere in a category, including one nobody has written yet, now
+ * becomes an ordinary failed row instead of a silence.
+ *
+ * The default must sit comfortably BELOW the harness's own cap, or the harness
+ * kills the run first and the row is lost again, which is the whole defect. 20s
+ * against jest's 30s also leaves room for a category's internal budgets (the
+ * longest waits are 5s) to fail on their own, more specific terms first — this
+ * is the backstop, not the first line.
+ */
+export const DEFAULT_CATEGORY_TIMEOUT_MS = 20_000;
+
+const CATEGORY_TIMEOUT_ENV = 'ASKTURRET_CONFORMANCE_CATEGORY_TIMEOUT_MS';
+
+export function categoryTimeoutMs(): number {
+  return budgetFromEnv(CATEGORY_TIMEOUT_ENV, DEFAULT_CATEGORY_TIMEOUT_MS);
 }
 
 /**
@@ -143,10 +182,11 @@ export async function rpc(
 ): Promise<RpcResponse> {
   const timeoutMs = requestTimeoutMs();
   const deadline = AbortSignal.timeout(timeoutMs);
-  const signal =
+  const composed =
     init.signal === undefined || init.signal === null
-      ? deadline
-      : AbortSignal.any([init.signal, deadline]);
+      ? undefined
+      : anySignal(init.signal, deadline);
+  const signal = composed?.signal ?? deadline;
 
   try {
     const response = await fetch(url, {
@@ -171,7 +211,59 @@ export async function rpc(
       );
     }
     throw error;
+  } finally {
+    // A caller's signal can outlive one request — the #54 kit may hold a single
+    // signal across a whole run — so the listeners come off when the request is
+    // done. Otherwise a long-lived signal accumulates one pair per call.
+    composed?.dispose();
   }
+}
+
+/**
+ * Compose two abort signals into one, plus the teardown for it.
+ *
+ * `AbortSignal.any` does exactly this and is the better API. It is deliberately
+ * not used (#253): it landed partway through the Node 20 line, while this
+ * package declares `engines: >=20.0.0`, so on the earliest 20.x a caller who
+ * supplied their own signal got a `TypeError` instead of a timeout. `rpc` is
+ * exported for the #54 adapter-test kit, so a caller-supplied signal is the
+ * intended public use, not a hypothetical one.
+ *
+ * The alternative was raising the engines floor. Rejected for two reasons: it
+ * would drop support for runtimes where everything EXCEPT this one line works,
+ * and it would require asserting the exact version the API landed in — which I
+ * could not execute a 20.0–20.2 runtime to confirm. Fifteen lines that need no
+ * version claim at all are worth more than a one-line claim that might be off
+ * by a patch release.
+ *
+ * Feature-detecting and falling back was also rejected: the fallback branch
+ * would never execute on any machine or CI runner available here, so it would
+ * ship untested. This path always runs, and the tests cover it.
+ */
+function anySignal(
+  first: AbortSignal,
+  second: AbortSignal,
+): { readonly signal: AbortSignal; readonly dispose: () => void } {
+  const controller = new AbortController();
+  const fromFirst = (): void => controller.abort(first.reason);
+  const fromSecond = (): void => controller.abort(second.reason);
+
+  // An already-aborted input must win immediately; adding a listener to it
+  // would never fire, and the request would run unbounded.
+  if (first.aborted) controller.abort(first.reason);
+  else if (second.aborted) controller.abort(second.reason);
+  else {
+    first.addEventListener('abort', fromFirst, { once: true });
+    second.addEventListener('abort', fromSecond, { once: true });
+  }
+
+  return {
+    signal: controller.signal,
+    dispose: () => {
+      first.removeEventListener('abort', fromFirst);
+      second.removeEventListener('abort', fromSecond);
+    },
+  };
 }
 
 /** Call a tool and return the raw JSON-RPC envelope. */
@@ -702,6 +794,42 @@ export interface RunBankOptions {
 }
 
 /** Names that are not categories in the bank. For rejecting a bad filter. */
+/**
+ * Run ONE category under the category budget. The single bounded entry point.
+ *
+ * ## Why this is exported rather than inlined into `runBank` (#253)
+ *
+ * Because `runBank` is not the only caller. `conformance.test.ts` runs each
+ * category as its own jest `it()` — so the table has one row per test rather
+ * than one row per suite — and calls `category.run` DIRECTLY. A bound placed
+ * only inside `runBank` therefore does not cover the path that actually
+ * produces the published table, which is precisely where #253 was observed.
+ *
+ * That is not a hypothetical: it is how the first attempt at this fix failed.
+ * The unit test passed, and re-running the real scenario showed `cancellation`
+ * still dying at jest's 30s cap with the row still missing.
+ *
+ * Worse, jest's own cap cannot substitute for this. When jest kills a test it
+ * abandons the function, so the `finally` that records the row never runs — the
+ * failure is loud in the jest output and *absent* from the artifact. Only a
+ * bound that rejects the promise, below jest's cap, lets the recording happen.
+ *
+ * ## Why not inside each category
+ *
+ * Eight categories end in `finally { await server.close() }`. A bound in those
+ * eight blocks would throw FROM the finally, replacing whatever the category
+ * was already failing with — usually the more diagnostic error. Around the
+ * whole category, the specific failure survives when there is one, and a row
+ * still appears when there is not.
+ */
+export async function runCategory(category: Category, context: CategoryContext): Promise<string> {
+  return withTimeout(
+    category.run(context),
+    categoryTimeoutMs(),
+    `category '${category.name}' did not complete`,
+  );
+}
+
 export function unknownCategories(names: readonly string[]): readonly string[] {
   const known = new Set(CATEGORIES.map((c) => c.name));
   return names.filter((name) => !known.has(name));
@@ -719,7 +847,7 @@ export async function runBank(
 
   for (const category of selected) {
     try {
-      const note = await category.run({ adapter, start: factory });
+      const note = await runCategory(category, { adapter, start: factory });
       results.push({ adapter, category: category.name, id: category.id, passed: true, note });
     } catch (error) {
       results.push({
@@ -753,16 +881,34 @@ export function renderTable(results: readonly CategoryResult[]): string {
     `${'-'.repeat(width)}-+-${adapters.map(() => '-'.repeat(9)).join('-+-')}-+-------`,
   ];
 
+  let anyMissing = false;
+
   for (const category of categories) {
     const cells = adapters.map((a) => {
       const r = results.find((x) => x.adapter === a && x.category === category);
-      return (r === undefined ? '—' : r.passed ? 'PASS' : 'FAIL').padEnd(9);
+      if (r === undefined) {
+        // `—` meant two different things — "produced no result" and "hung, and
+        // died before it could report" — in a table whose entire purpose is to
+        // be self-explanatory (#253). The hang is now a FAIL via the category
+        // bound, so this cell has exactly one meaning left; naming it says so
+        // rather than leaving the reader to infer it from an em-dash.
+        anyMissing = true;
+        return 'NOT RUN'.padEnd(9);
+      }
+      return (r.passed ? 'PASS' : 'FAIL').padEnd(9);
     });
     const verdicts = adapters.map(
       (a) => results.find((x) => x.adapter === a && x.category === category)?.passed,
     );
     const parity = new Set(verdicts).size === 1 ? 'same' : 'DIVERGED';
     lines.push(`${category.padEnd(width)} | ${cells.join(' | ')} | ${parity}`);
+  }
+
+  // Printed only when it applies, so a clean table stays a clean table.
+  if (anyMissing) {
+    lines.push('');
+    lines.push('NOT RUN = no result recorded for that adapter (e.g. filtered out by');
+    lines.push('          --category). A category that hung reports FAIL, not NOT RUN.');
   }
 
   return lines.join('\n');

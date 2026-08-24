@@ -411,8 +411,12 @@ jobs:
 
       # #119: nothing else in CI reads source at the byte level, so a NUL byte
       # passes tsc, jest and every guard above it.
+      #
+      # #121: --require-roots because HERE the tree really is the repository, so
+      # a declared scan root that has gone missing means coverage was lost —
+      # not that someone pointed the guard at a fixture.
       - name: No NUL bytes in source
-        run: node .github/scripts/check-nul-bytes.mjs
+        run: node .github/scripts/check-nul-bytes.mjs . --require-roots
 
       # #39 / §9.2: an unbounded metric label creates one time series per
       # distinct value. Parses source rather than importing dist, so it still

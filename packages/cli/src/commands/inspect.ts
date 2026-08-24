@@ -4,6 +4,7 @@
  */
 
 import { readFile } from 'fs/promises';
+import { normalizeFlags, type FlagSpec } from '../args.js';
 import type {
   InspectResult,
   ServerInfo,
@@ -65,6 +66,25 @@ interface ToolsListResult {
 export async function inspectCommand(args: string[]): Promise<void> {
   const flags = parseArgs(args);
 
+  // Help first: someone asking what the flags are should not be told they are
+  // missing one (#261). `inspect` had no help at all — `--help` fell through to
+  // "Missing required --url", and refusing it as unknown would be worse still.
+  if (flags.help) {
+    printInspectHelp();
+    process.exit(0);
+  }
+
+  // Before the missing-argument check: an unrecognised flag is the most
+  // actionable thing wrong with the command line, and "Missing required --url"
+  // would send the caller to fix the wrong thing first.
+  //
+  // Exit 2, not 1 — the same distinction this command already draws below, so a
+  // caller can still tell "you invoked me wrong" from "the server is down".
+  if (flags.usageError !== undefined) {
+    console.error(flags.usageError);
+    process.exit(2);
+  }
+
   if (!flags.url) {
     console.error('Error: Missing required --url argument');
     console.error('Usage: npx @askturret/mcp inspect --url <endpoint>');
@@ -93,8 +113,34 @@ export async function inspectCommand(args: string[]): Promise<void> {
   }
 }
 
+/** What `inspect` accepts (#261). Listed in the order its help prints them. */
+export const INSPECT_FLAGS: FlagSpec = {
+  command: 'inspect',
+  value: ['--url', '--tool', '--diff-against'],
+  boolean: ['--dry-run', '--json', '--help', '-h'],
+};
+
+/** Usage for `inspect --help`. */
+function printInspectHelp(): void {
+  console.log('Usage: npx @askturret/mcp inspect --url <endpoint> [options]');
+  console.log('');
+  console.log('Options:');
+  console.log('  --url <endpoint>      MCP endpoint to inspect (required)');
+  console.log('  --tool <name>         Inspect one tool rather than the whole surface');
+  console.log('  --dry-run             Describe the call without invoking it');
+  console.log('  --diff-against <file> Compare the live surface against a snapshot');
+  console.log('  --json                Machine-readable output');
+  console.log('  --help, -h            Show this message');
+  console.log('');
+  console.log('Both `--flag value` and `--flag=value` are accepted.');
+}
+
 /**
- * Parse command-line arguments
+ * Parse command-line arguments.
+ *
+ * The loop below is unchanged (#261) — `normalizeFlags` has already rewritten
+ * `--flag=value` into the form it expects and refused anything unrecognised, so
+ * this stays a plain mapping from known flag to field.
  */
 function parseArgs(args: string[]): {
   url?: string;
@@ -102,6 +148,8 @@ function parseArgs(args: string[]): {
   dryRun: boolean;
   json: boolean;
   diffAgainst?: string;
+  help: boolean;
+  usageError?: string;
 } {
   const flags: {
     url?: string;
@@ -109,28 +157,37 @@ function parseArgs(args: string[]): {
     dryRun: boolean;
     json: boolean;
     diffAgainst?: string;
+    help: boolean;
+    usageError?: string;
   } = {
     dryRun: false,
     json: false,
+    help: false,
   };
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+  const normalized = normalizeFlags(args, INSPECT_FLAGS);
+  if (normalized.error !== undefined) flags.usageError = normalized.error;
+
+  const argv = normalized.args;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
     if (!arg) continue;
 
     if (arg === '--url') {
-      const value = args[++i];
+      const value = argv[++i];
       if (value !== undefined) flags.url = value;
     } else if (arg === '--tool') {
-      const value = args[++i];
+      const value = argv[++i];
       if (value !== undefined) flags.tool = value;
     } else if (arg === '--dry-run') {
       flags.dryRun = true;
     } else if (arg === '--json') {
       flags.json = true;
     } else if (arg === '--diff-against') {
-      const value = args[++i];
+      const value = argv[++i];
       if (value !== undefined) flags.diffAgainst = value;
+    } else if (arg === '--help' || arg === '-h') {
+      flags.help = true;
     }
   }
 

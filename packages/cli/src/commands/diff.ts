@@ -17,6 +17,7 @@ import {
   type RegistrySnapshot,
 } from '@askturret/mcp-core';
 import { formatHumanReadable, formatJson } from './diff-output.js';
+import { normalizeFlags, type FlagSpec } from '../args.js';
 
 /**
  * Exit codes, matching the convention `inspect` established:
@@ -44,7 +45,16 @@ interface DiffFlags {
   renameHints?: string;
   confirmFor?: string;
   help: boolean;
+  /** First usage problem found while normalising argv (#261). */
+  usageError?: string;
 }
+
+/** What `diff` accepts (#261). Listed in the order its help prints them. */
+export const DIFF_FLAGS: FlagSpec = {
+  command: 'diff',
+  value: ['--before', '--after', '--rename-hints', '--confirm-for'],
+  boolean: ['--json', '--allow-breaking', '--help', '-h'],
+};
 
 export async function diffCommand(args: string[]): Promise<void> {
   const flags = parseArgs(args);
@@ -52,6 +62,15 @@ export async function diffCommand(args: string[]): Promise<void> {
   if (flags.help) {
     printDiffHelp();
     process.exit(EXIT_OK);
+  }
+
+  // A malformed flag is a usage error, which this command already separates
+  // from a breaking-change verdict (#261). Reported before the missing-argument
+  // check so `diff --befor x --after y` names the typo rather than complaining
+  // that `--before` is missing — which is true, but not the useful half.
+  if (flags.usageError !== undefined) {
+    console.error(flags.usageError);
+    process.exit(EXIT_USAGE);
   }
 
   if (!flags.before || !flags.after) {
@@ -246,24 +265,34 @@ async function loadRenameHints(path: string): Promise<Record<string, string>> {
   return out;
 }
 
+/**
+ * Parse command-line arguments.
+ *
+ * The loop is unchanged (#261): `normalizeFlags` has already rewritten
+ * `--flag=value` into the form it expects and refused anything unrecognised.
+ */
 function parseArgs(args: string[]): DiffFlags {
   const flags: DiffFlags = { json: false, allowBreaking: false, help: false };
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+  const normalized = normalizeFlags(args, DIFF_FLAGS);
+  if (normalized.error !== undefined) flags.usageError = normalized.error;
+
+  const argv = normalized.args;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
     if (!arg) continue;
 
     if (arg === '--before') {
-      const value = args[++i];
+      const value = argv[++i];
       if (value !== undefined) flags.before = value;
     } else if (arg === '--after') {
-      const value = args[++i];
+      const value = argv[++i];
       if (value !== undefined) flags.after = value;
     } else if (arg === '--rename-hints') {
-      const value = args[++i];
+      const value = argv[++i];
       if (value !== undefined) flags.renameHints = value;
     } else if (arg === '--confirm-for') {
-      const value = args[++i];
+      const value = argv[++i];
       if (value !== undefined) flags.confirmFor = value;
     } else if (arg === '--json') {
       flags.json = true;

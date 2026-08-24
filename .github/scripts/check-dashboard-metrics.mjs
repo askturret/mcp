@@ -35,6 +35,7 @@ const repoRoot = resolve(here, '../..');
 const DASHBOARD_DIR = process.argv[2] ?? join(repoRoot, 'examples/dashboards');
 const TYPES_FILE =
   process.argv[3] ?? join(repoRoot, 'packages/core/src/telemetry/types.ts');
+const RULES_FILE = process.argv[4] ?? join(repoRoot, 'examples/dashboards/alerts.yaml');
 
 /**
  * Labels Prometheus itself attaches, or that PromQL introduces — none of which
@@ -134,10 +135,86 @@ export function parseEmittedMetrics(source) {
  *
  * Recording-rule outputs use a colon-separated namespace (`mcp:foo:rate5m`)
  * per Prometheus convention, so they never match `mcp_...` and are correctly
- * ignored here — they are defined in alerts.yaml, not emitted by the runtime.
+ * ignored here. They are defined in alerts.yaml — which this guard now reads
+ * too (see `parseRuleFile`), so "correctly ignored" no longer means unchecked.
  */
 export function extractMetricRefs(expr) {
   return [...new Set(expr.match(/\bmcp_[a-z0-9_]+/g) ?? [])];
+}
+
+/** Recording-rule outputs (`mcp:foo:bar`) referenced by an expression. */
+export function extractRecordingRefs(expr) {
+  return [...new Set(expr.match(/\bmcp:[a-z0-9_:]+/g) ?? [])];
+}
+
+/**
+ * Rule names and PromQL expressions declared in a Prometheus rule file.
+ *
+ * ## Why this exists (#136 QA)
+ *
+ * Until this was added, the guard read `examples/dashboards/*.json` and
+ * nothing else, on the stated grounds that recording rules are "defined in
+ * alerts.yaml, not emitted by the runtime". True of the rule OUTPUTS, and
+ * badly wrong about their INPUTS: a recording rule is a PromQL expression over
+ * real emitted metrics, so it drifts exactly like a panel does.
+ *
+ * It drifted. #136 removed the `registry_hash` label from
+ * `mcp_registry_operations`, and `mcp:registry_hashes:count` — which counts
+ * DISTINCT values of that label — silently became a constant 1. A missing
+ * label collapses to `""` for every series, so there was no error anywhere:
+ * `McpRegistryHashDivergence` (severity: critical) simply could never fire
+ * again. The dashboards that read the rule kept passing this guard, because
+ * the rule's name was all they mentioned.
+ *
+ * A rule file is the worse case of the two, because a panel at least renders
+ * visibly empty. An alert that cannot fire looks exactly like an alert with
+ * nothing to report.
+ *
+ * Deliberately a narrow reader, not a YAML parser: it wants `record:`,
+ * `alert:` and `expr:`, and it THROWS on an `expr:` it cannot read rather than
+ * skipping it. Skipping is how a guard silently checks less than it claims —
+ * the same failure this file already carries a fix for in `parseEmittedMetrics`.
+ */
+export function parseRuleFile(source) {
+  const expressions = [];
+  const recorded = new Set();
+  let context = '(before any rule)';
+  let declared = 0;
+
+  const lines = source.split('\n');
+  for (const [index, line] of lines.entries()) {
+    if (/^\s*#/.test(line)) continue;
+
+    const named = /^\s*-?\s*(record|alert):\s*(\S+)\s*$/.exec(line);
+    if (named) {
+      context = `${named[1]} ${named[2]}`;
+      if (named[1] === 'record') recorded.add(named[2]);
+      continue;
+    }
+
+    const expr = /^\s*expr:\s*(.*)$/.exec(line);
+    if (!expr) continue;
+    declared += 1;
+
+    const value = expr[1].trim();
+    if (value === '' || value === '|' || value === '>' || value === '>-' || value === '|-') {
+      throw new Error(
+        `line ${String(index + 1)} (${context}): multi-line \`expr:\` blocks are not supported ` +
+          'by this reader. Keep rule expressions on one line, or teach parseRuleFile to read ' +
+          'the block — do NOT leave it unread, which is a guard that silently checks less ' +
+          'than it reports.',
+      );
+    }
+    expressions.push({ expr: value, context });
+  }
+
+  if (declared !== expressions.length) {
+    throw new Error(
+      `read ${String(expressions.length)} of ${String(declared)} \`expr:\` entries`,
+    );
+  }
+
+  return { expressions, recorded };
 }
 
 /**
@@ -205,14 +282,60 @@ export function collectExpressions(node, out = []) {
  * than the narrow case it would catch. Single-metric panels, which are almost
  * all of them, are still checked exactly.
  */
-export function check(dashboardDir, typesFile) {
+export function check(dashboardDir, typesFile, rulesFile) {
   const metrics = parseEmittedMetrics(readFileSync(typesFile, 'utf8'));
   const errors = [];
   const referenced = new Set();
+  const recordingRefs = [];
   let panels = 0;
 
+  /**
+   * Validate one PromQL expression against the emitted metric set.
+   *
+   * Shared by dashboards and rule files ON PURPOSE: an alert expression drifts
+   * from the metrics exactly as a panel does, so checking it differently is how
+   * one of the two ends up unchecked (#136 QA).
+   */
+  const checkExpression = (expr, where) => {
+    for (const ref of extractRecordingRefs(expr)) recordingRefs.push({ ref, expr, where });
+
+    const refs = extractMetricRefs(expr);
+    if (refs.length === 0) return;
+
+    const resolved = [];
+    for (const ref of refs) {
+      const base = resolveMetric(ref, metrics);
+      if (base === null) {
+        errors.push(
+          `${where}: references '${ref}', which the runtime does not emit\n` +
+            `           in: ${expr}`,
+        );
+      } else {
+        resolved.push(base);
+        referenced.add(base);
+      }
+    }
+
+    // Union of the declared labels of every metric in this expression.
+    const allowed = new Set(PROMETHEUS_LABELS);
+    for (const base of resolved) {
+      for (const label of metrics.get(base).labels) allowed.add(label);
+    }
+    for (const label of extractLabelRefs(expr)) {
+      if (!allowed.has(label)) {
+        errors.push(
+          `${where}: uses label '${label}', which no metric in this expression declares\n` +
+            `           in: ${expr}`,
+        );
+      }
+    }
+  };
+
   if (!existsSync(dashboardDir)) {
-    return { errors: [`dashboard directory not found: ${dashboardDir}`], metrics, referenced, panels, files: 0 };
+    return {
+      errors: [`dashboard directory not found: ${dashboardDir}`],
+      metrics, referenced, panels, files: 0, rules: 0,
+    };
   }
 
   const files = readdirSync(dashboardDir).filter((f) => f.endsWith('.json')).sort();
@@ -229,58 +352,72 @@ export function check(dashboardDir, typesFile) {
 
     for (const expr of collectExpressions(doc)) {
       panels += 1;
-      const refs = extractMetricRefs(expr);
+      checkExpression(expr, file);
+    }
+  }
 
-      if (refs.length === 0) continue;
-
-      const resolved = [];
-      for (const ref of refs) {
-        const base = resolveMetric(ref, metrics);
-        if (base === null) {
-          errors.push(
-            `${file}: references '${ref}', which the runtime does not emit\n` +
-              `           in: ${expr}`,
-          );
-        } else {
-          resolved.push(base);
-          referenced.add(base);
-        }
-      }
-
-      // Union of the declared labels of every metric in this expression.
-      const allowed = new Set(PROMETHEUS_LABELS);
-      for (const base of resolved) {
-        for (const label of metrics.get(base).labels) allowed.add(label);
-      }
-      for (const label of extractLabelRefs(expr)) {
-        if (!allowed.has(label)) {
-          errors.push(
-            `${file}: uses label '${label}', which no metric in this expression declares\n` +
-              `           in: ${expr}`,
-          );
-        }
+  // Rule file. Absent is an ERROR, not a skip: the rule file IS the whole of
+  // Option A divergence detection (#64), so "I could not find it" must never
+  // read the same as "it is fine".
+  let recorded = new Set();
+  let rules = 0;
+  if (rulesFile !== undefined) {
+    if (!existsSync(rulesFile)) {
+      errors.push(`rule file not found: ${rulesFile}`);
+    } else {
+      const parsed = parseRuleFile(readFileSync(rulesFile, 'utf8'));
+      recorded = parsed.recorded;
+      rules = parsed.expressions.length;
+      const name = relative(repoRoot, rulesFile);
+      for (const { expr, context } of parsed.expressions) {
+        checkExpression(expr, `${name} (${context})`);
       }
     }
   }
 
-  return { errors, metrics, referenced, panels, files: files.length };
+  // A reference to a recording rule nobody defines renders an empty panel and
+  // an alert that never fires — the same invisible failure, one indirection out.
+  //
+  // Only checked when a rule file was actually supplied. With no `rulesFile`
+  // there is no basis on which to judge, and reporting every reference as
+  // undefined would turn "I was not asked to check" into "this is broken" —
+  // the same conflation, pointed the other way, that this guard exists to stop.
+  if (rulesFile !== undefined) {
+    for (const { ref, expr, where } of recordingRefs) {
+      if (recorded.has(ref)) continue;
+      errors.push(
+        `${where}: references recording rule '${ref}', which no rule file defines\n` +
+          `           in: ${expr}`,
+      );
+    }
+  }
+
+  return { errors, metrics, referenced, panels, files: files.length, rules };
 }
 
 // --- CLI -------------------------------------------------------------------
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const { errors, metrics, referenced, panels, files } = check(DASHBOARD_DIR, TYPES_FILE);
+  const { errors, metrics, referenced, panels, files, rules } = check(
+    DASHBOARD_DIR,
+    TYPES_FILE,
+    RULES_FILE,
+  );
 
   for (const error of errors) console.error(`  FAIL  ${error}`);
 
   if (errors.length > 0) {
     console.error(
       '\nA dashboard querying a metric we do not emit renders an EMPTY panel, not an\n' +
-        'error — indistinguishable from a metric that is legitimately zero. The drift is\n' +
-        'invisible until an incident, which is why it is caught here.\n' +
+        'error — indistinguishable from a metric that is legitimately zero. An ALERT rule\n' +
+        'over a metric we do not emit is worse: it cannot fire, and an alert that cannot\n' +
+        'fire looks exactly like one with nothing to report. Both are invisible until an\n' +
+        'incident, which is why they are caught here.\n' +
         `Emitted metrics are declared in ${relative(repoRoot, TYPES_FILE)}.`,
     );
-    console.error(`\n${errors.length} error(s) across ${files} dashboard(s).`);
+    console.error(
+      `\n${errors.length} error(s) across ${files} dashboard(s) and ${rules} rule expression(s).`,
+    );
     process.exit(1);
   }
 
@@ -290,8 +427,9 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const uncovered = [...metrics.keys()].filter((m) => !referenced.has(m)).sort();
 
   console.log(
-    `Dashboard metric guard: ${panels} expression(s) across ${files} dashboard(s), ` +
-      `${referenced.size}/${metrics.size} emitted metrics panelled, 0 violations.`,
+    `Dashboard metric guard: ${panels} expression(s) across ${files} dashboard(s) ` +
+      `+ ${rules} rule expression(s), ` +
+      `${referenced.size}/${metrics.size} emitted metrics referenced, 0 violations.`,
   );
   if (uncovered.length > 0) {
     console.log(`  note: no panel references ${uncovered.join(', ')}`);

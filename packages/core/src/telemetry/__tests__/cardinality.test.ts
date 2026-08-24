@@ -89,13 +89,15 @@ describe('declared metric set', () => {
     expect(findCardinalityViolations()).toEqual([]);
   });
 
-  it('declares all 20 required metrics', () => {
+  it('declares all 21 required metrics', () => {
     // §9.2 lists thirteen. A missing one is a dashboard an operator cannot
     // build, so the count is asserted rather than left implicit.
     // 13 from §9.2, plus mcp_bulkhead_rejected_total (#43), plus
     // mcp_retry_attempts_total and mcp_retry_exhausted_total (#45), plus the
-    // three audit series (#48), plus mcp_redaction_hits_total (#49).
-    expect(METRIC_DEFINITIONS).toHaveLength(20);
+    // three audit series (#48), plus mcp_redaction_hits_total (#49), plus
+    // mcp_registry_hash_id (#136 QA — registry identity as a value, which is
+    // what Option A divergence detection counts).
+    expect(METRIC_DEFINITIONS).toHaveLength(21);
   });
 
   it('gives every metric a kind, a well-formed label set, and a description', () => {

@@ -36,8 +36,24 @@ Present whether or not the instance is ready — comparing it across pods by han
 is how divergence is confirmed, and a field that only appeared on failure would
 be missing exactly when someone went looking for it.
 
-Also emitted as `mcp_registry_operations{registry_hash="…"}`, which is what
-Option A watches.
+Also emitted as **`mcp_registry_hash_id`**, which is what Option A watches. Its
+VALUE is the first 13 hex digits of that hash read as a number, and it carries
+no labels of its own.
+
+The identity is a value rather than a label on purpose. A `registry_hash` label
+mints a brand-new time series on every reload — one that is never reclaimed, so
+the series count grows for as long as the deployment lives (#136). Truncating
+the hash does not help: that bounds the label's *width*, not the number of
+distinct values it can take. As a value there is exactly one series per
+instance, and `count_values` rebuilds the grouping at query time.
+
+To go from a number back to the hash:
+
+```bash
+printf '%013x\n' 2844626588163943    # -> a1b2c3d4e5f67
+```
+
+which is the leading prefix of the `registryHash` above.
 
 ---
 
@@ -52,12 +68,17 @@ Load [`examples/dashboards/alerts.yaml`](../examples/dashboards/alerts.yaml):
 
 ```yaml
 - record: mcp:registry_hashes:count
-  expr: count by (job) (count by (job, registry_hash) (mcp_registry_operations))
+  expr: count by (job) (count_values by (job) ("registry_hash", mcp_registry_hash_id))
 
 - alert: McpRegistryHashDivergence
   expr: mcp:registry_hashes:count > 1
   for: 5m
 ```
+
+`count_values` rather than `count by (registry_hash)` because the hash is the
+metric's value, not a label on it — see [Every instance reports its
+hash](#every-instance-reports-its-hash) for why. The synthesised
+`registry_hash` label is therefore decimal.
 
 ### Why `for: 5m` is the whole design
 

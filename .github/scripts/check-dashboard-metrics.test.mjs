@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import {
   check,
   parseEmittedMetrics,
+  parseRuleFile,
   extractMetricRefs,
   extractLabelRefs,
   resolveMetric,
@@ -32,6 +33,7 @@ import {
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '../..');
 const REAL_TYPES = join(repoRoot, 'packages/core/src/telemetry/types.ts');
+const REAL_RULES = join(repoRoot, 'examples/dashboards/alerts.yaml');
 
 let passed = 0;
 let failed = 0;
@@ -263,9 +265,127 @@ console.log('\n# the real dashboards in this repository\n');
 // ---------------------------------------------------------------------------
 
 {
-  const { errors, referenced } = check(join(repoRoot, 'examples/dashboards'), REAL_TYPES);
-  check_('the shipped dashboards reference only emitted metrics', errors.length, 0);
+  const { errors, referenced, rules } = check(
+    join(repoRoot, 'examples/dashboards'),
+    REAL_TYPES,
+    REAL_RULES,
+  );
+  check_('the shipped dashboards and rules reference only emitted metrics', errors.length, 0);
   check_('...and actually reference some (not an empty directory passing)', referenced.size > 0, true);
+  check_('...and the rule file was actually read (not silently skipped)', rules > 0, true);
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n# alert rule files (#136 QA)\n');
+// ---------------------------------------------------------------------------
+
+// Until #136 QA this guard read dashboards and nothing else, because recording
+// rules "are defined in alerts.yaml, not emitted by the runtime". True of the
+// rule OUTPUTS and wrong about their INPUTS — a recording rule is a PromQL
+// expression over real metrics, and it drifts exactly as a panel does.
+//
+// It drifted. #136 removed `registry_hash` from `mcp_registry_operations`, and
+// `mcp:registry_hashes:count` — which counts distinct values of that label —
+// became a constant 1, so a severity:critical alert could never fire again.
+// Nothing failed, because nobody was reading the rule file.
+
+{
+  const rulesFile = join(mkdtempSync(join(tmpdir(), 'rules-')), 'alerts.yaml');
+  tmpDirs.push(dirname(rulesFile));
+
+  const rulesWith = (expr) =>
+    `groups:\n  - name: g\n    rules:\n      - record: mcp:x:count\n        expr: ${expr}\n`;
+
+  const errorsForRule = (expr, typesFile) => {
+    writeFileSync(rulesFile, rulesWith(expr));
+    return check(scratch({}).dashDir, typesFile ?? scratch({}).typesFile, rulesFile).errors;
+  };
+
+  check_(
+    'a rule over a real metric with real labels passes',
+    errorsForRule('sum by (tool) (mcp_tool_inflight)').length,
+    0,
+  );
+  check_(
+    'a rule over a metric we do not emit FAILS',
+    errorsForRule('sum(mcp_nope_total)').length,
+    1,
+  );
+
+  // THE REGRESSION, verbatim, against the REAL metric declarations — because
+  // the point is that this expression was correct until the label it groups by
+  // was removed from a metric that still exists. Run against the fixture types
+  // it would fail for the uninteresting reason that the metric is unknown there.
+  const regression = errorsForRule(
+    'count by (job) (count by (job, registry_hash) (mcp_registry_operations))',
+    REAL_TYPES,
+  );
+  check_('a rule grouping by a label the metric no longer declares FAILS', regression.length, 1);
+  check_(
+    '...and the message names the label, not just the rule',
+    regression[0].includes("'registry_hash'"),
+    true,
+  );
+
+  check_(
+    'the rule name is reported, so the failure points at a rule and not a file',
+    errorsForRule('sum(mcp_nope_total)')[0].includes('record mcp:x:count'),
+    true,
+  );
+
+  // An `expr:` the reader cannot parse must THROW, never be skipped. A guard
+  // that silently checks fewer expressions than the file contains reads exactly
+  // like one that checked them all.
+  let threw = false;
+  try {
+    parseRuleFile('groups:\n  - rules:\n      - record: a\n        expr: >-\n          sum(x)\n');
+  } catch {
+    threw = true;
+  }
+  check_('an unreadable multi-line expr THROWS rather than being skipped', threw, true);
+
+  check_(
+    'a missing rule file is an error, not a silent pass',
+    check(scratch({}).dashDir, REAL_TYPES, join(dirname(rulesFile), 'nope.yaml')).errors.length,
+    1,
+  );
+}
+
+// ---------------------------------------------------------------------------
+console.log('\n# recording-rule references\n');
+// ---------------------------------------------------------------------------
+
+{
+  const rulesFile = join(mkdtempSync(join(tmpdir(), 'rules2-')), 'alerts.yaml');
+  tmpDirs.push(dirname(rulesFile));
+  writeFileSync(
+    rulesFile,
+    'groups:\n  - name: g\n    rules:\n      - record: mcp:defined:count\n        expr: sum(mcp_tool_inflight)\n',
+  );
+
+  const { dashDir, typesFile } = scratch({ 'd.json': panel('mcp:defined:count > 1') });
+  check_(
+    'a panel reading a DEFINED recording rule passes',
+    check(dashDir, typesFile, rulesFile).errors.length,
+    0,
+  );
+
+  const orphan = scratch({ 'd.json': panel('mcp:not_defined:count > 1') });
+  const errors = check(orphan.dashDir, orphan.typesFile, rulesFile).errors;
+  check_('a panel reading an UNDEFINED recording rule FAILS', errors.length, 1);
+  check_(
+    '...and names the rule',
+    errors[0].includes("'mcp:not_defined:count'"),
+    true,
+  );
+
+  // Without a rule file there is no basis to judge, so this must stay silent.
+  // Reporting it would turn "not asked to check" into "broken".
+  check_(
+    'an undefined recording rule is NOT reported when no rule file is given',
+    check(orphan.dashDir, orphan.typesFile).errors.length,
+    0,
+  );
 }
 
 // ---------------------------------------------------------------------------

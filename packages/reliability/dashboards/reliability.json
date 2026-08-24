@@ -238,6 +238,24 @@
       "id": 13
     },
     {
+      "title": "mcp_registry_hash_id",
+      "type": "stat",
+      "description": "Identity of the live registry as a number: the first 13 hex digits of the snapshot hash. One series per instance (#136 QA) — the identity is the VALUE, so cardinality is bounded by deployment size rather than by reload count.",
+      "targets": [
+        {
+          "expr": "max(mcp_registry_hash_id)",
+          "legendFormat": "mcp_registry_hash_id"
+        }
+      ],
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 48
+      },
+      "id": 14
+    },
+    {
       "title": "mcp_bulkhead_rejected_total",
       "type": "timeseries",
       "description": "Calls rejected because a bulkhead queue was full (#43). Counts QUEUE_FULL only — a caller that cancelled while queued is not load being shed, and folding the two together would invert the diagnosis during a burst of client disconnects.",
@@ -250,10 +268,10 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 48
+        "x": 0,
+        "y": 56
       },
-      "id": 14
+      "id": 15
     },
     {
       "title": "mcp_retry_attempts_total",
@@ -268,10 +286,10 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 56
       },
-      "id": 15
+      "id": 16
     },
     {
       "title": "mcp_retry_exhausted_total",
@@ -286,10 +304,10 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 56
+        "x": 0,
+        "y": 64
       },
-      "id": 16
+      "id": 17
     },
     {
       "title": "mcp_audit_appends_total",
@@ -304,10 +322,10 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 64
       },
-      "id": 17
+      "id": 18
     },
     {
       "title": "mcp_audit_buffer_size",
@@ -322,10 +340,10 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 64
+        "x": 0,
+        "y": 72
       },
-      "id": 18
+      "id": 19
     },
     {
       "title": "mcp_audit_dropped_total",
@@ -340,10 +358,10 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 0,
+        "x": 12,
         "y": 72
       },
-      "id": 19
+      "id": 20
     },
     {
       "title": "mcp_redaction_hits_total",
@@ -358,10 +376,10 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 72
+        "x": 0,
+        "y": 80
       },
-      "id": 20
+      "id": 21
     }
   ],
   "tags": [

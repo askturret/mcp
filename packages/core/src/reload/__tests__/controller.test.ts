@@ -12,10 +12,10 @@ import { snapshot } from './fixtures.js';
 function recordingMetrics(): {
   metrics: ReloadMetrics;
   reloads: ReloadOutcome[];
-  gauges: Array<{ count: number }>;
+  gauges: Array<{ hash: string; count: number }>;
 } {
   const reloads: ReloadOutcome[] = [];
-  const gauges: Array<{ count: number }> = [];
+  const gauges: Array<{ hash: string; count: number }> = [];
   return {
     reloads,
     gauges,
@@ -23,8 +23,8 @@ function recordingMetrics(): {
       recordReload: (outcome) => {
         reloads.push(outcome);
       },
-      recordActiveRegistry: (count) => {
-        gauges.push({ count });
+      recordActiveRegistry: (hash, count) => {
+        gauges.push({ hash, count });
       },
     },
   };
@@ -201,7 +201,16 @@ describe('createReloadController', () => {
 
     // Construction gauge + one per successful swap. The rejected reload
     // records no gauge, because nothing was published.
-    expect(gauges).toEqual([{ count: 1 }, { count: 2 }]);
+    //
+    // The hash is asserted alongside the count, and it must be the hash of the
+    // snapshot now SERVING (#136 QA). Divergence detection compares this value
+    // across instances, so reporting the candidate's hash after a rejected
+    // reload — or a stale one after a rollback — would make a correctly
+    // converged deployment look split.
+    expect(gauges).toEqual([
+      { hash: v1.hash, count: 1 },
+      { hash: v2.hash, count: 2 },
+    ]);
   });
 
   it('logs every reload with old and new hash', async () => {

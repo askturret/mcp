@@ -123,8 +123,31 @@ when `1.0.0` ships.
   Dashboards: the generated `reliability.json` panel becomes
   `max(mcp_registry_operations)`, and `examples/dashboards/registry.json` breaks
   down by `instance` — a scrape label bounded by the size of the deployment —
-  instead of by hash. Divergence detection is unaffected: it reads the
-  `mcp:registry_hashes:count` recording rule, not this label.
+  instead of by hash.
+- `mcp_registry_hash_id` — registry identity as a metric VALUE, restoring the
+  divergence detection that removing the label above had silently disabled.
+  The claim that "divergence detection is unaffected because it reads the
+  `mcp:registry_hashes:count` recording rule, not this label" was exactly
+  backwards, and it is worth stating plainly: the panels do not read the label,
+  but **the rule they read was computed FROM it**. Removing the label did not
+  route around the rule, it emptied it. A missing label collapses to `""` on
+  every series, so `count by (job, registry_hash)` yielded one group per job and
+  `mcp:registry_hashes:count` became a constant 1 — leaving
+  `McpRegistryHashDivergence` (`severity: critical`, and the whole of §64
+  Option A) unable to fire at all. Nothing failed; an alert that cannot fire
+  looks exactly like an alert with nothing to report.
+  The identity is a VALUE and not a label because a label cannot be made bounded
+  here: gauges are modelled as UpDownCounters, and a zeroed series still exists
+  and is still counted by `count by (...)`, so no eviction would stop a retired
+  hash from voting. As a value there is one series per instance whose value
+  changes on reload, and `count_values` rebuilds the grouping at query time —
+  where cardinality is bounded by the hashes actually live rather than by every
+  hash ever served. Both recording rules keep their names and their output
+  `registry_hash` label, so alerts and panels are unchanged; that label now
+  holds the hash in decimal (`printf '%013x'` converts it back).
+  13 hex digits, because 52 bits is the widest hex-aligned prefix float64
+  represents exactly — at 14 two distinct hashes could round together and
+  diverging instances would compare equal.
 - `check-metric-cardinality.mjs` now derives its denylist from `LABEL_DENYLIST`
   rather than keeping a second hand-maintained copy, and fails rather than
   falling back when it cannot read it. The two had already drifted: adding
@@ -135,6 +158,21 @@ when `1.0.0` ships.
   `kind` and `labels` adjacent, so a comment between those keys removed the
   metric from its view and made a correct dashboard look as though it
   referenced a metric the runtime does not emit.
+- `check-dashboard-metrics.mjs` also reads `examples/dashboards/alerts.yaml`
+  now, and validates recording-rule and alert expressions against the metric
+  contract exactly as it validates panels. It previously read `*.json` only, on
+  the stated grounds that recording rules are "defined in alerts.yaml, not
+  emitted by the runtime" — true of the rule OUTPUTS, and wrong about their
+  INPUTS, which are ordinary PromQL over real metrics and drift the same way.
+  That gap is what let a `severity: critical` alert go inert unnoticed. A rule
+  file that is named but missing, and an `expr:` the reader cannot parse, are
+  both errors rather than skips. It also flags a panel or alert reading a
+  recording rule no rule file defines.
+- The Option A alert-rule test asserted the recording rule's expression as
+  TEXT, which stayed green while the rule it pinned went inert. It now also
+  asserts the rules against `METRIC_DEFINITIONS`: every `mcp_*` series a rule
+  reads must be declared, and every label it groups by must exist on one of
+  them.
 - The dashboard generator renders an unlabelled metric as `max(metric)` rather
   than the degenerate `max by () (metric)` with an empty legend.
 - `migrate` no longer rewrites an identifier wherever it appears once a file

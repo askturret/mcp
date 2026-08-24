@@ -58,7 +58,7 @@ describe('reloadMetricsFromRecorder', () => {
   it('emits mcp_registry_operations as an absolute level, not an increment', () => {
     const recorder = createRecordingMetricRecorder();
 
-    reloadMetricsFromRecorder(recorder).recordActiveRegistry(7);
+    reloadMetricsFromRecorder(recorder).recordActiveRegistry('a1b2c3d4e5f67890', 7);
 
     expect(recorder.forMetric(METRIC.registryOperations)).toEqual([
       {
@@ -84,12 +84,65 @@ describe('reloadMetricsFromRecorder', () => {
     const recorder = createRecordingMetricRecorder();
     const metrics = reloadMetricsFromRecorder(recorder);
 
-    metrics.recordActiveRegistry(1);
-    metrics.recordActiveRegistry(2);
+    metrics.recordActiveRegistry('a1b2c3d4e5f67890', 1);
+    metrics.recordActiveRegistry('ffffffffffffffff', 2);
 
     const emitted = recorder.forMetric(METRIC.registryOperations);
     expect(emitted).toHaveLength(2);
     for (const record of emitted) expect(record.labels).toEqual({});
+  });
+
+  // #136 QA — the regression the label removal caused, and the fix for it.
+  //
+  // Removing `registry_hash` fixed the leak and silently disabled
+  // `McpRegistryHashDivergence`: its recording rule counts DISTINCT values of
+  // that label, and a missing label collapses to `""` on every series, so the
+  // count became a permanent 1. Identity had to come back — as a VALUE, which
+  // is the only form that does not grow the series count.
+  it('re-emits registry identity as a VALUE, so divergence stays detectable (#136 QA)', () => {
+    const recorder = createRecordingMetricRecorder();
+    const metrics = reloadMetricsFromRecorder(recorder);
+
+    metrics.recordActiveRegistry('a1b2c3d4e5f67890', 1);
+    metrics.recordActiveRegistry('ffffffffffffffff', 1);
+
+    const emitted = recorder.forMetric(METRIC.registryHashId);
+
+    // Two DIFFERENT values — the thing `count_values` counts. Were these equal,
+    // two diverging instances would report agreement.
+    expect(emitted.map((r) => r.value)).toEqual([0xa1b2c3d4e5f67, 0xfffffffffffff]);
+
+    // ...carried on ONE series. This is the half that keeps #136 fixed: the
+    // identity varies, the label set does not.
+    for (const record of emitted) expect(record.labels).toEqual({});
+  });
+
+  it('keeps every hash id exactly representable as a float64', () => {
+    // The whole reason the prefix is 13 hex digits (52 bits) and not 16 (64).
+    // Above 2^53 distinct hashes round to the SAME double, and two diverging
+    // instances would then compare equal — divergence reported as consensus,
+    // which is the one failure this metric may not have.
+    const recorder = createRecordingMetricRecorder();
+    const metrics = reloadMetricsFromRecorder(recorder);
+
+    metrics.recordActiveRegistry('ffffffffffffffff', 1);
+
+    const value = recorder.forMetric(METRIC.registryHashId)[0]?.value ?? 0;
+    expect(Number.isSafeInteger(value)).toBe(true);
+    expect(value).toBe(2 ** 52 - 1);
+  });
+
+  it('skips the sample rather than emitting 0 for an unparseable hash', () => {
+    // 0 is a legal identity. Emitting it on a parse failure would make every
+    // instance that failed to parse look like it agreed with every other one,
+    // turning a detector into a source of false silence.
+    const recorder = createRecordingMetricRecorder();
+
+    reloadMetricsFromRecorder(recorder).recordActiveRegistry('not-a-hash', 4);
+
+    expect(recorder.forMetric(METRIC.registryHashId)).toEqual([]);
+    // The operation count still lands — it does not depend on the hash.
+    expect(recorder.forMetric(METRIC.registryOperations)).toHaveLength(1);
   });
 });
 

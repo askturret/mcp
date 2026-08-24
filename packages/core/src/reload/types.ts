@@ -163,9 +163,10 @@ export interface ReloadMetrics {
   recordReload(outcome: ReloadOutcome, errorClass?: ReloadErrorClass): void;
 
   /**
-   * `mcp_registry_operations` - gauge, unlabelled.
+   * `mcp_registry_operations` and `mcp_registry_hash_id` — both gauges, both
+   * unlabelled.
    *
-   * ## The hash parameter was removed by #136
+   * ## The hash is a VALUE now, not a label (#136, then #136 QA)
    *
    * This used to take a shortened registry hash and emit it as a
    * `registry_hash` label, and this comment used to say the shortening was
@@ -175,12 +176,24 @@ export interface ReloadMetrics {
    * a different 12-character prefix, and therefore a permanent new series — in
    * the OTel adapter, a permanent new entry in an unevicted map.
    *
-   * The parameter is gone rather than merely unused, so the cardinality cannot
-   * be reintroduced by a caller passing it again. Which registry is live is
-   * reported on a span and in the readiness payload, where high-cardinality
-   * identity is free.
+   * #136 removed the label, which fixed the leak and broke the alert. The
+   * `McpRegistryHashDivergence` recording rule counts DISTINCT values of that
+   * same label, and a missing label collapses to `""` on every series — so the
+   * count became a constant 1 and a `severity: critical` alert could never fire
+   * again. The leak and the detector were reading one label for opposite
+   * reasons, and removing it served only one of them.
+   *
+   * So the hash is back as a PARAMETER, and never as a label: the bridge turns
+   * it into a number and emits it as the VALUE of its own single-series gauge.
+   * Bounded cardinality and working divergence detection stop being in tension
+   * once identity is not a label — see `registryHashId` for why a label cannot
+   * be made to work here even with eviction.
+   *
+   * Passing a hash here cannot reintroduce the leak. The §9.2 denylist rejects
+   * the whole `hash` label family at the recorder boundary, so that guarantee
+   * no longer rests on the shape of this signature.
    */
-  recordActiveRegistry(operationCount: number): void;
+  recordActiveRegistry(registryHash: string, operationCount: number): void;
 }
 
 /**

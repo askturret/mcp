@@ -70,7 +70,7 @@
       "id": 3,
       "title": "Instances per hash",
       "type": "timeseries",
-      "description": "The panel that tells you WHICH failure you have. One instance disagreeing with fifty is a pod that failed to roll; an even split is a half-applied config change. Same detection, opposite responses — and this is how you tell them apart without writing a query at 3am.",
+      "description": "The panel that tells you WHICH failure you have. One instance disagreeing with fifty is a pod that failed to roll; an even split is a half-applied config change. Same detection, opposite responses — and this is how you tell them apart without writing a query at 3am. The legend shows each hash in DECIMAL, because the recording rule builds it with count_values from the value of mcp_registry_hash_id rather than from a label (a hash label would add a permanent series per reload — #136). Convert with printf '%013x' to get the prefix /mcp/health/ready reports; you rarely need to, since this panel is about the SHAPE of the split.",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
       "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
       "targets": [
@@ -85,7 +85,7 @@
       "id": 4,
       "title": "Operations in the live registry by instance",
       "type": "timeseries",
-      "description": "Operation count per pod. Two instances reporting different counts is the concrete shape of the divergence — it is literally a different tool surface per pod. Broken down by `instance` rather than by registry hash since #136: the hash was a metric label with an unbounded value set, adding a permanent series on every reload, while `instance` is a scrape label bounded by the size of the deployment. Which hash each pod serves is answered by the divergence panels above, which read the mcp:registry_hashes:count recording rule.",
+      "description": "Operation count per pod. Two instances reporting different counts is the concrete shape of the divergence — it is literally a different tool surface per pod. Broken down by `instance` rather than by registry hash since #136: the hash was a metric label with an unbounded value set, adding a permanent series on every reload, while `instance` is a scrape label bounded by the size of the deployment. Which hash each pod serves is answered by the divergence panels above, which read the mcp:registry_hashes:count recording rule — that rule is computed from mcp_registry_hash_id, a separate single-series gauge carrying the hash as its VALUE, so identity survived the label's removal.",
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
       "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
       "targets": [

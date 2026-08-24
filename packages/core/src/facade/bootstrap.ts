@@ -146,25 +146,7 @@ export function bootstrapRegistry(
 
   const ready = (async () => {
     try {
-      const abortController = new AbortController();
-      const discoveryContext: DiscoveryContext = {
-        logger,
-        abortSignal: abortController.signal,
-      };
-
-      const discovered: DiscoveredOperation[] = [];
-      for (const source of sources) {
-        discovered.push(...(await source.discover(discoveryContext)));
-      }
-
-      const compilerContext: Omit<CompilerContext, 'warnings'> = {
-        logger,
-        preset: 'light' as const,
-        overlays: [],
-      };
-      const compiled = await createCompiler().compile(discovered, compilerContext);
-
-      const snapshot = applyIncludeFilter(compiled, include);
+      const snapshot = await compileSnapshot(sources, include, logger, 'light');
       registry.swap(snapshot);
       logger.info('Registry initialized', { operationCount: snapshot.operations.size });
     } catch (error) {
@@ -174,6 +156,47 @@ export function bootstrapRegistry(
   })();
 
   return { registry, ready };
+}
+
+/**
+ * Discover, compile and filter — producing a snapshot without publishing it.
+ *
+ * Extracted from `bootstrapRegistry` for #131. The difference that matters is
+ * REPEATABILITY: bootstrap runs this once and swaps the result in, whereas a
+ * reload controller needs a `compile()` it can call again on every reload. The
+ * same steps in both places is the point — a reload that compiled differently
+ * from the boot path would drift from it silently, and the first symptom would
+ * be a snapshot that only reproduces after a restart.
+ *
+ * `preset` is a parameter rather than the hardcoded `'light'` it replaced,
+ * because a preset-driven server compiles under its own preset. Bootstrap still
+ * passes `'light'`, so facade behaviour is unchanged.
+ */
+export async function compileSnapshot(
+  sources: OperationSource[],
+  include: IncludeFilter | undefined,
+  logger: Logger,
+  preset: CompilerContext['preset'],
+): Promise<RegistrySnapshot> {
+  const abortController = new AbortController();
+  const discoveryContext: DiscoveryContext = {
+    logger,
+    abortSignal: abortController.signal,
+  };
+
+  const discovered: DiscoveredOperation[] = [];
+  for (const source of sources) {
+    discovered.push(...(await source.discover(discoveryContext)));
+  }
+
+  const compilerContext: Omit<CompilerContext, 'warnings'> = {
+    logger,
+    preset,
+    overlays: [],
+  };
+  const compiled = await createCompiler().compile(discovered, compilerContext);
+
+  return applyIncludeFilter(compiled, include);
 }
 
 /**

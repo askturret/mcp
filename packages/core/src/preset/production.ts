@@ -94,20 +94,18 @@ const PRODUCTION_PENDING: readonly PendingControl[] = [
       'JSON Schema validation is deferred. The value is carried so the setting is stable ' +
       'before the behaviour fills in.',
   },
-  {
-    control: 'reloadMode',
-    trackedBy: 37,
-    detail:
-      'Partially live as of #37. The mechanism exists and honours this value: ' +
-      'createReloadController retains the last-good snapshot on a rejected candidate, ' +
-      'marks readiness degraded, and never publishes a snapshot that failed validation. ' +
-      'What is NOT yet wired is preset -> controller: createMcpServer is still a v0.1 ' +
-      'stub, so nothing reads this field off the preset and constructs a controller from ' +
-      'it. An adopter selecting the Production preset must build the controller itself ' +
-      'and pass mode: preset.reloadMode. Downgraded from "nothing consumes this value" ' +
-      'rather than removed, because removing it would claim an end-to-end guarantee that ' +
-      'server assembly has not yet made true.',
-  },
+  // `reloadMode` was listed here until #131 and is now WIRED: createMcpServer
+  // reads it off this expansion and constructs the controller from it, so the
+  // declared value and the enforced behaviour are the same value. Removed
+  // rather than downgraded again, because `pending` means "declared but not
+  // enforced" and keeping a wired control in it would misreport the opposite
+  // way — understating what works is still a description that does not match
+  // the code.
+  //
+  // Note this list is Production's. Regulated still lists `reloadMode`, and
+  // correctly: it declares `fail-readiness`, which the controller does not
+  // implement. createMcpServer REFUSES that combination rather than quietly
+  // giving it `degraded` — see UnsupportedReloadModeError.
 ];
 
 /**

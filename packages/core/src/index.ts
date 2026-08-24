@@ -6,21 +6,6 @@
  */
 
 /**
- * Placeholder for createMcpServer - the main entry point for the Light API
- */
-export function createMcpServer(_options?: unknown): unknown {
-  // Stub implementation for v0.1
-  return {
-    start: async () => {
-      throw new Error('Not yet implemented');
-    },
-    stop: async () => {
-      throw new Error('Not yet implemented');
-    },
-  };
-}
-
-/**
  * Version information
  */
 export const VERSION = '0.1.0';
@@ -88,6 +73,14 @@ export * from './logging/index.js';
 export * from './telemetry/index.js';
 export * from './diff/index.js';
 export * from './facade/index.js';
+export {
+  createMcpServer,
+  UnsupportedReloadModeError,
+  type McpServer,
+  type McpServerOptions,
+  type McpServerReloadOptions,
+  type SupportedPreset,
+} from './server/index.js';
 export * from './bulkhead/index.js';
 export * from './retry/index.js';
 export * from './breaker/index.js';

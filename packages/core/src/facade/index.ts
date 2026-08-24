@@ -10,6 +10,7 @@ export {
   FACADE_DEFAULT_MAX_RESPONSE_SIZE,
   applyIncludeFilter,
   bootstrapRegistry,
+  compileSnapshot,
   createFacadeLogger,
   emptySnapshot,
   explorerProductionWarning,

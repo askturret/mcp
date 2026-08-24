@@ -84,6 +84,20 @@ when `1.0.0` ships.
   body is parsed, so unlike every other code in the union it can never come from
   an executor — which is why it is deliberately absent from the executor-facing
   code lists in `adapter-conformance` and `reliability`.
+- `createMcpServer` is now a real implementation, and `UnsupportedReloadModeError`
+  with it. It expands a preset, builds a registry, and constructs a reload
+  controller from the preset's own `reloadMode` — closing the declare-but-don't-
+  wire gap #36 recorded honestly and #37 left ready to join.
+  It does **not** serve traffic: `start()` / `stop()` still refuse, and the
+  Production preset's `pending` list still names `audit.sink`, `redaction` and
+  `outputValidation`. Adapters (`expressMcp` / `fastifyMcp`) and the gateway
+  remain the way to serve.
+  Regulated is **refused** rather than built: it declares `fail-readiness`, which
+  `createReloadController` has no branch for, so wiring it through would silently
+  deliver `degraded` — the opposite of what that mode exists to say.
+- `compileSnapshot` — the discover/compile/filter step, extracted from
+  `bootstrapRegistry` so boot and reload run the same path. Facade behaviour is
+  unchanged; bootstrap still compiles under `light`.
 
 ### Changed
 - A policy denial carrying `UNAUTHENTICATED` now reaches the caller as
@@ -109,5 +123,16 @@ when `1.0.0` ships.
   client-correctable answer. Body-read failures that are **not** size-related —
   a reset socket, say — still return `500`/`-32603`, which is the distinction
   the fix turns on.
+- `createMcpServer(options)` now REQUIRES options and returns an `McpServer`,
+  replacing the v0.1 stub `createMcpServer(_options?: unknown): unknown` whose
+  `start()`/`stop()` threw.
+  **Covered surface — core public types** (compatibility-policy §1). A signature
+  change on an exported function is breaking, so this would be MAJOR once
+  `1.0.0` ships; it lands now because no guarantee is in force and the previous
+  shape could not do anything except throw.
+- The Production preset no longer lists `reloadMode` under `pending`, because it
+  is now enforced end to end. Not a covered surface — `pending` describes what is
+  unfinished, and leaving a wired control in it would misreport in the other
+  direction.
 
 [Unreleased]: https://github.com/askturret/mcp/compare/main...HEAD

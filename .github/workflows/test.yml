@@ -596,6 +596,16 @@ jobs:
       - name: Self-test the audit append-only guard
         run: node .github/scripts/check-audit-append-only.test.mjs
 
+      # #58: a CODEOWNERS rule that matches nothing routes nothing, and GitHub
+      # reports neither — the area looks owned and is not. Also fails when a new
+      # package has no rule of its own, so adding one forces an ownership
+      # decision instead of letting it fall silently to the catch-all.
+      - name: Self-test the CODEOWNERS guard
+        run: node .github/scripts/check-codeowners.test.mjs
+
+      - name: CODEOWNERS routes what it claims to
+        run: node .github/scripts/check-codeowners.mjs
+
       # #128: merge=union protects the MERGE. Nothing protects a hand-edit, a
       # whole-file restore, or a conflict resolved by taking one side — and an
       # append-only log has no append-only assertion, so a dropped row is

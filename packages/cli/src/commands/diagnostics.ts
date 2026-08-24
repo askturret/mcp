@@ -10,6 +10,7 @@ import { describePreset, MCP_PROTOCOL_VERSION } from '@askturret/mcp-core';
 import { analyzeSpec, loadSpec } from './doctor.js';
 
 import { createTarGz } from './diagnostics-tar.js';
+import { normalizeFlags, type FlagSpec } from '../args.js';
 import {
   buildBundleEntries,
   environmentNames,
@@ -41,6 +42,72 @@ export interface DiagnosticsFlags {
    * a preset and a disclosure level.
    */
   readonly regulated: boolean;
+
+  /** First usage problem found while parsing (#255, #261). */
+  readonly usageError?: string;
+}
+
+/** What `diagnostics` accepts (#261). Listed in the order its help prints them. */
+export const DIAGNOSTICS_FLAGS: FlagSpec = {
+  command: 'diagnostics',
+  value: ['--url', '--spec', '--config', '--out', '--log-file', '--tail', '--preset'],
+  boolean: ['--full-schemas', '--regulated', '--json', '--help', '-h'],
+};
+
+/**
+ * What `--preset <value>` should do here (#255).
+ *
+ * The same silent-drop shape #169 fixed in `doctor`, but the wording does not
+ * transfer, because the flag does a different job: in `doctor` it prints an
+ * expansion, here it decides what goes INTO THE BUNDLE. Telling an operator to
+ * "expand it in code" would answer a question they did not ask.
+ *
+ * What carries over is the principle: a value the system recognises but cannot
+ * honour must never produce the same output as one it did. Before this,
+ * `--preset regulated`, `--preset nonsense` and omitting the flag entirely all
+ * produced a bundle with no preset section and exit 0.
+ */
+type PresetResolution =
+  | { readonly kind: 'include'; readonly preset: 'production' }
+  | { readonly kind: 'refuse'; readonly message: string };
+
+export function resolveDiagnosticsPreset(value: string | undefined): PresetResolution {
+  if (value === undefined || value === '') {
+    return { kind: 'refuse', message: 'error: `--preset` requires a value.' };
+  }
+
+  if (value === 'production') return { kind: 'include', preset: 'production' };
+
+  if (value === 'regulated') {
+    return {
+      kind: 'refuse',
+      message:
+        'error: `diagnostics --preset regulated` is not supported.\n' +
+        '  The Regulated preset requires an evidence verifier — a function — which\n' +
+        '  cannot come from a command-line flag, so there is no expansion to put in\n' +
+        '  the bundle. Only production can be included this way.\n' +
+        '  This flag is separate from `--regulated`, which governs how much the\n' +
+        '  bundle discloses and works with any preset.',
+    };
+  }
+
+  if (value === 'light') {
+    return {
+      kind: 'refuse',
+      message:
+        'error: `diagnostics --preset light` is not supported.\n' +
+        '  Light is applied inside the adapter rather than described as\n' +
+        '  configuration, so there is no expansion to put in the bundle.',
+    };
+  }
+
+  return {
+    kind: 'refuse',
+    message:
+      `error: unknown preset '${value}'.\n` +
+      '  Known presets: light, production, regulated.\n' +
+      '  Includable in a bundle: production.',
+  };
 }
 
 export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags {
@@ -54,31 +121,51 @@ export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags 
   let preset: 'production' | undefined;
   let tailLines = DEFAULT_LOG_TAIL_LINES;
   let regulated = false;
+  let usageError: string | undefined;
 
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
+  /** First problem wins: one actionable error beats a pile. */
+  const refuse = (message: string): void => {
+    if (usageError === undefined) usageError = message;
+  };
+
+  // `normalizeFlags` has already split `--flag=value`, honoured `--`, and
+  // refused anything unrecognised (#261) — so the switch below stays a plain
+  // mapping from known flag to variable, and `default:` is now unreachable for
+  // a `--` token rather than a silent drop.
+  const normalized = normalizeFlags(args, DIAGNOSTICS_FLAGS);
+  if (normalized.error !== undefined) refuse(normalized.error);
+
+  const argv = normalized.args;
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
     switch (arg) {
       case '--url':
-        url = args[++i];
+        url = argv[++i];
         break;
       case '--spec':
-        spec = args[++i];
+        spec = argv[++i];
         break;
       case '--config':
-        config = args[++i];
+        config = argv[++i];
         break;
       case '--out':
-        out = args[++i] ?? out;
+        out = argv[++i] ?? out;
         break;
       case '--log-file':
-        logFile = args[++i];
+        logFile = argv[++i];
         break;
       case '--tail':
-        tailLines = Number.parseInt(args[++i] ?? '', 10) || DEFAULT_LOG_TAIL_LINES;
+        tailLines = Number.parseInt(argv[++i] ?? '', 10) || DEFAULT_LOG_TAIL_LINES;
         break;
-      case '--preset':
-        preset = args[++i] === 'production' ? 'production' : undefined;
+      case '--preset': {
+        // #255: an unsupported or unknown value is refused with its own reason
+        // rather than discarded, which used to be indistinguishable from not
+        // passing the flag at all.
+        const resolved = resolveDiagnosticsPreset(argv[++i]);
+        if (resolved.kind === 'include') preset = resolved.preset;
+        else refuse(resolved.message);
         break;
+      }
       case '--full-schemas':
         fullSchemas = true;
         break;
@@ -109,6 +196,7 @@ export function parseDiagnosticsArgs(args: readonly string[]): DiagnosticsFlags 
     ...(preset === undefined ? {} : { preset }),
     tailLines,
     regulated,
+    ...(usageError === undefined ? {} : { usageError }),
   };
 }
 
@@ -351,6 +439,17 @@ export async function diagnosticsCommand(args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     printDiagnosticsHelp();
     return;
+  }
+
+  // Before any bundle work (#255, #261). A malformed flag is the most
+  // actionable thing wrong with the command line, and a refusal must never
+  // arrive after a bundle has already been written to disk.
+  //
+  // Exit 2 matches the usage-error code `inspect` and `diff` use, and produces
+  // a clean message rather than cli.ts's "Fatal error:" wrapper.
+  if (flags.usageError !== undefined) {
+    console.error(flags.usageError);
+    process.exit(2);
   }
 
   const inputs = await collectBundleInputs(flags);

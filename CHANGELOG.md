@@ -114,6 +114,35 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- `inspect`, `diff` and `diagnostics` accept `--flag=value` and refuse flags
+  they do not recognise (#261). All three matched flags by exact string equality
+  with no final `else`/`default`, so every `=` spelling and every unrecognised
+  `--` token was discarded in silence — the same false-green shape #256 fixed in
+  `doctor`, which a sibling sweep found was not local to it. `migrate` already
+  refused loudly and is unchanged.
+  **Covered surface — CLI behaviour** (compatibility-policy §5). Invocations
+  that exited 0 now exit 2, the usage code `inspect` and `diff` already
+  document; nothing that previously *worked* changes.
+  The shared part lives in one place (`args.ts`) rather than being copied three
+  times, since the duplication is what let these drift apart to begin with. It
+  normalises argv into the form each command's existing loop already handles, so
+  those loops are untouched. `doctor` is deliberately not migrated onto it — it
+  has a positional argument and its own `--preset` resolution, so folding it in
+  would mean re-testing the command this pattern was just proven on.
+  The three carve-outs from #256 hold: `--` ends option parsing, a non-flag
+  token passes through, and `--help`/`-h` print usage — `inspect` had no help at
+  all and now does.
+
+- `diagnostics --preset` refuses a value it cannot honour (#255). An unsupported
+  or unknown value was silently discarded, so `--preset regulated`,
+  `--preset nonsense` and omitting the flag all produced a bundle with no preset
+  section and exit 0. Each case now states its own reason, and the refusal
+  happens before any bundle is written.
+  The wording is deliberately not #169's: there the flag prints an expansion,
+  here it decides what goes into the bundle, so "expand it in code" would answer
+  a question the operator did not ask. The message also distinguishes `--preset`
+  from `--regulated`, which governs disclosure and works with any preset.
+
 - A conformance category that hangs in CLEANUP now reports a failed row (#253).
   #151 bounded every request, at `rpc`. The `cancellation` category does not go
   through `rpc` — it uses a direct `fetch`, because it aborts one specific

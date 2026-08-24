@@ -324,6 +324,16 @@ export function buildDiffView(
     ...(available
       ? {}
       : { reason: 'At least two retained snapshots are needed to diff; only one is held.' }),
+    // Which pair the changes below actually describe. Without it the panel's
+    // selector could only imply that whatever is selected is what is shown.
+    ...(report === undefined
+      ? {}
+      : {
+          comparing: {
+            before: { version: report.before.version, hash: report.before.hash },
+            after: { version: report.after.version, hash: report.after.hash },
+          },
+        }),
     snapshots: retained.map((snapshot) => ({
       hash: snapshot.hash,
       version: snapshot.version,

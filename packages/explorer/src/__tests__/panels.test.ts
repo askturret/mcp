@@ -283,12 +283,43 @@ describe('panel 6 — version diff', () => {
     expect(view.snapshots.map((s) => s.hash)).toEqual(['h2', 'h1']);
   });
 
+  it('names the pair the changes actually describe', () => {
+    // The selector lists three snapshots but the report covers one pair. The
+    // panel carries WHICH pair so the page can say when the operator's
+    // selection is not the diff on screen, rather than silently relabelling it.
+    const view = buildDiffView(
+      {
+        before: { version: 1, hash: 'h1' },
+        after: { version: 2, hash: 'h2' },
+        changes: [],
+        summary: {},
+      } as never,
+      [snapshot(2, 'h2'), snapshot(1, 'h1')],
+    );
+
+    expect(view.comparing).toEqual({
+      before: { version: 1, hash: 'h1' },
+      after: { version: 2, hash: 'h2' },
+    });
+  });
+
+  it('omits the pair entirely when no report was supplied', () => {
+    // Not a zero-valued pair: there is no diff, so there is nothing to name.
+    const view = buildDiffView(undefined, [snapshot(2, 'h2'), snapshot(1, 'h1')]);
+
+    expect(view.comparing).toBeUndefined();
+  });
+
   it('renders the CLI classification verbatim', () => {
     // §56 asks the panel to match the `diff` CLI. It is fed by the SAME
     // diffSnapshots report the CLI prints, so this asserts the codes survive
     // unchanged rather than being re-derived.
     const view = buildDiffView(
       {
+        // Required on DiffReport — the fixture omitted them while claiming to
+        // be one, which `as never` hid. The panel names the pair it compares.
+        before: { version: 1, hash: 'h1' },
+        after: { version: 2, hash: 'h2' },
         changes: [
           { code: 'OPERATION_REMOVED', severity: 'breaking', operationId: 'gone' },
           { code: 'DESCRIPTION_CHANGED', severity: 'patch', operationId: 'a' },
@@ -367,7 +398,12 @@ describe('NO PANEL BYPASSES THE REDACTION PIPELINE (§56 acceptance)', () => {
 
   it('panel 6 — diff detail', () => {
     const view = buildDiffView(
-      { changes: [{ code: 'X', severity: 'patch', detail: CAUGHT }], summary: {} } as never,
+      {
+        before: { version: 1, hash: 'h1' },
+        after: { version: 2, hash: 'h2' },
+        changes: [{ code: 'X', severity: 'patch', detail: CAUGHT }],
+        summary: {},
+      } as never,
       [snapshot(2, 'h2'), snapshot(1, 'h1')],
     );
     expect(JSON.stringify(view)).not.toContain(CAUGHT);

@@ -23,12 +23,84 @@ empty trace list and a trace buffer that was never wired look identical
 otherwise, and the second sends an operator hunting for requests that were
 never recorded.
 
+## Where they appear in the page
+
+Panels 1 and 2 are **per-tool** and render on the tool's own detail view;
+panels 3–6 are server-wide and render under **Diagnostics** in the sidebar.
+
+That split follows the question each answers. "Where did *this* field come
+from" and "why is *this* tool denied" are properties of the selected tool;
+breaker depth and the retained snapshot list are properties of the server.
+
+**Panel 1 needs no wiring.** Provenance travels per tool on the view model —
+`buildExplorerViewModel` builds it with the same `buildProvenanceView` the
+panels API exposes — because the page routes between tools *in the browser*,
+long after the server rendered the document. One provenance panel chosen at
+render time could only ever have been correct for one tool.
+
+## Wiring the other five
+
+Both adapters take an `explorerPanels` supplier:
+
+```ts
+expressMcp({
+  sources: [source],
+  explorerPanels: () => buildExplorerPanels({
+    allOperations: [...registry.current().operations.values()],
+    breakers: breakerStats(),
+    bulkheads: bulkheadStats(),
+    spans: buffer.spans(),
+    diff: report,
+    retained: controller.retained(),
+  }),
+});
+```
+
+It is a **function**, called per request, because four of the six panels are
+live state. A value captured when the server was constructed would render
+startup's breaker states as though they were current — which is worse than
+showing nothing, because it looks right.
+
+It may be async. If it **throws**, the page still serves: you get the tool
+browser and per-tool provenance, the diagnostic panels report that the host
+supplied none, and the failure is named in the log. The Explorer is what an
+operator opens *when something is already wrong*, so a failing metrics read
+must not take the whole surface away — but it is degraded, never silent.
+
+Supply nothing and the page is what it was before #56, plus provenance.
+
+## The page renders; it never derives
+
+Precedence labels, policy effects, breaker states and diff severities are all
+computed server-side and arrive as finished models. Re-deriving any of them in
+the browser would be a second implementation free to disagree with the CLI.
+
+That has one visible consequence, and the page states it rather than hiding it.
+Panel 6's two-panel selector lists every retained snapshot, but the changes on
+screen are the one pair the host supplied — carried in the model as
+`comparing`. Pick a different pair and the panel says so plainly, instead of
+relabelling somebody else's diff. A control that looked live while showing the
+wrong classification would be worse than one that admits its limit.
+
+The same reasoning governs panel 5's refresh: with no Explorer-private
+endpoint, polling means reloading the document. It runs **only** while
+Diagnostics is open, and unticks, so it can never reload the page out from
+under a half-filled invoke form.
+
 ## No panel bypasses redaction
 
 Every builder returns through `redactExplorerModel`, and `buildExplorerPanels`
 applies it **again** over the assembled set. The second pass is not redundant —
 it is what catches a seventh panel added by someone who did not read the file
 header. Redaction is idempotent, so the double pass costs nothing.
+
+**And a third pass runs at serialization.** §9.4 names Surface 5 as "the
+Explorer view model, before serialization to the client", and that moment is
+`renderExplorerHtml`, which now redacts everything it embeds. Before #56 the
+rendered path relied entirely on the builders — but `ExplorerPanels` is a plain
+interface, so a host that assembles one by hand never visits a builder, and the
+`explorerPanels` supplier is exactly that door. The pass at the boundary is what
+closes it.
 
 ### What that does and does not buy you
 

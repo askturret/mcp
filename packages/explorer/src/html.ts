@@ -9,14 +9,39 @@
  * The page is fully rendered from an embedded view model, and the only network
  * call it ever makes is `tools/call` against the MCP transport at basePath —
  * there is no Explorer-private endpoint.
+ *
+ * ## The six panels (§56) render from data the server already decided to hand over
+ *
+ * The page NEVER derives a diagnostic itself. Provenance labels, the policy
+ * effect, breaker states and the diff classification are all computed by the
+ * builders in `panels.ts` (and, for provenance, per tool in the view model) and
+ * arrive here as finished, redacted models. That is what keeps the browser
+ * incapable of showing anything the server was not already willing to expose,
+ * and it is why re-deriving any of it in `CLIENT_JS` would be a bug rather than
+ * an optimisation — a second implementation of a precedence chain or a severity
+ * rule is a second thing that can disagree with the CLI.
+ *
+ * The absence of an Explorer-private endpoint has one visible consequence, and
+ * the page states it rather than hiding it: a control that would need fresh
+ * server-side computation (picking a different snapshot pair to diff, choosing
+ * a different principal) reports what the host supplied and says plainly that
+ * changing it is the host's call. A dead control that looked live would be
+ * worse than an honest one.
  */
 
-import type { ExplorerViewModel } from './types.js';
+import { redactExplorerModel } from '@askturret/mcp-core';
+import type { ExplorerPanels, ExplorerViewModel } from './types.js';
 
 /**
  * Render the complete Explorer HTML document.
+ *
+ * @param model - The view model for this registry snapshot.
+ * @param panels - Optional host-supplied diagnostic panels (§56). Omitted, the
+ *   page still renders every panel — in its "not supplied by the host" state,
+ *   which is deliberately distinct from "supplied and empty". Panel 1
+ *   (provenance) never depends on this: it travels per tool on the model.
  */
-export function renderExplorerHtml(model: ExplorerViewModel): string {
+export function renderExplorerHtml(model: ExplorerViewModel, panels?: ExplorerPanels): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -41,12 +66,17 @@ export function renderExplorerHtml(model: ExplorerViewModel): string {
 </header>
 <main>
   <nav aria-label="Tools">
+    <button id="diagnostics-link" class="tool-item diag-link" type="button">
+      <span class="tool-name">Diagnostics</span>
+      <span class="tool-desc">Principal surface · traces · breakers · version diff</span>
+    </button>
     <input id="filter" type="search" placeholder="Filter tools…" autocomplete="off" aria-label="Filter tools">
     <div id="tool-list"></div>
   </nav>
   <section id="detail" aria-live="polite"></section>
 </main>
 <script>window.__EXPLORER__=${embedJson(model)};</script>
+<script>window.__EXPLORER_PANELS__=${embedJson(panels ?? null)};</script>
 <script>${CLIENT_JS}</script>
 </body>
 </html>`;
@@ -55,13 +85,27 @@ export function renderExplorerHtml(model: ExplorerViewModel): string {
 /**
  * Embed a value as JSON inside a <script> block.
  *
+ * ## Redacted HERE, not only upstream
+ *
+ * §9.4 names Surface 5 as "the Explorer view model, before serialization to the
+ * client", and this function IS that moment — so it redacts rather than trusting
+ * that someone else did. `buildExplorerViewModel` and the panel builders each
+ * redact their own output, and that is where the intent lives; this pass is what
+ * survives a caller who assembled an `ExplorerPanels` by hand and handed it
+ * straight to the renderer. The type permits that, and before #56 nothing on the
+ * rendered path stopped it: redaction lived only in the builders, which a
+ * hand-built panel set never visits. Redaction is idempotent — `[REDACTED]`
+ * redacts to itself — so the extra pass costs nothing and removes the question.
+ *
+ * ## Escaping
+ *
  * `</script` inside a string would close the block early, and U+2028/U+2029 are
  * literal line terminators in JS source but legal inside a JSON string, so both
  * must be escaped. Tool names, descriptions and schemas come from adopter specs
  * — untrusted enough to warrant this.
  */
 function embedJson(value: unknown): string {
-  return JSON.stringify(value)
+  return JSON.stringify(redactExplorerModel(value))
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
     .replace(/\u2028/g, '\\u2028')
@@ -118,6 +162,33 @@ pre.out{background:#1c2027;color:#e6e9ee;padding:12px;border-radius:6px;overflow
 .status.ok{color:var(--ro)}
 .status.err{color:#b32d2d}
 .note{color:var(--muted);font-size:12px;margin-top:6px}
+.diag-link{border:1px solid var(--line);margin-bottom:10px;border-left:3px solid transparent}
+.diag-link.active{background:#eaf2fb;border-left-color:var(--accent)}
+.panel-empty{color:var(--muted);font-size:12px;background:var(--code);border:1px dashed var(--line);border-radius:6px;padding:10px 12px}
+table.panel-table{border-collapse:collapse;width:100%;font-size:12px}
+table.panel-table th{text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--line);padding:4px 8px 4px 0;font-weight:600}
+table.panel-table td{padding:5px 8px 5px 0;border-bottom:1px solid var(--line);vertical-align:top}
+table.panel-table tr.overlay-row{background:#fdf7ec}
+table.panel-table tr.overlay-row td:first-child{box-shadow:inset 3px 0 0 var(--mut)}
+.badge-overlay{background:#fdf1dc;color:var(--mut);border:1px solid #f0dcb8}
+.badge-allow{background:#e6f5ee;color:var(--ro)}
+.badge-deny{background:#fbeaea;color:#b32d2d}
+.sev-breaking{background:#fbeaea;color:#b32d2d}
+.sev-double-check,.sev-ambiguous{background:#fdf1dc;color:var(--mut)}
+.sev-non-breaking{background:#e6f5ee;color:var(--ro)}
+.kv{display:flex;flex-wrap:wrap;gap:16px;margin:0 0 10px}
+.kv div{display:flex;flex-direction:column}
+.kv dt{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.kv dd{margin:0;font-size:13px}
+.meter{display:block;width:120px;height:6px;background:var(--line);border-radius:3px;overflow:hidden}
+.meter>span{display:block;height:100%;background:var(--accent)}
+.meter.full>span{background:#b32d2d}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.diff-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:10px}
+.diff-controls select{font:inherit;padding:5px 8px;border:1px solid var(--line);border-radius:4px;background:#fff;max-width:34ch}
+.panel-warn{color:var(--mut);font-size:12px;background:#fdf7ec;border:1px solid #f0dcb8;border-radius:6px;padding:8px 10px;margin-top:8px}
+.refresh-row{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted);margin-bottom:8px}
+pre.attrs{background:var(--code);border:1px solid var(--line);border-radius:4px;padding:6px 8px;margin:4px 0 0;font-size:11px;max-height:150px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 `;
 
 /**
@@ -131,17 +202,59 @@ pre.out{background:#1c2027;color:#e6e9ee;padding:12px;border-radius:6px;overflow
 const CLIENT_JS = `
 (function () {
   var MODEL = window.__EXPLORER__;
+  var PANELS = window.__EXPLORER_PANELS__ || null;
+  var DIAGNOSTICS_ROUTE = '!diagnostics';
   var tools = MODEL.tools || [];
   var listEl = document.getElementById('tool-list');
   var detailEl = document.getElementById('detail');
   var filterEl = document.getElementById('filter');
+  var diagLinkEl = document.getElementById('diagnostics-link');
   var current = null;
+  var refreshTimer = null;
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
     if (cls) { e.className = cls; }
     if (text !== undefined && text !== null) { e.textContent = String(text); }
     return e;
+  }
+
+  // A panel that has nothing to show says WHY. "Not wired" and "wired, nothing
+  // recorded" look identical otherwise, and sending an operator hunting for
+  // requests that were never recorded is the failure this exists to prevent.
+  function notSupplied(text) {
+    return el('div', 'panel-empty', text);
+  }
+
+  function badge(cls, text) {
+    return el('span', 'badge ' + cls, text);
+  }
+
+  function table(headers) {
+    var t = el('table', 'panel-table');
+    var head = el('thead');
+    var hr = el('tr');
+    headers.forEach(function (h) { hr.appendChild(el('th', null, h)); });
+    head.appendChild(hr);
+    t.appendChild(head);
+    // Rows go in an explicit tbody: createElement does not get the one the
+    // HTML parser would have inserted, and a <tr> parented by <table> is not
+    // something every engine lays out.
+    var body = el('tbody');
+    t.appendChild(body);
+    t.body = body;
+    return t;
+  }
+
+  function kv(pairs) {
+    var dl = el('dl', 'kv');
+    pairs.forEach(function (p) {
+      var wrap = el('div');
+      wrap.appendChild(el('dt', null, p[0]));
+      wrap.appendChild(el('dd', null, p[1]));
+      dl.appendChild(wrap);
+    });
+    return dl;
   }
 
   function typeOf(schema) {
@@ -380,6 +493,389 @@ const CLIENT_JS = `
     });
   }
 
+  // ---- panel 1: provenance / precedence -----------------------------------
+  //
+  // Every label here is read off the model. The page never ranks anything: the
+  // precedence string was resolved by the compiler and mirrored by
+  // buildProvenanceView, and re-deriving it in the browser would be a second
+  // implementation of §5.3 free to disagree with the one that actually ran.
+  function renderProvenance(tool) {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(el('h3', null, 'Provenance'));
+    var p = tool.provenance;
+    if (!p || !p.available) {
+      frag.appendChild(notSupplied('This operation records no provenance. That is not the same as ' +
+        '"every field came from the source" \\u2014 nothing tracked where these fields came from, so ' +
+        'there is nothing to explain.'));
+      return frag;
+    }
+
+    var row = el('div', 'meta-row');
+    row.appendChild(badge('badge-flag', p.fields.length + (p.fields.length === 1 ? ' field' : ' fields')));
+    row.appendChild(badge(p.overlayModifiedCount > 0 ? 'badge-overlay' : 'badge-flag',
+      p.overlayModifiedCount + ' overlay-modified'));
+    frag.appendChild(row);
+
+    var t = table(['Field', 'Precedence applied', 'Source', 'Location']);
+    p.fields.forEach(function (f) {
+      var tr = el('tr', f.overlayModified ? 'overlay-row' : null);
+      // §56 asks for hover to show the precedence chain applied to the field.
+      tr.title = f.field + ' \\u2190 ' + f.precedence + (f.location ? ' (' + f.location + ')' : '');
+      var nameCell = el('td', 'f-name', f.field);
+      // The overlay highlight is driven by the model's own flag, so what is
+      // highlighted and what is explained cannot drift apart.
+      if (f.overlayModified) { nameCell.appendChild(badge('badge-overlay', 'overlay')); }
+      tr.appendChild(nameCell);
+      tr.appendChild(el('td', null, f.precedence));
+      tr.appendChild(el('td', 'mono', f.kind));
+      tr.appendChild(el('td', 'mono f-desc', f.location || '\\u2014'));
+      t.body.appendChild(tr);
+    });
+    frag.appendChild(t);
+    return frag;
+  }
+
+  // ---- panel 2: policy explanation ----------------------------------------
+  function renderPolicy(tool) {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(el('h3', null, 'Policy explanation'));
+    var p = PANELS && PANELS.policy;
+    if (!p) {
+      frag.appendChild(notSupplied('No policy explanation supplied by the host. The effective policy ' +
+        'tree is evaluated against a principal by the server\\u2019s policy engine \\u2014 the Explorer ' +
+        'never evaluates policy itself, so it can only show a decision the server already made.'));
+      return frag;
+    }
+    if (p.operationId !== tool.id) {
+      frag.appendChild(notSupplied('The supplied policy explanation is for "' + p.operationId +
+        '", not this tool.'));
+      return frag;
+    }
+
+    var row = el('div', 'meta-row');
+    row.appendChild(badge(p.denied ? 'badge-deny' : 'badge-allow', p.effect));
+    row.appendChild(badge('badge-flag', 'policy: ' + p.policy));
+    if (p.code) { row.appendChild(badge('badge-flag', p.code)); }
+    frag.appendChild(row);
+    if (p.reason) { frag.appendChild(el('p', 'desc', p.reason)); }
+
+    if (!p.evidence.length) {
+      frag.appendChild(notSupplied('The decision carries no evidence entries.'));
+      return frag;
+    }
+    var t = table(['Policy', 'Claim', 'Detail']);
+    p.evidence.forEach(function (e) {
+      var tr = el('tr');
+      tr.appendChild(el('td', 'mono', e.policyId));
+      tr.appendChild(el('td', null, e.claim));
+      tr.appendChild(el('td', 'f-desc', e.detail || '\\u2014'));
+      t.body.appendChild(tr);
+    });
+    frag.appendChild(t);
+    return frag;
+  }
+
+  // ---- panel 3: principal-aware effective surface -------------------------
+  function renderPrincipalSurface() {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(el('h3', null, 'Principal-aware effective surface'));
+    var p = PANELS && PANELS.principalSurface;
+    if (!p) {
+      frag.appendChild(notSupplied('No principal surface supplied by the host. Re-running ' +
+        'visibleOperations() for a chosen principal needs the policy engine, which lives on the ' +
+        'server \\u2014 supply this panel to answer "why can\\u2019t customer X see this tool?".'));
+      return frag;
+    }
+
+    frag.appendChild(kv([
+      ['Principal', p.principal.anonymous ? 'anonymous' : (p.principal.type || 'unknown type')],
+      ['Visible', p.visible.length + ' of ' + p.totalCount],
+      ['Hidden', String(p.hidden.length)],
+    ]));
+
+    var perms = el('div', 'meta-row');
+    if (!p.principal.permissions.length) {
+      perms.appendChild(badge('badge-flag', 'no permissions'));
+    } else {
+      p.principal.permissions.forEach(function (name) { perms.appendChild(badge('badge-flag', name)); });
+    }
+    frag.appendChild(perms);
+    // Stated on the page, not just in the type: an operator who cannot see an
+    // identifier here should know that is a choice rather than missing data.
+    frag.appendChild(el('div', 'note', 'Permission names and principal type only \\u2014 the principal ' +
+      'id is deliberately never rendered.'));
+
+    var cols = el('div', 'two-col');
+    [['Visible', p.visible], ['Hidden', p.hidden]].forEach(function (pair) {
+      var col = el('div');
+      col.appendChild(el('h3', null, pair[0]));
+      if (!pair[1].length) {
+        col.appendChild(notSupplied('None.'));
+      } else {
+        var t = table(['Tool', 'Operation id']);
+        pair[1].forEach(function (item) {
+          var tr = el('tr');
+          tr.appendChild(el('td', 'f-name', item.name));
+          tr.appendChild(el('td', 'mono f-desc', item.id));
+          t.body.appendChild(tr);
+        });
+        col.appendChild(t);
+      }
+      cols.appendChild(col);
+    });
+    frag.appendChild(cols);
+    return frag;
+  }
+
+  // ---- panel 4: traces ----------------------------------------------------
+  function renderTraces() {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(el('h3', null, 'Recent requests'));
+    var p = PANELS && PANELS.traces;
+    if (!p) {
+      frag.appendChild(notSupplied('No trace panel supplied by the host.'));
+      return frag;
+    }
+    if (!p.available) {
+      frag.appendChild(notSupplied(p.reason || 'No span buffer is configured.'));
+      return frag;
+    }
+    if (!p.spans.length) {
+      // Reachable only when a buffer IS wired — which is why it can say this.
+      frag.appendChild(notSupplied('The span buffer is wired and holds no spans yet.'));
+      return frag;
+    }
+
+    var t = table(['Span', 'Outcome', 'Started', 'Duration', 'Attributes']);
+    p.spans.forEach(function (s) {
+      var tr = el('tr');
+      tr.appendChild(el('td', 'f-name', s.name));
+      tr.appendChild(el('td', null, s.outcome || '\\u2014'));
+      tr.appendChild(el('td', 'mono f-desc', s.startedAt));
+      tr.appendChild(el('td', 'mono', s.durationMs === undefined ? '\\u2014' : s.durationMs + 'ms'));
+      var attrs = el('td');
+      attrs.appendChild(el('pre', 'attrs', JSON.stringify(s.attributes, null, 2)));
+      tr.appendChild(attrs);
+      t.body.appendChild(tr);
+    });
+    frag.appendChild(t);
+    return frag;
+  }
+
+  // ---- panel 5: breaker / bulkhead state ----------------------------------
+  function renderRuntime() {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(el('h3', null, 'Breakers and bulkheads'));
+    var p = PANELS && PANELS.runtime;
+    if (!p) {
+      frag.appendChild(notSupplied('No runtime panel supplied by the host.'));
+      return frag;
+    }
+
+    // The refresh strategy is read off the model rather than hardcoded here,
+    // so the page cannot claim one thing while the docs claim another.
+    var refresh = el('div', 'refresh-row');
+    var toggle = el('input');
+    toggle.type = 'checkbox';
+    toggle.id = 'auto-refresh';
+    toggle.checked = true;
+    var label = el('label', null, 'Auto-refresh every ' + p.pollIntervalMs + 'ms (' +
+      p.refreshStrategy + ')');
+    label.setAttribute('for', 'auto-refresh');
+    refresh.appendChild(toggle);
+    refresh.appendChild(label);
+    frag.appendChild(refresh);
+    toggle.addEventListener('change', function () {
+      if (toggle.checked) { startRefresh(p.pollIntervalMs); } else { stopRefresh(); }
+    });
+    startRefresh(p.pollIntervalMs);
+
+    if (!p.breakersConfigured) {
+      // NOT "all closed". A row of green for a server with no breakers at all
+      // is the reassuring lie this distinction exists to prevent.
+      frag.appendChild(notSupplied('No circuit breakers are configured. Breakers are opt-in \\u2014 ' +
+        'this is not the same as every breaker being closed.'));
+    } else {
+      var bt = table(['Breaker', 'State', 'Failures']);
+      p.breakers.forEach(function (b) {
+        var tr = el('tr');
+        tr.appendChild(el('td', 'f-name', b.name));
+        var state = el('td');
+        state.appendChild(badge(b.state === 'closed' ? 'badge-allow' : 'badge-deny', b.state));
+        tr.appendChild(state);
+        tr.appendChild(el('td', 'mono', b.failures === undefined ? '\\u2014' : b.failures));
+        bt.body.appendChild(tr);
+      });
+      frag.appendChild(bt);
+    }
+
+    frag.appendChild(el('h3', null, 'Bulkheads'));
+    if (!p.bulkheadsConfigured) {
+      frag.appendChild(notSupplied('No bulkheads are configured.'));
+      return frag;
+    }
+    var kt = table(['Bulkhead', 'In flight', 'Queued', 'Saturation']);
+    p.bulkheads.forEach(function (b) {
+      var tr = el('tr');
+      tr.appendChild(el('td', 'f-name', b.name));
+      tr.appendChild(el('td', 'mono', (b.inFlight === undefined ? '\\u2014' : b.inFlight) +
+        (b.concurrency === undefined ? '' : ' / ' + b.concurrency)));
+      tr.appendChild(el('td', 'mono', (b.queued === undefined ? '\\u2014' : b.queued) +
+        (b.queueSize === undefined ? '' : ' / ' + b.queueSize)));
+      var gauge = el('td');
+      if (b.inFlight !== undefined && b.concurrency) {
+        var ratio = Math.min(1, b.inFlight / b.concurrency);
+        var meter = el('span', ratio >= 1 ? 'meter full' : 'meter');
+        var fill = el('span');
+        fill.style.width = Math.round(ratio * 100) + '%';
+        meter.appendChild(fill);
+        meter.title = b.inFlight + ' of ' + b.concurrency + ' slots in use';
+        gauge.appendChild(meter);
+      } else {
+        gauge.textContent = '\\u2014';
+      }
+      tr.appendChild(gauge);
+      kt.body.appendChild(tr);
+    });
+    frag.appendChild(kt);
+    return frag;
+  }
+
+  // Polling, not SSE — an open connection per open tab, on the server whose
+  // bulkheads this panel exists to watch, is a diagnostic that consumes the
+  // resource it measures. Reloading the document is the only poll available:
+  // the Explorer has no private endpoint, by design. It runs ONLY while the
+  // diagnostics view is open, so it can never interrupt a half-typed invoke
+  // form on a tool page.
+  function startRefresh(intervalMs) {
+    stopRefresh();
+    refreshTimer = window.setTimeout(function () { location.reload(); }, intervalMs);
+  }
+
+  function stopRefresh() {
+    if (refreshTimer !== null) { window.clearTimeout(refreshTimer); refreshTimer = null; }
+  }
+
+  // ---- panel 6: version diff ----------------------------------------------
+  function renderDiff() {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(el('h3', null, 'Version diff'));
+    var p = PANELS && PANELS.diff;
+    if (!p) {
+      frag.appendChild(notSupplied('No diff panel supplied by the host.'));
+      return frag;
+    }
+    if (!p.available) {
+      frag.appendChild(notSupplied(p.reason || 'Not enough retained snapshots to diff.'));
+      if (p.snapshots.length) { frag.appendChild(snapshotTable(p.snapshots)); }
+      return frag;
+    }
+
+    var controls = el('div', 'diff-controls');
+    var selects = {};
+    [['before', 'Before'], ['after', 'After']].forEach(function (pair) {
+      var wrap = el('div', 'field');
+      var sel = el('select');
+      sel.id = 'diff-' + pair[0];
+      var lab = el('label', null, pair[1]);
+      lab.setAttribute('for', sel.id);
+      p.snapshots.forEach(function (s) {
+        var o = el('option', null, 'v' + s.version + ' \\u00b7 ' + s.hash);
+        o.value = s.hash;
+        sel.appendChild(o);
+      });
+      if (p.comparing) { sel.value = p.comparing[pair[0]].hash; }
+      wrap.appendChild(lab);
+      wrap.appendChild(sel);
+      controls.appendChild(wrap);
+      selects[pair[0]] = sel;
+    });
+    frag.appendChild(controls);
+
+    // The selector is honest rather than live. Reclassifying another pair is
+    // work the server does with the same diffSnapshots the CLI calls; the page
+    // never recomputes a classification, so it says when the selection is not
+    // the diff on screen instead of silently relabelling this one.
+    var warn = el('div', 'panel-warn');
+    frag.appendChild(warn);
+    function syncWarning() {
+      if (!p.comparing) { warn.style.display = 'none'; return; }
+      var matches = selects.before.value === p.comparing.before.hash &&
+                    selects.after.value === p.comparing.after.hash;
+      warn.style.display = matches ? 'none' : '';
+      warn.textContent = 'Showing the host-supplied diff v' + p.comparing.before.version + ' \\u2192 v' +
+        p.comparing.after.version + '. The changes below are NOT for the pair you selected \\u2014 the ' +
+        'Explorer has no private endpoint and never reclassifies a diff itself; ask the host to supply ' +
+        'that pair.';
+    }
+    selects.before.addEventListener('change', syncWarning);
+    selects.after.addEventListener('change', syncWarning);
+    syncWarning();
+
+    if (p.summary) {
+      frag.appendChild(kv([
+        ['Breaking', String(p.summary.breaking)],
+        ['Non-breaking', String(p.summary.nonBreaking)],
+        ['Double-check', String(p.summary.doubleCheck)],
+        ['Ambiguous', String(p.summary.ambiguous)],
+      ]));
+    }
+
+    if (!p.changes.length) {
+      frag.appendChild(notSupplied('No changes between these snapshots.'));
+    } else {
+      var t = table(['Severity', 'Code', 'Operation', 'Detail']);
+      p.changes.forEach(function (c) {
+        var tr = el('tr');
+        var sev = el('td');
+        // The severity class comes from the classification the CLI produced.
+        sev.appendChild(badge('sev-' + c.severity, c.severity));
+        tr.appendChild(sev);
+        tr.appendChild(el('td', 'mono', c.code));
+        tr.appendChild(el('td', 'mono f-desc', c.operationId || '\\u2014'));
+        tr.appendChild(el('td', null, c.detail || '\\u2014'));
+        t.body.appendChild(tr);
+      });
+      frag.appendChild(t);
+    }
+    frag.appendChild(snapshotTable(p.snapshots));
+    return frag;
+  }
+
+  function snapshotTable(snapshots) {
+    var frag = document.createDocumentFragment();
+    frag.appendChild(el('h3', null, 'Retained snapshots'));
+    var t = table(['Version', 'Hash', 'Created', 'Tools']);
+    snapshots.forEach(function (s) {
+      var tr = el('tr');
+      tr.appendChild(el('td', 'mono', 'v' + s.version));
+      tr.appendChild(el('td', 'mono f-desc', s.hash));
+      tr.appendChild(el('td', 'mono f-desc', s.createdAt));
+      tr.appendChild(el('td', 'mono', s.toolCount));
+      t.body.appendChild(tr);
+    });
+    frag.appendChild(t);
+    return frag;
+  }
+
+  // ---- diagnostics view ---------------------------------------------------
+  function renderDiagnostics() {
+    detailEl.appendChild(el('h2', null, 'Diagnostics'));
+    detailEl.appendChild(el('p', 'desc', 'The operator diagnostic surface \\u2014 the same data the ' +
+      'diagnostics bundle carries offline. Every panel below is computed on the server and redacted ' +
+      'before it reaches this page.'));
+    if (!PANELS) {
+      detailEl.appendChild(notSupplied('This server rendered the Explorer without diagnostic panels. ' +
+        'Pass them to renderExplorerHtml() to populate the principal surface, traces, breaker state ' +
+        'and version diff. Per-tool provenance is on the tool pages and needs nothing extra.'));
+      return;
+    }
+    detailEl.appendChild(renderPrincipalSurface());
+    detailEl.appendChild(renderTraces());
+    detailEl.appendChild(renderRuntime());
+    detailEl.appendChild(renderDiff());
+  }
+
   // ---- detail -------------------------------------------------------------
   function renderDetail(name) {
     detailEl.textContent = '';
@@ -418,19 +914,38 @@ const CLIENT_JS = `
     detailEl.appendChild(schemaTree(tool.inputSchema, 0));
     detailEl.appendChild(el('h3', null, 'Output schema'));
     detailEl.appendChild(schemaTree(tool.outputSchema, 0));
+    // Panels 1 and 2 are per-tool, so they belong on the tool page rather than
+    // in Diagnostics — the question they answer is "where did THIS field come
+    // from" and "why is THIS tool denied".
+    detailEl.appendChild(renderProvenance(tool));
+    detailEl.appendChild(renderPolicy(tool));
     detailEl.appendChild(el('h3', null, 'Try it'));
     detailEl.appendChild(buildForm(tool));
   }
 
   // ---- routing ------------------------------------------------------------
   function route() {
+    // Any navigation cancels the diagnostics poll; renderRuntime re-arms it if
+    // diagnostics is where we landed. A timer that outlived its view would
+    // reload the page out from under an operator filling in an invoke form.
+    stopRefresh();
     var raw = location.hash.replace(/^#/, '');
     current = raw ? decodeURIComponent(raw) : null;
     renderList();
+    detailEl.textContent = '';
+    if (current === DIAGNOSTICS_ROUTE) {
+      diagLinkEl.classList.add('active');
+      renderDiagnostics();
+      return;
+    }
+    diagLinkEl.classList.remove('active');
     renderDetail(current);
   }
 
   filterEl.addEventListener('input', renderList);
+  diagLinkEl.addEventListener('click', function () {
+    location.hash = '#' + DIAGNOSTICS_ROUTE;
+  });
   window.addEventListener('hashchange', route);
   route();
 })();

@@ -143,11 +143,32 @@ export function expressMcp(options: ExpressMcpOptions): Router {
       await initPromise.catch(() => undefined);
 
       const model = buildExplorerViewModel(registry.current(), basePath);
+
+      // Panels are resolved per request, not per server: breaker states, span
+      // tails and bulkhead depths are live, and a value captured at startup
+      // would render as though it were current (#56).
+      //
+      // A supplier that throws degrades to the tool browser rather than 500-ing
+      // the page. The Explorer is the surface an operator reaches for WHEN
+      // something is already wrong, so a broken metrics read must not take the
+      // whole diagnostic away — but it is named in the log, never swallowed.
+      let panels: Awaited<ReturnType<NonNullable<typeof options.explorerPanels>>> | undefined;
+      if (options.explorerPanels !== undefined) {
+        try {
+          panels = await options.explorerPanels();
+        } catch (error) {
+          logger.warn('Explorer panel supplier threw; rendering without diagnostic panels', {
+            error: error instanceof Error ? error.message : String(error),
+            path: `${basePath}/explorer`,
+          });
+        }
+      }
+
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
       // Dev tool: never cache, never index.
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-      res.send(renderExplorerHtml(model));
+      res.send(renderExplorerHtml(model, panels));
     });
   } else {
     // Return 404 in production

@@ -19,9 +19,17 @@ import type {
   McpFacadeOptions,
   McpFromOpenApiFacadeOptions,
 } from '@askturret/mcp-core';
+import type { ExplorerPanelsOption } from '@askturret/mcp-explorer';
 
-/** Express MCP configuration options (composable form). */
-export type ExpressMcpOptions = McpFacadeOptions;
+/**
+ * Express MCP configuration options (composable form).
+ *
+ * The Explorer panel supplier (#56) is intersected in from the explorer
+ * package rather than added to the shared facade type, because core cannot
+ * depend on a package that depends on core. Fastify intersects the SAME
+ * declaration, so the swap guarantee above still holds by construction.
+ */
+export type ExpressMcpOptions = McpFacadeOptions & ExplorerPanelsOption;
 
 /** One-call form options for `mcpFromOpenApi()`. */
 export type McpFromOpenApiOptions = McpFromOpenApiFacadeOptions;

@@ -49,6 +49,17 @@ export interface ExplorerToolView {
    * credential references, none of which belong in a page served to a browser.
    */
   executorType: string;
+  /**
+   * Panel 1 (§56) — this tool's own per-field provenance.
+   *
+   * It lives on the TOOL rather than in `ExplorerPanels` because the page is
+   * client-routed: the operator picks a tool in the browser, long after the
+   * server rendered the document, so one host-supplied provenance panel could
+   * only ever have been correct for one of them. Provenance is derivable from
+   * the snapshot the Explorer already holds, so every tool carries its own and
+   * the panel needs no cooperation from the host at all.
+   */
+  provenance: ExplorerProvenanceView;
 }
 
 /**
@@ -173,10 +184,26 @@ export interface ExplorerBreakerView {
   refreshStrategy: 'polling';
 }
 
+/** One side of a diff. Mirrors core's `SnapshotRef`. */
+export interface ExplorerSnapshotRefView {
+  version: number;
+  hash: string;
+}
+
 /** Panel 6 — snapshot diff, classified by the same code the CLI uses. */
 export interface ExplorerDiffView {
   available: boolean;
   reason?: string;
+  /**
+   * Which pair `changes` actually compares.
+   *
+   * Carried so the two-panel selector can say which diff it is showing. The
+   * Explorer has no private endpoint and never recomputes a classification the
+   * CLI owns, so a selector that silently re-labelled a different pair's
+   * changes would be worse than no selector — this is what lets the page tell
+   * the operator when their selection is not the diff on screen.
+   */
+  comparing?: { before: ExplorerSnapshotRefView; after: ExplorerSnapshotRefView };
   snapshots: { hash: string; version: number; createdAt: string; toolCount: number }[];
   changes: {
     code: string;
@@ -195,4 +222,34 @@ export interface ExplorerPanels {
   traces: ExplorerTraceView;
   runtime: ExplorerBreakerView;
   diff: ExplorerDiffView;
+}
+
+/**
+ * Supplies the panels for one Explorer page render.
+ *
+ * A function rather than a value because four of the six panels are LIVE state
+ * — breaker states, bulkhead depths, the span tail, the retained snapshot list.
+ * A value captured when the server was constructed would be a snapshot of
+ * startup, rendered as though it were now, which is a worse failure than
+ * showing nothing: it looks current.
+ *
+ * May be async so a host can await a metrics registry read.
+ */
+export type ExplorerPanelsSupplier = () => ExplorerPanels | Promise<ExplorerPanels>;
+
+/**
+ * The adapter-facing option that carries {@link ExplorerPanelsSupplier}.
+ *
+ * Declared here, in the package that owns the type, and intersected into BOTH
+ * adapters' option types — the same reason those are aliases of one shared
+ * facade type (§41): a user must be able to swap Express for Fastify and change
+ * nothing else, and two separately-declared options satisfy that only until one
+ * of them changes.
+ *
+ * Optional throughout. Without it the Explorer renders exactly as it did
+ * before: the tool browser plus per-tool provenance, with the remaining panels
+ * reporting that the host supplied nothing.
+ */
+export interface ExplorerPanelsOption {
+  explorerPanels?: ExplorerPanelsSupplier;
 }

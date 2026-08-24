@@ -114,6 +114,28 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- `doctor` accepts `--flag=value`, and refuses flags it does not recognise
+  (#256). `parseArgs` matched flags by exact string equality with no final
+  `else`, so every `=` spelling and every unrecognised `--` token was discarded
+  in silence — `--preset=regulated` produced a clean report and exit 0, and a
+  typo'd `--jsonn` produced human-readable output and exit 0, failing a
+  downstream JSON parse in a way that blamed the wrong layer.
+  **Covered surface — CLI behaviour** (compatibility-policy §5). Invocations
+  that exited 0 now exit 1; that is the point of the change. Nothing that
+  previously *worked* changes.
+  The `=` form is split before dispatch and routed into the same
+  `resolvePresetFlag`, so both spellings inherit #169's four refusals from one
+  decision function rather than two copies of a message — pinned by a test
+  asserting the two produce byte-identical stderr.
+  `--preset=regulated` mattered most: it reproduced the exact false green #169
+  was filed to prevent, via a completely conventional spelling, so that fix was
+  bypassable by an operator who did nothing unusual.
+  Three deliberate carve-outs so the new refusal rejects nothing that used to
+  work: `--` ends option parsing (the conventional way to name a file that looks
+  like a flag), a token not starting with `--` is still positional, and
+  `--help`/`-h` now print usage — previously `doctor --help` answered "Missing
+  required argument", and refusing it would have been worse.
+
 - Both adapters re-run in CI when the packages they are built from change
   (#153). `adapters-express` and `adapters-fastify` triggered only on their own
   directory plus `packages/explorer`, so a core-only or transports-only change

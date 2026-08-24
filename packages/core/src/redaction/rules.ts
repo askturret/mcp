@@ -83,6 +83,19 @@ const NORMALIZED_SENSITIVE = new Set(SENSITIVE_KEY_NAMES.map(normalizeKey));
  * This is the same trap #38 hit with `registryHash` on the log surface, one
  * layer up. The values are non-sensitive BY CONSTRUCTION: they are digests
  * and pseudonyms produced specifically so the raw value never appears.
+ *
+ * ## One exception to "by construction" (#129)
+ *
+ * `registryHash` is server-produced on every path but one. When dispatch fails
+ * before stage 1 captures a snapshot hash — which every call naming an unknown
+ * operation does — the audit record falls back to `command.registryHash`, the
+ * value the CALLER supplied. That string is arbitrary, and it is preserved here
+ * verbatim, in a field a reader will reasonably take for a server-observed
+ * digest.
+ *
+ * Recorded rather than changed: #129 was a documentation cleanup, and altering
+ * what the audit log stores is a behaviour change deserving its own issue and
+ * its own review. Raised there rather than fixed in passing.
  */
 export const AUDIT_STRUCTURAL_FIELDS: readonly string[] = [
   'eventId',

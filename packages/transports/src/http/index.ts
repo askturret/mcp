@@ -91,6 +91,57 @@ export function createHttpTransport(options: HttpTransportOptions): HttpTranspor
 }
 
 /**
+ * Anything that stops a string being a bare authority (#247).
+ *
+ * `URL` is deliberately permissive, and on a security boundary that permissive-
+ * ness runs the wrong way. Measured, not assumed:
+ *
+ *   new URL('http://evil.com@localhost').hostname     === 'localhost'
+ *   new URL('http://localhost/../evil.com').hostname  === 'localhost'
+ *   new URL('http://localhost#x').hostname            === 'localhost'
+ *
+ * A `Host` header carrying userinfo, a path or a fragment is malformed, and the
+ * previous `split(':')[0]` rejected all three by accident. Swapping in `URL`
+ * without this check would fix IPv6 and LOOSEN the rebinding mitigation in the
+ * same commit — the one outcome a false-deny bug must not be traded for.
+ */
+const NOT_A_BARE_AUTHORITY = /[@/\\?#\s]/;
+
+/**
+ * The allowlist-comparable form of an authority, or `undefined` to deny.
+ *
+ * Replaces `host.split(':')[0]`, which assumed at most one colon and so
+ * returned `'['` for every IPv6 literal — making the shipped `[::1]` default
+ * unmatchable (#247).
+ *
+ * Note the result KEEPS the brackets for IPv6: the URL Standard's host
+ * serializer emits `[` + address + `]`, so `hostname` is `'[::1]'`, not `'::1'`.
+ * Both sides of the comparison run through here, so the two spellings cannot
+ * disagree about which one is canonical.
+ */
+function canonicalHost(authority: string): string | undefined {
+  if (authority === '' || NOT_A_BARE_AUTHORITY.test(authority)) return undefined;
+
+  try {
+    return new URL(`http://${authority}`).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * As `canonicalHost`, but also accepts an UNBRACKETED IPv6 literal.
+ *
+ * Only for CONFIGURATION. `::1` is not valid in a `Host` header — it has to be
+ * bracketed there — but it is the spelling an operator naturally writes in a
+ * config file, and #247 was filed partly because neither spelling worked. The
+ * request path stays strict; the leniency is on the side a human types.
+ */
+function canonicalAllowlistEntry(entry: string): string | undefined {
+  return canonicalHost(entry) ?? canonicalHost(`[${entry}]`);
+}
+
+/**
  * The request body exceeded `maxRequestBodySize` (#125).
  *
  * A distinct type rather than a flag on a generic `Error`, because the handler
@@ -224,9 +275,33 @@ class StreamableHttpTransport implements HttpTransport {
       this.sessionStore = null; // Stateless
     }
 
-    // Host-header validation (DNS rebinding mitigation)
+    // Host-header validation (DNS rebinding mitigation).
+    //
+    // `[::1]` stays BRACKETED (#247). The WHATWG URL host serializer emits an
+    // IPv6 address with its brackets, so `new URL('http://[::1]').hostname` is
+    // `'[::1]'` — measured, not assumed. Unbracketing it here would leave the
+    // entry dead in a new way, which is worse than the bug it replaces because
+    // it would look fixed.
     const defaultHosts = ['localhost', '127.0.0.1', '[::1]'];
-    this.allowedHosts = new Set(options.allowedHosts ?? defaultHosts);
+
+    // Both sides go through the same canonicaliser, so an operator's `::1`,
+    // `[::1]`, `[::0001]` and `LOCALHOST` all match the request they should.
+    this.allowedHosts = new Set(
+      (options.allowedHosts ?? defaultHosts).map((entry) => {
+        const canonical = canonicalAllowlistEntry(entry);
+        if (canonical === undefined) {
+          // Loudly, not silently. An entry that cannot be parsed can never
+          // match anything — which is EXACTLY the defect #247 is about, an
+          // allowlist row that reads as coverage and routes nothing. Dropping
+          // it quietly here would rebuild that by another route.
+          throw new Error(
+            `allowedHosts entry ${JSON.stringify(entry)} is not a valid host. ` +
+              'Expected a hostname, an IPv4 address, or an IPv6 literal such as [::1].',
+          );
+        }
+        return canonical;
+      }),
+    );
 
     this.reload = options.reload;
     this.enforceDependencies = options.enforceDependencies ?? false;
@@ -376,8 +451,11 @@ class StreamableHttpTransport implements HttpTransport {
       return false;
     }
 
-    // Strip port if present
-    const hostname = host.split(':')[0] || host;
+    const hostname = canonicalHost(host);
+    // Unparseable authority: deny, as before. "I could not read it" is not
+    // "it is fine" — least of all on the input a rebinding check reads.
+    if (hostname === undefined) return false;
+
     return this.allowedHosts.has(hostname);
   }
 

@@ -539,31 +539,22 @@ jobs:
       - name: Idempotent+retryable fuzz test (criterion #6)
         run: npm test --testPathPattern="idempotent-retryable-fuzz"
 
+      # The evaluator decides whether a 1.0 release publishes, so verify it
+      # before trusting its verdict — same reasoning as check-licenses.test.mjs.
+      - name: Self-test the readiness matrix gate
+        run: node .github/scripts/check-readiness-matrix.test.mjs
+
+      # The evaluator being correct is a different question from anything
+      # consulting it. The release gate is one word in a `needs:` list, and the
+      # release path cannot run on a PR — so the wiring is asserted by reading
+      # the workflows here, where it runs on every change.
+      - name: Release gate is wired to the evaluator
+        run: node .github/scripts/check-release-gate-wiring.test.mjs
+
+      # Extracted to a script by #269 because it now has two callers: this
+      # commit-time gate and the release-time gate in supply-chain.yml, which
+      # `publish` depends on. One implementation is what keeps them from
+      # drifting apart. The parsing comments — numbered rows only, and exact
+      # equality rather than '-lt' — moved with it.
       - name: Readiness matrix is current and all criteria met
-        run: |
-          [ -f docs/readiness.md ] || { echo "ERROR: docs/readiness.md is missing"; exit 1; }
-
-          # Count only NUMBERED MATRIX ROWS ('| 4 | ...'), never a bare
-          # occurrence of the marker. A plain `grep "✅ met" | wc -l` also counts
-          # the prose line that DESCRIBES the gate ("verifies all rows are
-          # ✅ met"), so 11 met rows plus that sentence summed to 12 and the gate
-          # passed with a criterion still unmet — a false pass that reads exactly
-          # like a real one in the CI log.
-          TOTAL=$(grep -cE '^\| [0-9]+ \|' docs/readiness.md)
-          MET_COUNT=$(grep -cE '^\| [0-9]+ \|.*✅ met' docs/readiness.md)
-
-          # Anti-vacuity: an empty or restructured table must FAIL, not pass by
-          # having nothing to disagree with.
-          if [ "$TOTAL" -ne 12 ]; then
-            echo "ERROR: expected 12 criterion rows in the readiness matrix, found $TOTAL"
-            exit 1
-          fi
-
-          # Equality, not '-lt': the gate must not be satisfiable by adding rows.
-          if [ "$MET_COUNT" -ne "$TOTAL" ]; then
-            echo "ERROR: only $MET_COUNT of $TOTAL criteria marked '✅ met' (all $TOTAL required for 1.0)"
-            grep -nE '^\| [0-9]+ \|' docs/readiness.md | grep -v '✅ met' || true
-            exit 1
-          fi
-
-          echo "Readiness gate: $MET_COUNT/$TOTAL criteria met"
+        run: node .github/scripts/check-readiness-matrix.mjs

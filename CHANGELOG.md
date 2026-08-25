@@ -64,6 +64,32 @@ compatibility guarantee is in force** — see the policy document for what chang
 when `1.0.0` ships.
 
 ### Added
+- `docs/releasing.md` — the release process (#269): order of operations, why
+  publishing the Release rather than tagging is the privileged act, what
+  signing attests versus what npm `--provenance` attests, an explicit list of
+  what is and is not gated, and a `0.x` rehearsal plan. References the
+  compatibility policy and this changelog rather than restating either.
+- A readiness gate on publication (#269). The `readiness` job in
+  `supply-chain.yml` evaluates the 12-row matrix on `release: published`, and
+  `publish` now declares `needs: [supply-chain, readiness]` — so a `1.0.*`
+  release with any red row publishes nothing. `0.x` releases are advisory: the
+  check runs and reports, but does not block, because `readiness.md` certifies
+  1.0 readiness and the compatibility policy makes no guarantee below it. A tag
+  whose version cannot be parsed is treated as `>= 1.0.0`, so it blocks.
+  Note what this deliberately does **not** claim: nothing blocks a tag, and no
+  workflow can — Actions runs after the ref exists.
+  `tag-readiness-advisory.yml` reports the matrix on a `v*` tag so red is
+  visible before someone publishes a Release, and is advisory only.
+- `.github/scripts/check-readiness-matrix.mjs`, extracted from `test.yml`'s
+  inline bash so the commit-time and release-time gates share one
+  implementation, with `check-readiness-matrix.test.mjs` self-testing it before
+  either gate trusts its verdict. It also writes `met`/`total`/`ok` to
+  `$GITHUB_OUTPUT`, which makes `readiness.md`'s "structured output"
+  verification claim true rather than aspirational.
+- `.github/scripts/check-release-gate-wiring.test.mjs` — asserts by reading the
+  workflows that `publish` is gated on `readiness`, that both callers use the
+  one evaluator, and that the tag workflow stays advisory. The gate is one word
+  in a `needs:` list; deleting it would otherwise leave every test green.
 - `docs/compatibility-policy.md` — the semver, compatibility and deprecation
   policy for the 1.0 contract, and this changelog format. Not a covered-surface
   change: it publishes the rules that will govern them.
@@ -114,6 +140,28 @@ when `1.0.0` ships.
   a field is abridged, a doc that names one that does not exist is wrong.
 
 ### Fixed
+- The publish step would have published **nothing**, successfully (#269). All
+  thirteen workspace packages were `"private": true`, and
+  `npm publish --workspaces` skips a private package with a *warning* and exits
+  `0` — so a release would have reported success having shipped zero packages.
+  Confirmed by dry run against npm 10.9.9, the version CI's Node 20 provides.
+  Nine packages are now public, and the split is closed under runtime
+  dependencies so no published package can require a private one.
+  Two further packaging defects surfaced while proving it, each of which alone
+  would have shipped a broken package: `dist/` is gitignored and there is no
+  `.npmignore`, so without an explicit `files` list npm excluded the build
+  output `main` points at while including `src/` and its tests — a `mcp-core`
+  dry run produced 177 source entries and **zero** `dist/` entries; and all 29
+  internal dependency specifiers were `"*"`, which publishes as `"*"` and would
+  let a consumer resolve any sibling version, defeating semver.
+  **Not a covered surface** — no version of any package has ever been
+  published, so there is no consumer to break.
+- The SBOM upload would have failed with a 403 on the first real release
+  (#269). `supply-chain.yml` sets `contents: read` at workflow level and the
+  job declared no `permissions:` of its own, yet runs `gh release upload`.
+  Fixed with a job-level `contents: write`, matching how `publish` already
+  declares `id-token: write`. Never observed, because no release has ever been
+  cut from this repository.
 - The Explorer's auto-refresh no longer discards a snapshot selection (#178).
   Panel 5 armed a 2000ms poll whose mechanism is `location.reload()`, and panel 6's
   selector shares that route — so an operator who picked a different pair had both

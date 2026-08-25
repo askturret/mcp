@@ -1,0 +1,58 @@
+name: Tag readiness (advisory)
+
+# ADVISORY ONLY. This workflow does not gate anything, and it is important that
+# nobody reads it as if it did.
+#
+# It cannot block a tag: GitHub Actions runs after the ref exists, so a
+# tag-triggered workflow can only fail a run afterwards. Believing otherwise is
+# the exact overclaim #269 exists to remove — docs/readiness.md asserted a
+# tag-time refusal that no workflow in this repository could perform.
+#
+# What it IS for: a tag is normally cut minutes before someone publishes a
+# GitHub Release from it, and publishing the Release is what actually ships
+# artifacts. Seeing a red matrix here means seeing it BEFORE clicking publish
+# rather than after. The real gate is the `readiness` job in supply-chain.yml,
+# which `publish` depends on.
+#
+# See docs/releasing.md — "What is gated, and what is not".
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  advisory:
+    name: Readiness matrix (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No `npm ci`: the script and its self-test use only Node builtins.
+      - name: Self-test the readiness matrix gate
+        run: node .github/scripts/check-readiness-matrix.test.mjs
+
+      # --advisory unconditionally, whatever the tag's version. A 1.0.* tag is
+      # NOT blocked here; it is blocked at publication. Running blocking-mode
+      # here would produce a red X on a tag that nothing actually refused,
+      # which is an overclaim in the other direction.
+      - name: Evaluate the readiness matrix
+        run: node .github/scripts/check-readiness-matrix.mjs --advisory
+
+      - name: Say what this run does and does not mean
+        run: |
+          {
+            echo ''
+            echo 'This check is **advisory**. It did not block this tag and could not have:'
+            echo 'Actions runs after the ref exists.'
+            echo ''
+            echo 'The blocking gate is the `readiness` job in `supply-chain.yml`, which'
+            echo 'runs on `release: published` and which `publish` depends on. If the'
+            echo 'matrix is red above and you publish a `1.0.*` Release from this tag,'
+            echo 'that job fails and nothing is published to npm.'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -151,7 +151,33 @@ const BLANK = String.raw`[^\S\r\n]`;
 const POSIX_SEG = String.raw`[^\s/'"<>]+(?:${BLANK}+[^\s/'"<>]+)*`;
 const WIN_SEG = String.raw`[^\s\\/'"<>]+(?:${BLANK}+[^\s\\/'"<>]+)*`;
 
-const POSIX_RUN = new RegExp(String.raw`\/(?:${POSIX_SEG}\/)+[^\s/'"<>]+`);
+/**
+ * ## A separator is a RUN of separators, not one character (#293)
+ *
+ * Every separator position below quantifies with `+`. `SEG` requires at least
+ * one non-separator character, so `(?:SEG SEP)+` cannot traverse an EMPTY
+ * segment: a doubled separator broke the run and the match either failed
+ * outright or restarted mid-path, which is the round-3 signature — directory
+ * leaked AND filename corrupted — for the fourth time:
+ *
+ *   C:\\DIR\\SUB\\spec.yaml   unchanged, everything leaked
+ *   /srv//DIR//spec.yaml      unchanged, everything leaked
+ *   C:\DIR\\SUB\spec.yaml  -> `C:\DIRspec.yaml`
+ *   \\HOST\\SHARE\spec.yaml -> `\\HOSTspec.yaml`
+ *   /srv/DIR//SUB/spec.yaml -> `DIR/spec.yaml`
+ *
+ * Not exotic: a JSON-stringified Windows path prints every backslash doubled,
+ * and a diagnostics bundle is largely serialized error payloads. The JSON form
+ * of `\\HOST\SHARE\spec.yaml` is `\\\\HOST\\SHARE\\spec.yaml` — a FOUR-backslash
+ * UNC prefix, which is why the prefix accepts `\\{2,}` rather than exactly two.
+ * With exactly two it matched from the third backslash, leaving `\\` stranded in
+ * front of the basename: no leak, but a corrupted-looking result.
+ *
+ * Quantifying the separator cannot backtrack catastrophically: `SEG` and `SEP`
+ * are DISJOINT character classes (SEG excludes `\` and `/`; SEP is only those),
+ * so there is exactly one way to split any input between them.
+ */
+const POSIX_RUN = new RegExp(String.raw`\/+(?:${POSIX_SEG}\/+)+[^\s/'"<>]+`);
 
 /**
  * Drive-letter AND UNC paths (#163), with EITHER separator at every position (#286).
@@ -196,7 +222,7 @@ const POSIX_RUN = new RegExp(String.raw`\/(?:${POSIX_SEG}\/)+[^\s/'"<>]+`);
  */
 const WIN_SEP = String.raw`[\\/]`;
 const WINDOWS_RUN = new RegExp(
-  String.raw`(?:(?<![A-Za-z])[A-Za-z]:${WIN_SEP}|\\\\)(?:${WIN_SEG}${WIN_SEP})+[^\s\\/'"<>]+`,
+  String.raw`(?:(?<![A-Za-z])[A-Za-z]:${WIN_SEP}+|\\{2,})(?:${WIN_SEG}${WIN_SEP}+)+[^\s\\/'"<>]+`,
 );
 
 const UNQUOTED = new RegExp(

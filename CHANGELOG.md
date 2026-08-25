@@ -165,6 +165,19 @@ when `1.0.0` ships.
   Not a covered surface — `details` is optional and this is additive.
 
 ### Fixed
+- The `diagnostics` bundle no longer leaks directory names from a path written
+  with **consecutive separators** (#293). Each path segment required at least one
+  non-separator character, so a doubled separator broke the match run: it either
+  failed outright — `C:\\DIR\\SUB\\spec.yaml` and `/srv//DIR//spec.yaml` passed
+  through untouched, leaking the whole layout — or restarted mid-path and left a
+  partial reduction next to the unmatched head, as in
+  `\\HOST\\SHARE\spec.yaml` → `\\HOSTspec.yaml`. Every separator position now
+  matches a RUN, and the UNC prefix accepts more than two backslashes.
+  Realistic rather than exotic: a JSON-stringified Windows path prints every
+  backslash doubled, and a bundle is largely serialized error payloads.
+  **Not a covered surface** — redaction of error text is a guarantee of the
+  bundle, not a typed API; the fix only removes output that should never have
+  been emitted.
 - The publish step would have published **nothing**, successfully (#269). All
   thirteen workspace packages were `"private": true`, and
   `npm publish --workspaces` skips a private package with a *warning* and exits

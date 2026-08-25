@@ -148,7 +148,47 @@ const URL_RUN = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s'"<>]+/;
  * to cross a line, which a bare `\s` would not.
  */
 const BLANK = String.raw`[^\S\r\n]`;
-const POSIX_SEG = String.raw`[^\s/'"<>]+(?:${BLANK}+[^\s/'"<>]+)*`;
+/**
+ * A POSIX segment excludes BOTH separators (#301).
+ *
+ * It used to exclude only `/`, so a backslash appearing after a `/` root was
+ * not a separator but an ordinary character INSIDE a segment:
+ *
+ *   /SECRETDIRA\SECRETDIRB\spec.yaml        -> unchanged, both leaked
+ *   /SECRET DIRA/SECRET DIRB\spec.yaml      -> "SECRET DIRB\spec.yaml"
+ *
+ * The second is the nastier one and needed blanks to show up: the run ended at
+ * the blank-free final segment `SECRET`, so the output began with a fragment
+ * of the very token that leaked. #286 made the WINDOWS matcher accept either
+ * separator at every position; this is the same fix on the POSIX side, which
+ * was missed because no reported shape happened to combine a `/` root with a
+ * later `\`.
+ *
+ * Note what is deliberately NOT changed: the ROOT still requires `/`. Allowing
+ * a bare leading `\` would also match escape sequences in ordinary prose —
+ * `\d+\w+` would reduce to `w+` — and there is no anchor to prevent it, unlike
+ * the drive-letter and `\\` prefixes that anchor WINDOWS_RUN. That leaves
+ * `\dir\file` (Windows root-relative) unhandled; tracked as #304 rather than
+ * fixed by widening this.
+ *
+ * ## This class change is an EQUIVALENT MUTANT for output — kept anyway
+ *
+ * Measured, not assumed: reverting THIS line while keeping the separator class
+ * in `POSIX_RUN` leaves all 105 grammar cases green. Backtracking finds the
+ * same split, because `[\\/]+` can claim the backslash even when `SEG` is also
+ * allowed to. Nor is it a performance fix — a 20,000-segment input matches in
+ * ~0.2ms either way, since the optional final segment means the match always
+ * succeeds and never backtracks exhaustively.
+ *
+ * It is kept for a narrower reason: the #293 comment above states that `SEG`
+ * and `SEP` are DISJOINT, "so there is exactly one way to split any input
+ * between them". Widening `POSIX_RUN`'s separator to `[\\/]` while leaving `\`
+ * inside `SEG` would make that sentence FALSE for this matcher. This file has
+ * already been bitten by a comment asserting the wrong load-bearing part, so
+ * the choice is between changing the class and rewriting that claim — and the
+ * class is the cheaper truth to preserve.
+ */
+const POSIX_SEG = String.raw`[^\s\\/'"<>]+(?:${BLANK}+[^\s\\/'"<>]+)*`;
 const WIN_SEG = String.raw`[^\s\\/'"<>]+(?:${BLANK}+[^\s\\/'"<>]+)*`;
 
 /**
@@ -177,7 +217,29 @@ const WIN_SEG = String.raw`[^\s\\/'"<>]+(?:${BLANK}+[^\s\\/'"<>]+)*`;
  * are DISJOINT character classes (SEG excludes `\` and `/`; SEP is only those),
  * so there is exactly one way to split any input between them.
  */
-const POSIX_RUN = new RegExp(String.raw`\/+(?:${POSIX_SEG}\/+)+[^\s/'"<>]+`);
+/**
+ * ## The final segment is OPTIONAL, so a trailing separator is consumed (#301)
+ *
+ * A path ending in a separator has no filename. With the final segment
+ * REQUIRED, the match stopped at the last COMPLETE segment — which is a
+ * directory — and `lastPathSegment` then faithfully handed it back:
+ *
+ *   /SECRETDIRA/SECRETDIRB/    ->  "SECRETDIRB/"
+ *   C:\SECRETDIRA\SECRETDIRB\  ->  "SECRETDIRB\"
+ *   \\SECRETHOST\SECRETSHARE\  ->  "SECRETSHARE\"
+ *
+ * Optional lets the run consume the trailing separators, so the match ENDS
+ * with one — and `lastPathSegment` refuses that shape outright rather than
+ * returning the deepest directory.
+ *
+ * It was reported for POSIX only. The #301 grammar showed it across EVERY
+ * guaranteed shape at once — drive, UNC, device and extended-length all had
+ * it — which is the difference between enumerating a grammar and fixing the
+ * one shape somebody happened to notice.
+ */
+// The separator class is written out rather than reusing `WIN_SEP`, which is
+// declared below this line and would be in its temporal dead zone here.
+const POSIX_RUN = new RegExp(String.raw`\/+(?:${POSIX_SEG}[\\/]+)+(?:[^\s\\/'"<>]+)?`);
 
 /**
  * Drive-letter AND UNC paths (#163), with EITHER separator at every position (#286).
@@ -222,7 +284,7 @@ const POSIX_RUN = new RegExp(String.raw`\/+(?:${POSIX_SEG}\/+)+[^\s/'"<>]+`);
  */
 const WIN_SEP = String.raw`[\\/]`;
 const WINDOWS_RUN = new RegExp(
-  String.raw`(?:(?<![A-Za-z])[A-Za-z]:${WIN_SEP}+|\\{2,})(?:${WIN_SEG}${WIN_SEP}+)+[^\s\\/'"<>]+`,
+  String.raw`(?:(?<![A-Za-z])[A-Za-z]:${WIN_SEP}+|\\{2,})(?:${WIN_SEG}${WIN_SEP}+)+(?:[^\s\\/'"<>]+)?`,
 );
 
 const UNQUOTED = new RegExp(
@@ -246,6 +308,16 @@ const UNQUOTED = new RegExp(
  * reach us from a config file or an error message written elsewhere.
  */
 function lastPathSegment(value: string): string {
+  // A path ending in a separator has NO basename: every token left in it is a
+  // DIRECTORY. Filtering the empty trailing field and taking the last part
+  // would hand back the deepest directory name — exactly what this function
+  // exists to strip — so the shape is refused outright (#301).
+  //
+  // Placed here rather than at the call site so it holds for every consumer at
+  // once: the error-text matchers, `pathBasenames`, and `file:` URLs, which
+  // would otherwise disagree about what a basename is.
+  if (/[/\\]$/.test(value)) return '[REDACTED:path]';
+
   const parts = value.split(/[/\\]/).filter((part) => part.length > 0);
   return parts[parts.length - 1] ?? '[REDACTED:path]';
 }

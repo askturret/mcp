@@ -165,6 +165,24 @@ when `1.0.0` ships.
   Not a covered surface — `details` is optional and this is additive.
 
 ### Fixed
+- The `diagnostics` bundle no longer leaks the deepest directory from a path
+  ending in a **separator**, nor a directory from a `/`-rooted path that uses
+  **backslash separators** (#301). Both were found by enumerating a path
+  grammar rather than by a report, which is the point of the change: four
+  previous rounds each fixed the one shape that was reported and left a sibling
+  with the same signature. A trailing-separator path has no filename, so the
+  match stopped at the last complete segment — a directory — and it was emitted
+  as the "basename"; that had been reported for POSIX only and in fact affected
+  drive, UNC, device and extended-length paths too. Separately, `POSIX_SEG`
+  excluded only `/`, so a backslash after a `/` root was an ordinary character
+  rather than a separator, which is the symmetric half of #286.
+  Two shapes the grammar found are **not** fixed here and are tracked instead:
+  Windows root-relative `\dir\file` (#304) and relative paths (#305) — a lone
+  backslash has no anchor, so widening the root would mangle escape sequences
+  in ordinary prose.
+  **Not a covered surface** — redaction of error text is a guarantee of the
+  bundle, not a typed API; the change only removes output that should never
+  have been emitted.
 - The `diagnostics` bundle no longer emits a literal `"null"` or leaks the path
   for a **non-special URL scheme** (#294). `url.origin` is the string `"null"`
   for every scheme outside the WHATWG special set — not just `file:` — so

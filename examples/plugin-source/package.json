@@ -1,0 +1,17 @@
+{
+  "name": "plugin-source-example",
+  "version": "0.1.0",
+  "description": "Reference plugin example - contributing operations through a source plugin",
+  "type": "module",
+  "private": true,
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@askturret/mcp-core": "*"
+  },
+  "askturret": {
+    "testsNotRequired": "Runnable demo, not a library. Unlike its exporter sibling it DOES own its plugin, because a source plugin is adopter code by definition and there is no shipped reference source to load. That would normally be the rot risk plugin-otel-exporter warns about, so this example is executed by CI (test-integrity, 'Plugin examples run') rather than merely built: it compiles its operations through the real compiler, so a broken plugin seam fails the build instead of printing something plausible."
+  }
+}

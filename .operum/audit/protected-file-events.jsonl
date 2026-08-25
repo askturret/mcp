@@ -55,3 +55,4 @@
 {"ts":"2026-08-24T23:01:22Z","branch":"agent/architect","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-25T13:07:39Z","branch":"feat/issue-269-release-process-and-readiness-gate","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-25T19:07:18Z","branch":"test/issue-301-path-grammar-property","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-25T19:35:21Z","branch":"fix/issue-298-compile-time-forbidden-shape-guard","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

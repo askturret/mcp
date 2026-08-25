@@ -20,7 +20,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -319,6 +320,53 @@ console.log('\n# the script actually RUNS when invoked as CI invokes it\n');
 
   const badJson = run({ NEEDS_JSON: '{not json' });
   check_('unparseable NEEDS_JSON refuses', badJson.status, 1);
+}
+
+// ---------------------------------------------------------------------------
+// The entry point must also survive a SYMLINKED launch (#242).
+//
+// Same silent failure as the percent-encoding case above, reached a different
+// way: `resolve()` makes a path absolute but does NOT resolve symlinks, while
+// `fileURLToPath(import.meta.url)` does — so the two sides disagreed whenever
+// the launch path traversed one. `isEntryPoint()` returned false, the entry
+// block was skipped, and the process exited 0 having evaluated nothing.
+//
+// Not hypothetical: Operum agent worktrees are reached through a symlinked
+// path (`<agent>/repo` -> the real worktree), and macOS resolves `/tmp` to
+// `/private/tmp`. Before the fix this script no-opped under both.
+//
+// The assertion is deliberately a REFUSAL path. A passing payload cannot tell
+// the fixed idiom from the broken one — a guard that never runs also exits 0 —
+// so the discriminator has to be "does it refuse when it should".
+{
+  const dir = mkdtempSync(join(tmpdir(), 'ci-cov-symlink-'));
+  const link = join(dir, 'link');
+
+  let linked = true;
+  try {
+    symlinkSync(here, link, 'dir');
+  } catch {
+    linked = false; // no symlink privilege (e.g. Windows without developer mode)
+  }
+
+  if (linked) {
+    const viaLink = spawnSync(process.execPath, [join(link, 'ci-coverage-status.mjs')], {
+      env: { ...process.env, NEEDS_JSON: '' },
+      encoding: 'utf8',
+    });
+
+    // Under the pre-#242 idiom both of these were `0` and `''`.
+    check_('a symlinked launch still reaches the entry block', viaLink.status, 1);
+    check_(
+      '...and says why, rather than exiting 0 having checked nothing',
+      viaLink.stderr.includes('NEEDS_JSON is unset'),
+      true,
+    );
+  } else {
+    console.log('skip - symlink creation unavailable on this platform');
+  }
+
+  rmSync(dir, { recursive: true, force: true });
 }
 
 // ---------------------------------------------------------------------------

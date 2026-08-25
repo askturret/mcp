@@ -592,6 +592,15 @@ jobs:
       - name: No npm test invocation drops a jest flag
         run: node .github/scripts/check-jest-flag-forwarding.mjs .
 
+      # A cited ADR that was never written reads as a recorded rationale and is
+      # not one. Fourteen numbers dangled across seventy comments before #223
+      # backfilled them; this is what stops it recurring.
+      - name: Self-test the ADR-citation guard
+        run: node .github/scripts/check-adr-citations.test.mjs
+
+      - name: Every cited ADR resolves to a file
+        run: node .github/scripts/check-adr-citations.mjs .
+
       # #65 / §17: Architectural readiness gate for 1.0.
       # Verifies that all 12 readiness criteria are met and reference passing tests.
       #

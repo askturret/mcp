@@ -312,9 +312,12 @@ function nonFencedLines(lines) {
  * External schemes and bare anchors are out of scope; both are stated in the
  * header rather than silently dropped.
  */
+/** `http:`, `mailto:`, `tel:`, … — an absolute scheme, so not ours to resolve. */
+const EXTERNAL_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
+
 function isCheckableTarget(target) {
   if (target === '') return false;
-  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(target)) return false; // http:, mailto:, tel:, …
+  if (EXTERNAL_SCHEME.test(target)) return false;
   if (target.startsWith('//')) return false; // protocol-relative
   return true;
 }
@@ -449,33 +452,39 @@ for (const file of files) {
       }
     };
 
-    for (const m of text.matchAll(INLINE_LINK)) {
-      const raw = m[1] ?? '';
-      const { path, fragment } = parseTarget(raw);
+    /**
+     * Validate one raw target, whichever syntax produced it.
+     *
+     * Inline links and reference definitions differ in how a target is
+     * SPELLED, never in what makes it valid — so they share this rather than
+     * each carrying their own copy. #290 was the bill for not sharing it: the
+     * same-document branch was only ever added to the inline path, so
+     * `[lbl]: #dead-anchor` went unvalidated while `[x](#dead-anchor)` was
+     * caught. Two copies of one rule, and only one of them got the fix.
+     *
+     * Keeping them merged is the actual guarantee here; the self-tests for
+     * both shapes are the backstop, not the mechanism.
+     */
+    const checkTarget = (rawTarget, kind) => {
+      const raw = rawTarget.trim();
+      const { path, fragment } = parseTarget(rawTarget);
 
-      // A bare `#anchor` is same-document — checked against THIS file, which
-      // the previous version skipped entirely.
+      // A bare `#anchor` is same-document — resolved against THIS file.
+      // External schemes also yield a null path, but their fragment belongs to
+      // a document we do not have, so they are left alone.
       if (path === null) {
-        if (fragment !== null && !/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw.trim())) {
-          checkAnchor(raw.trim(), file, fragment);
-        }
-        continue;
+        if (fragment !== null && !EXTERNAL_SCHEME.test(raw)) checkAnchor(raw, file, fragment);
+        return;
       }
 
       const absTarget = resolve(dirname(file), path);
-      if (record(raw.trim(), absTarget, 'link')) checkAnchor(raw.trim(), absTarget, fragment);
-    }
+      if (record(raw, absTarget, kind)) checkAnchor(raw, absTarget, fragment);
+    };
+
+    for (const m of text.matchAll(INLINE_LINK)) checkTarget(m[1] ?? '', 'link');
 
     const refMatch = REF_DEFINITION.exec(text);
-    if (refMatch) {
-      const { path, fragment } = parseTarget(refMatch[1]);
-      if (path !== null) {
-        const absTarget = resolve(dirname(file), path);
-        if (record(refMatch[1], absTarget, 'reference')) {
-          checkAnchor(refMatch[1], absTarget, fragment);
-        }
-      }
-    }
+    if (refMatch) checkTarget(refMatch[1], 'reference');
 
     for (const m of text.matchAll(SELF_URL)) {
       const [pathRaw, fragmentRaw] = m[1].split('#');

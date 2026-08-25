@@ -171,6 +171,28 @@ function headingText(raw) {
 }
 
 /**
+ * Characters that are combining marks but carry no visible text (#289).
+ *
+ * `\p{M}` is kept below so decomposed accents survive — `e` + U+0301 must slug
+ * as `é`, not `e`. But that category also contains the variation selectors and
+ * the keycap mark, which are emoji MODIFIERS. Their base character is stripped
+ * as a symbol while the modifier survives, so `## ⚠️ What Option B costs`
+ * slugged to `<U+FE0F>-what-option-b-costs`.
+ *
+ * That is worse than an ordinary miss: the surviving character is INVISIBLE, so
+ * the guard's own error message renders the right and wrong anchors
+ * identically. A maintainer copying the "expected" value out of the report
+ * would copy the broken one.
+ *
+ * U+FE00–U+FE0F are the variation selectors, U+E0100–U+E01EF their supplement,
+ * U+20E3 the combining enclosing keycap.
+ */
+// Written as escapes on purpose: these characters are invisible, so a literal
+// class here would be unreadable in review and silently corruptible by any
+// editor that normalises them.
+const INVISIBLE_MODIFIERS = /[\uFE00-\uFE0F\u20E3\u{E0100}-\u{E01EF}]/gu;
+
+/**
  * GitHub's heading-slug rules.
  *
  * Lowercase, strip punctuation, spaces to hyphens. The load-bearing detail is
@@ -178,6 +200,13 @@ function headingText(raw) {
  * `## Policies & Governance` becomes `policies--governance` with two hyphens.
  * An implementation that collapses runs would produce `policies-governance`
  * and reject the one link shape most likely to appear in a real document.
+ *
+ * The same rule is why an emoji-prefixed heading anchors with a LEADING hyphen:
+ * the emoji goes, the space after it stays and becomes `-`. `## ⚠️ What Option
+ * B costs` is `#-what-option-b-costs`, not `#what-option-b-costs`. Verified
+ * against a real rendered document rather than reasoned about — `prompts`'
+ * readme heads a section `## ❯ Prompt Objects` and its own working table of
+ * contents links to `#-prompt-objects`.
  *
  * Letters, numbers, combining marks, hyphen, underscore and space survive;
  * everything else goes. That covers `&`, `.`, `,`, `:`, `?`, `!`, quotes,
@@ -187,6 +216,7 @@ function slugify(text) {
   return text
     .trim()
     .toLowerCase()
+    .replace(INVISIBLE_MODIFIERS, '')
     .replace(/[^\p{L}\p{N}\p{M}_\- ]/gu, '')
     .replace(/ /g, '-');
 }

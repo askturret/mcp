@@ -121,19 +121,54 @@ const URL_RUN = /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s'"<>]+/;
  * corrupting the filename. On Windows spaces are the NORMAL shape
  * (`Program Files`), so the matcher essentially never fired there.
  *
- * Spaces are allowed only in INTERMEDIATE segments — those followed by a
- * separator. The final segment must be space-free, which is what stops the
- * run swallowing the prose after it: in `/srv/x/spec.yaml is missing`,
- * nothing after `spec.yaml` reaches another separator, so the match ends
- * there.
+ * Blanks are allowed only in INTERMEDIATE segments — those followed by a
+ * separator. The final segment stays blank-free, so in `/srv/x/spec.yaml is
+ * missing` the match ends at `spec.yaml`.
  *
- * A filename that itself contains spaces is therefore only partly consumed —
+ * That boundary is NOT what keeps the trailing prose safe, despite what this
+ * comment claimed until #163. Mutation testing settled it: allowing blanks in
+ * the final segment is an EQUIVALENT MUTANT — byte-identical output across 18
+ * probe cases — because `lastPathSegment` discards everything before the last
+ * separator regardless of how far the match ran. The helper is what protects
+ * the prose; the boundary is merely tidy. Recorded because a comment asserting
+ * the wrong load-bearing part is how the next reader "simplifies" the thing
+ * that actually matters.
+ *
+ * A filename that itself contains blanks is therefore only partly consumed —
  * `/srv/private/my spec.yaml` reduces to `my spec.yaml`. Every DIRECTORY is
  * still stripped, which is what the guarantee is about; the residue is the
  * filename the operator already knows.
+ *
+ * ## Blanks, not spaces (#163)
+ *
+ * The allowance was a literal ` +`, so a TAB inside a directory name
+ * reproduced the original defect exactly — directory leaked AND filename
+ * corrupted (`/srv/Acme\tHoldings/private/spec.yaml` → `Acme\tHoldingsspec.yaml`).
+ * `[^\S\r\n]+` covers tab and the other horizontal blanks while still refusing
+ * to cross a line, which a bare `\s` would not.
  */
-const POSIX_RUN = /\/(?:[^\s/'"<>]+(?: +[^\s/'"<>]+)*\/)+[^\s/'"<>]+/;
-const WINDOWS_RUN = /[A-Za-z]:\\(?:[^\s\\/'"<>]+(?: +[^\s\\/'"<>]+)*\\)+[^\s\\/'"<>]+/;
+const BLANK = String.raw`[^\S\r\n]`;
+const POSIX_SEG = String.raw`[^\s/'"<>]+(?:${BLANK}+[^\s/'"<>]+)*`;
+const WIN_SEG = String.raw`[^\s\\/'"<>]+(?:${BLANK}+[^\s\\/'"<>]+)*`;
+
+const POSIX_RUN = new RegExp(String.raw`\/(?:${POSIX_SEG}\/)+[^\s/'"<>]+`);
+
+/**
+ * Drive-letter AND UNC paths (#163).
+ *
+ * `[A-Za-z]:\\` alone never matched a UNC path, so
+ * `\\fileserver\acme-share\private\spec.yaml` passed through untouched —
+ * leaking the file-server hostname, the share name and the layout. Reachable
+ * whenever an operator points `--spec` or `--log-file` at a network share,
+ * which is ordinary in the enterprise Windows environments the Regulated
+ * preset targets, so this was the more consequential of the two gaps.
+ *
+ * `lastPathSegment` needed no change: it already splits on both separators, and
+ * drops the empty leading fields the `\\` prefix produces.
+ */
+const WINDOWS_RUN = new RegExp(
+  String.raw`(?:[A-Za-z]:\\|\\\\)(?:${WIN_SEG}\\)+[^\s\\/'"<>]+`,
+);
 
 const UNQUOTED = new RegExp(
   `(${URL_RUN.source})|(${POSIX_RUN.source})|(${WINDOWS_RUN.source})`,
@@ -325,13 +360,21 @@ export function bundleReadme(inputs: BundleInputs, filenames: readonly string[] 
     '  logs, spans, metrics, audit records, the Explorer and serialized errors.',
     '- Environment variables appear by NAME ONLY. Their values are never read by',
     '  this tool, so they cannot leak even if a redaction rule is wrong.',
-    '- File paths appear as basenames. Directory layout is not included.',
+    '- File paths appear as basenames. Directory layout is not included for any',
+    '  path shape this tool recognises: POSIX, Windows drive-letter, Windows UNC',
+    '  (`\\\\server\\share\\...`) and `file://` URLs, including names containing',
+    '  spaces or tabs.',
     '',
     '## Redaction LIMITS — please read before sharing',
     '',
     '- Redaction matches known key names and credential-shaped values. A secret',
     '  with no recognisable name and no recognisable shape (for example a short',
     '  opaque token under a field called `note`) may NOT be detected.',
+    '- Path reduction is pattern-based, over the shapes listed above. A path',
+    '  written in some other notation may survive with its directory layout',
+    '  intact. This was stated as an unconditional guarantee until two such',
+    '  shapes were found (UNC and tab-separated names, both now covered); the',
+    '  wording is scoped so the claim matches what the code can actually do.',
     '- **Review this bundle before you send it.** These guarantees reduce risk;',
     '  they do not replace a look.',
     '',

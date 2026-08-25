@@ -242,11 +242,14 @@ describe('sanitizeErrorText', () => {
   });
 
   it('handles a quoted path whose FILENAME contains spaces', () => {
-    // What the quoted pass is for, once the unquoted rules also allow spaces.
-    // The unquoted rules require the final segment to be space-free (so they
-    // do not eat trailing prose), which leaves a spaced FILENAME only
-    // partially reduced. Quotes delimit unambiguously, so this pass can take
-    // the whole thing.
+    // This comment described a dedicated "quoted path" pass, which was deleted
+    // in #50 round 4 for adding no coverage — so it documented code that no
+    // longer existed (#163).
+    //
+    // What actually happens: quote characters are excluded from the path
+    // character classes, so the unquoted rules match up to `my`, and the
+    // remaining ` spec file.yaml` is already-safe trailing text. The directory
+    // is stripped either way, which is what the guarantee is about.
     const out = sanitizeErrorText("open '/srv/private-client/my spec file.yaml'");
 
     expect(out).not.toContain('private-client');
@@ -254,9 +257,15 @@ describe('sanitizeErrorText', () => {
   });
 
   it('does not swallow the prose after a path', () => {
-    // Allowing spaces inside path runs risks over-consuming. Spaces are
-    // permitted only in segments FOLLOWED by a separator, so the run ends at
-    // the filename.
+    // Blanks are permitted only in segments FOLLOWED by a separator, so the run
+    // ends at the filename.
+    //
+    // Note what actually protects this, per #163: allowing blanks in the final
+    // segment too is an EQUIVALENT MUTANT — `lastPathSegment` discards
+    // everything before the last separator however far the match ran. The
+    // helper keeps the prose safe; the segment boundary is tidiness. The
+    // assertion is still worth having, it just does not test what its old
+    // rationale claimed.
     expect(sanitizeErrorText('/srv/x/spec.yaml is missing and the server is unhappy')).toBe(
       'spec.yaml is missing and the server is unhappy',
     );
@@ -290,6 +299,65 @@ describe('sanitizeErrorText', () => {
 
   it('leaves ordinary prose alone', () => {
     expect(sanitizeErrorText('connection refused')).toBe('connection refused');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Shapes that still leaked after #50 round 4 (#163)
+  // ---------------------------------------------------------------------------
+
+  it('reduces a Windows UNC path, which the drive-letter matcher never saw', () => {
+    // The consequential one. `[A-Za-z]:\\` cannot match `\\server\share\...`, so
+    // the file-server hostname, the share name and the layout all shipped in the
+    // bundle. Reachable any time --spec or --log-file points at a network share.
+    const out = sanitizeErrorText('open \\\\fileserver\\acme-share\\private\\spec.yaml failed');
+
+    expect(out).toBe('open spec.yaml failed');
+    expect(out).not.toContain('fileserver');
+    expect(out).not.toContain('acme-share');
+    expect(out).not.toContain('private');
+  });
+
+  it('reduces a UNC path whose share or directory contains spaces', () => {
+    // `Program Files`-style names are the norm on Windows; a UNC matcher that
+    // stopped at a space would fire almost never, which is how the drive-letter
+    // form originally failed.
+    const out = sanitizeErrorText('open \\\\file server\\Acme Holdings\\private\\spec.yaml');
+
+    expect(out).toBe('open spec.yaml');
+    expect(out).not.toContain('Acme Holdings');
+  });
+
+  it('reduces a path whose directory name contains a TAB', () => {
+    // Reproduced the original round-3 defect exactly: directory leaked AND
+    // filename corrupted, because the allowance was a literal space.
+    const out = sanitizeErrorText("open '/srv/Acme\tHoldings/private/spec.yaml'");
+
+    expect(out).toBe("open 'spec.yaml'");
+    expect(out).not.toContain('Acme');
+    expect(out).not.toContain('Holdings');
+  });
+
+  it('reduces a Windows path whose directory name contains a TAB', () => {
+    const out = sanitizeErrorText('open "C:\\Acme\tHoldings\\private\\spec.yaml"');
+
+    expect(out).toBe('open "spec.yaml"');
+    expect(out).not.toContain('Holdings');
+  });
+
+  it('still does not run across a newline', () => {
+    // `[^\S\r\n]+` rather than `\s+`: a path run must not join two lines, or a
+    // stack trace would collapse into one mangled token.
+    const out = sanitizeErrorText('/srv/a/spec.yaml\n/srv/b/other.yaml');
+
+    expect(out).toBe('spec.yaml\nother.yaml');
+  });
+
+  it('keeps the drive-letter form working', () => {
+    // The UNC alternative is added ALONGSIDE the drive-letter form. Pinned so a
+    // future edit to the alternation cannot trade one for the other.
+    expect(sanitizeErrorText('open "C:\\Program Files\\acme\\spec.yaml"')).toBe(
+      'open "spec.yaml"',
+    );
   });
 });
 

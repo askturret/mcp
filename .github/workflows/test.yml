@@ -583,6 +583,15 @@ jobs:
       - name: Every package actually executes its tests
         run: node .github/scripts/check-test-execution.mjs
 
+      # Same class as the step above — a command that reports success for work
+      # it did not do. Self-tested first, for the reason stated on every other
+      # guard here: a checker that cannot fail is worse than no checker (#207).
+      - name: Self-test the jest-flag-forwarding guard
+        run: node .github/scripts/check-jest-flag-forwarding.test.mjs
+
+      - name: No npm test invocation drops a jest flag
+        run: node .github/scripts/check-jest-flag-forwarding.mjs .
+
       # #65 / §17: Architectural readiness gate for 1.0.
       # Verifies that all 12 readiness criteria are met and reference passing tests.
       #
@@ -595,11 +604,17 @@ jobs:
       # Worth keeping the correction rather than just deleting the sentence: a
       # grep for "tag" in this directory used to find only that comment, which
       # read as evidence the gate existed.
+      # Both steps below need `-w <pkg>` AND `--` (#207). Without `--`, npm eats
+      # the flag as an unknown CLI config and runs the ENTIRE workspace suite —
+      # so these two steps were running everything, twice, while their names
+      # claimed to verify one criterion each. Without `-w`, `--` forwards the
+      # flag to every workspace and jest exits 1 in each one the pattern misses.
+      # `check-jest-flag-forwarding.mjs` fails the build if either form returns.
       - name: Policy parity test (criterion #4)
-        run: npm test --testPathPattern="discovery-invocation-parity"
+        run: npm test -w packages/core -- --testPathPattern="discovery-invocation-parity"
 
       - name: Idempotent+retryable fuzz test (criterion #6)
-        run: npm test --testPathPattern="idempotent-retryable-fuzz"
+        run: npm test -w packages/core -- --testPathPattern="idempotent-retryable-fuzz"
 
       # The evaluator decides whether a 1.0 release publishes, so verify it
       # before trusting its verdict — same reasoning as check-licenses.test.mjs.

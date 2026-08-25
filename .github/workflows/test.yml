@@ -13,7 +13,7 @@ permissions:
 jobs:
   # Path filter job - detects which packages changed
   changes:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     outputs:
       core: ${{ steps.filter.outputs.core }}
       adapters-express: ${{ steps.filter.outputs.adapters-express }}
@@ -128,7 +128,7 @@ jobs:
 
   # Test core package
   test-core:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.core == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -142,7 +142,7 @@ jobs:
 
   # Test adapters-express package
   test-adapters-express:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.adapters-express == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -156,7 +156,7 @@ jobs:
 
   # Test adapters-fastify package
   test-adapters-fastify:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.adapters-fastify == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -170,7 +170,7 @@ jobs:
 
   # Adapter conformance contract - runs the shared bank against every adapter
   test-adapter-conformance:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.adapter-conformance == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -188,7 +188,7 @@ jobs:
   # the PUBLIC kit reaches the same verdict through the public AdapterUnderTest
   # shape a community author uses.
   test-adapter-test:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.adapter-test == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -204,7 +204,7 @@ jobs:
 
   # Test sources-openapi package
   test-sources-openapi:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.sources-openapi == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -218,7 +218,7 @@ jobs:
 
   # Test transports package
   test-transports:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.transports == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -232,7 +232,7 @@ jobs:
 
   # Test observability package
   test-observability:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.observability == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -246,7 +246,7 @@ jobs:
 
   # Test explorer package
   test-explorer:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.explorer == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -260,7 +260,7 @@ jobs:
 
   # Test standalone gateway package (#57)
   test-gateway:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.gateway == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -277,7 +277,7 @@ jobs:
 
   # Test CLI package
   test-cli:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.cli == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -296,7 +296,7 @@ jobs:
   # scenario verified on each change, and the nightly workflow carries the
   # load figures.
   test-reliability:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.reliability == 'true' || needs.changes.outputs.workspace == 'true'
     steps:
@@ -339,7 +339,7 @@ jobs:
   # exactly the runner-capacity shape (2026-08-21) that motivated this issue. The
   # script refuses instead; see its header for the reasoning.
   coverage-status:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     needs:
       - changes
       - test-core
@@ -370,7 +370,7 @@ jobs:
   # runs on every PR regardless of which paths changed, because test integrity
   # is not scoped to a package.
   test-integrity:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4
         with:

@@ -290,12 +290,59 @@ class HttpExecutor implements OperationExecutor {
         };
       }
 
+      // 404/410 — the resource is not there (#201).
+      //
+      // Both mean "not here, and asking again will not change that"; 410 adds
+      // only that it is permanent. The caller's remedy is identical, so one
+      // code covers both.
+      //
+      // Deliberately NOT conditioned on whether the spec documents a 404 for
+      // this operation. That fact does not survive compilation, and reaching
+      // for it would put a source-specific field in the executor config —
+      // which readiness criterion 1 forbids, and which would make the error
+      // contract depend on where the operation was discovered. See the
+      // `NOT_FOUND` note in types.ts.
+      if (response.status === 404 || response.status === 410) {
+        return {
+          ok: false,
+          error: {
+            code: 'NOT_FOUND',
+            message: 'Upstream resource not found',
+          },
+        };
+      }
+
+      // 400/422 — the request was rejected as malformed.
+      //
+      // Reusing `INVALID_INPUT` rather than adding a code: the remedy is the
+      // same one a local validation failure calls for, which is to fix the
+      // input. This does widen the code's meaning from "our schema rejected
+      // it" to "rejected as malformed, here or upstream" — a real semantic
+      // change, noted at the definition. Retry behaviour is unaffected;
+      // `INVALID_INPUT` is already in NEVER_RETRY_CODES.
+      if (response.status === 400 || response.status === 422) {
+        return {
+          ok: false,
+          error: {
+            code: 'INVALID_INPUT',
+            message: 'Upstream rejected the request as invalid',
+          },
+        };
+      }
+
+      // Every remaining 4xx, plus 500 and any other unmapped status.
+      //
+      // These stay generic because no single caller remedy follows from them —
+      // 409 Conflict and 405 Method Not Allowed want different things, and
+      // guessing would be worse than saying so. `upstreamStatus` makes the
+      // class INSPECTABLE without asserting a remedy or growing the union.
       if (response.status >= 400) {
         return {
           ok: false,
           error: {
             code: 'INTERNAL_ERROR',
             message: 'Upstream service error',
+            details: { upstreamStatus: response.status },
           },
         };
       }

@@ -37,6 +37,11 @@ export const NEVER_RETRY_CODES: readonly OperationErrorCode[] = [
   'INVALID_INPUT',
   'UNAUTHENTICATED',
   'FORBIDDEN',
+  // #201. Terminal in the same sense as the entries above: a 404 does not
+  // become a 200 on replay. Listed explicitly because a read-only idempotent
+  // operation would otherwise satisfy every effects-matrix check — the matrix
+  // answers "is replay SAFE", not "is replay USEFUL".
+  'NOT_FOUND',
   'CONFIRMATION_REQUIRED',
   'RATE_LIMITED',
   'CANCELLED',

@@ -331,6 +331,138 @@ describe('viaHttp', () => {
     });
   });
 
+  // ==========================================================================
+  // Upstream 4xx semantics (#201)
+  //
+  // A 404 used to collapse into INTERNAL_ERROR: "Upstream service error", so an
+  // adopter chasing a missing record was told something broke on our end. The
+  // mapping keys on HTTP semantics ONLY — never on whether the spec documented
+  // the status — because that fact does not survive compilation and reaching
+  // for it would make the error contract depend on where the operation was
+  // discovered. See the NOT_FOUND note in types.ts.
+  // ==========================================================================
+
+  describe('upstream 4xx mapping (#201)', () => {
+    /** Drive one upstream status through the real executor. */
+    const executeWithStatus = async (status: number) => {
+      const executor = viaHttp({
+        baseUrl: 'https://api.example.com',
+        client: createMockClient(
+          new Map([['https://api.example.com/testOp', { status, headers: {}, body: '' }]]),
+        ),
+      });
+
+      return executor.execute(createTestOperation(), {}, createTestContext());
+    };
+
+    it.each([404, 410])('maps %i to NOT_FOUND', async (status) => {
+      // 410 is "was here, permanently gone" — the caller's remedy is identical
+      // to a 404's, so one code covers both rather than two near-synonyms.
+      const result = await executeWithStatus(status);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
+    });
+
+    it('maps a 404 the spec never documented to NOT_FOUND TOO', async () => {
+      // The test that pins the scoping decision. `createTestOperation()` is a
+      // bare operation with no OpenAPI provenance and no documented responses
+      // at all — if anyone later reintroduces spec-scoped mapping, this is what
+      // goes red, because there is no spec here to consult.
+      const result = await executeWithStatus(404);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe('NOT_FOUND');
+    });
+
+    it.each([400, 422])('maps %i to INVALID_INPUT', async (status) => {
+      // Reuses an existing code rather than adding one: the remedy is the same
+      // as a local validation failure. This does widen INVALID_INPUT's meaning
+      // to "rejected as malformed, here or upstream".
+      const result = await executeWithStatus(status);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.code).toBe('INVALID_INPUT');
+    });
+
+    it('leaves 409 generic but INSPECTABLE via details.upstreamStatus', async () => {
+      // The residual 4xx class. No single caller remedy follows from a
+      // Conflict, so inventing a code would assert something we do not know —
+      // but the status is surfaced so it is distinguishable from a real fault.
+      const result = await executeWithStatus(409);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.error.code).toBe('INTERNAL_ERROR');
+        expect(result.error.details?.['upstreamStatus']).toBe(409);
+      }
+    });
+
+    it('carries upstreamStatus on a 500 as well, not only on 4xx', async () => {
+      const result = await executeWithStatus(500);
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.error.details?.['upstreamStatus']).toBe(500);
+    });
+
+    it('returns the SAME code regardless of which source the operation came from', async () => {
+      // The guarantee behind the scoping decision, tested rather than asserted.
+      //
+      // The rejected design consulted the OpenAPI document's declared responses.
+      // Under it, `getPetById` would answer NOT_FOUND when compiled from a spec
+      // and INTERNAL_ERROR when registered as an explicit definition — the error
+      // contract depending on where the operation was DISCOVERED, which is what
+      // ADR-002's source-agnostic model exists to prevent.
+      //
+      // `provenance` is the field that records discovery source, so an
+      // implementation that consulted it would diverge here. Identical
+      // operations, identical upstream, only the provenance differs.
+      const fromOpenApi = createTestOperation({
+        provenance: [{ field: 'description', kind: 'openapi', location: 'petstore.yaml' }],
+      });
+      const fromExplicitDefinition = createTestOperation({
+        provenance: [{ field: 'description', kind: 'code' }],
+      });
+      const withNoProvenanceAtAll = createTestOperation();
+
+      const executor = viaHttp({
+        baseUrl: 'https://api.example.com',
+        client: createMockClient(
+          new Map([['https://api.example.com/testOp', { status: 404, headers: {}, body: '' }]]),
+        ),
+      });
+
+      const codes: string[] = [];
+      for (const operation of [fromOpenApi, fromExplicitDefinition, withNoProvenanceAtAll]) {
+        const result = await executor.execute(operation, {}, createTestContext());
+        expect(result.ok).toBe(false);
+        if (!result.ok) codes.push(result.error.code);
+      }
+
+      expect(codes).toEqual(['NOT_FOUND', 'NOT_FOUND', 'NOT_FOUND']);
+    });
+
+    it('does NOT reclassify the statuses that were already mapped', async () => {
+      // The paired guard. Inserting new branches ahead of the existing ones is
+      // exactly how 401/403/429/502 would get silently swallowed by a broader
+      // rule, and every assertion above would still pass.
+      const cases: readonly [number, string][] = [
+        [401, 'UNAUTHENTICATED'],
+        [403, 'FORBIDDEN'],
+        [429, 'RATE_LIMITED'],
+        [502, 'UPSTREAM_UNAVAILABLE'],
+        [503, 'UPSTREAM_UNAVAILABLE'],
+        [504, 'UPSTREAM_UNAVAILABLE'],
+      ];
+
+      for (const [status, expected] of cases) {
+        const result = await executeWithStatus(status);
+        expect(result.ok).toBe(false);
+        if (!result.ok) expect(result.error.code).toBe(expected);
+      }
+    });
+  });
+
   describe('socket reset and OUTCOME_UNKNOWN', () => {
     it('should return OUTCOME_UNKNOWN on socket reset for non-idempotent ops', async () => {
       const mockClient = createFailingClient(new Error('Socket reset'));

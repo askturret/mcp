@@ -7,7 +7,15 @@
  *
  * It drives the REAL decision functions — `decideRetry` and `isRetryEligible`
  * from `retry/policy.ts` — across the exhaustive product of every error code
- * (12) and every combination of the four effect flags (16): 192 cases.
+ * (14) and every combination of the four effect flags (16): 224 cases.
+ *
+ * The count in this sentence was stale before #201 touched it: it read "(12)
+ * … 192 cases" while `ALL_CODES` below already held 13 and the length
+ * assertion already said 13. `REQUEST_TOO_LARGE` (#125) had been added without
+ * updating the prose. Recorded rather than quietly corrected, because the same
+ * stale figure was also in `readiness.md` — a citation drifting from the thing
+ * it cites is the #233 class, and the length assertion is what stops the ARRAY
+ * drifting even when the sentence does.
  *
  * It deliberately does NOT re-state the rule as a local predicate and assert
  * that against itself. A test shaped that way passes with the retry policy
@@ -36,6 +44,7 @@ const ALL_CODES: readonly OperationErrorCode[] = [
   'INVALID_INPUT',
   'UNAUTHENTICATED',
   'FORBIDDEN',
+  'NOT_FOUND',
   'CONFIRMATION_REQUIRED',
   'RATE_LIMITED',
   'QUEUE_FULL',
@@ -90,7 +99,7 @@ describe('Idempotent+retryable fuzz (readiness #6)', () => {
     // 13 since #125 added REQUEST_TOO_LARGE. Bumping this is the deliberate
     // step the count exists to force: a new code has to be classified in
     // NEVER_RETRY_CODES or TRANSIENT_CODES, not merely appended to the union.
-    expect(ALL_CODES).toHaveLength(13);
+    expect(ALL_CODES).toHaveLength(14);
   });
 
   it('never retries OUTCOME_UNKNOWN, for any effect combination', () => {

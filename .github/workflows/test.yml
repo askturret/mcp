@@ -462,6 +462,19 @@ jobs:
       - name: No placeholder or assertion-free tests
         run: node .github/scripts/check-placeholder-tests.mjs
 
+      # #227: the harness writes .operum-stash-recovery into the repo root.
+      # Untracked it makes the worktree dirty, so git_merge refuses a
+      # fast-forward — and the agent/* home branches exist only to fast-forward
+      # onto main. The failure is SELF-SEALING: a branch pinned at a commit
+      # older than the .gitignore entry does not contain the entry, so it cannot
+      # fast-forward to acquire it. Observed 2026-08-25, where agent/engineer
+      # sat at ea961ea across three merged PRs and could not heal itself.
+      - name: Self-test the runtime-marker ignore guard
+        run: node .github/scripts/check-runtime-marker-ignored.test.mjs
+
+      - name: Agent-runtime markers stay ignored by git
+        run: node .github/scripts/check-runtime-marker-ignored.mjs .
+
       # #26: docs/telemetry-policy.md promises no outbound call unless the
       # adopter configured one. Reads source only, so it runs before the build.
       - name: No network access outside the allowlist

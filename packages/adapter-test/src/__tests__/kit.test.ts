@@ -26,7 +26,7 @@ import {
   runConformance,
   type AdapterUnderTest,
 } from '../kit.js';
-import { parseArgs, runCli, usage } from '../cli.js';
+import { parseArgs, runCli, usage, withOwnedStdout } from '../cli.js';
 
 import {
   expressAdapterUnderTest as expressAdapter,
@@ -299,7 +299,18 @@ describe('stdout is reserved for the report (--json is a pipeable contract)', ()
    * community adapter is arbitrary third-party code that may print anything,
    * and the kit cannot audit it.
    */
-  async function captureStdout(argv: readonly string[]): Promise<{ code: number; stdout: string }> {
+  async function captureStdout(
+    argv: readonly string[],
+    /**
+     * Keep the capture installed for this long AFTER the run resolves (#174).
+     *
+     * Without it, a write scheduled to land after the run is simply not
+     * observed — the helper returns first — so the corruption QA reported is
+     * invisible to the test rather than absent from the product. The real
+     * process exits by draining the event loop, so waiting is what models it.
+     */
+    settleMs = 0,
+  ): Promise<{ code: number; stdout: string }> {
     const written: string[] = [];
     const realWrite = process.stdout.write.bind(process.stdout);
     // Captured at the same seam the CLI protects, so this observes the real
@@ -313,6 +324,11 @@ describe('stdout is reserved for the report (--json is a pipeable contract)', ()
 
     try {
       const code = await runCli(argv, { log: () => {}, error: () => {} });
+      if (settleMs > 0) {
+        await new Promise((resolve) => {
+          setTimeout(resolve, settleMs);
+        });
+      }
       return { code, stdout: written.join('') };
     } finally {
       process.stdout.write = realWrite;
@@ -363,6 +379,12 @@ describe('stdout is reserved for the report (--json is a pipeable contract)', ()
     // document starts at character zero with a noisy late writer in play — and
     // labelled rather than dressed up, since a test that looks like proof of
     // an ordering guarantee it does not check is worse than no test at all.
+    //
+    // #174 UPDATE: the property this one could not reach is now covered by the
+    // test below, using a fixture whose timer is NOT un-ref'd. That difference
+    // is why this fixture lands during the run — and so why this test stayed
+    // green under mutation. The honest label above still applies to THIS test;
+    // it is no longer the only thing guarding the window.
     const { code, stdout } = await captureStdout([
       './src/__tests__/fixtures/late-writer-adapter.mjs',
       '--json',
@@ -379,4 +401,88 @@ describe('stdout is reserved for the report (--json is a pipeable contract)', ()
     const firstValue = stdout.slice(0, stdout.lastIndexOf('}') + 1);
     expect((JSON.parse(firstValue) as { adapter: string }).adapter).toBe('late-writer');
   }, 120_000);
+
+  it('a write landing AFTER the run cannot corrupt the document', async () => {
+    // #174 — the case the test above could not reach, and the reason it could
+    // not: that fixture's timer is `unref`'d, so it lands during the run where
+    // diversion catches it either way. This fixture's is not, so it outlives
+    // the run exactly as QA's repro did.
+    //
+    // The assertion is deliberately the WHOLE document, not the first JSON
+    // value off the stream. `JSON.parse(readFileSync('results.json'))` is what
+    // the README documents and what a consumer actually writes, and it throws
+    // on trailing garbage — so slicing to the last `}` here would assert a
+    // weaker property than the contract makes, and would have passed before
+    // the fix.
+    const { code, stdout } = await captureStdout(
+      [
+        './src/__tests__/fixtures/persistent-late-writer-adapter.mjs',
+        '--json',
+        '--category',
+        'discovery',
+      ],
+      // Comfortably past the fixture's 200ms write, so a failure here means
+      // the write was diverted, not that the test finished before it fired.
+      600,
+    );
+
+    expect(code).toBe(0);
+    expect(stdout).not.toContain('PERSISTENT-LATE-WRITE-GARBAGE');
+    expect(() => JSON.parse(stdout)).not.toThrow();
+    expect((JSON.parse(stdout) as { adapter: string }).adapter).toBe('persistent-late-writer');
+  }, 120_000);
+
+  it('a second call still emits through the REAL stdout, not into the diversion', async () => {
+    // Direct consequence of never restoring (#174): the diversion outlives the
+    // first call, so a naive second call would capture IT as the original and
+    // emit the document into stderr — the document vanishing entirely, which is
+    // worse than the trailing garbage this change removes.
+    //
+    // Both shipped callers invoke the helper once, so this guards a future
+    // caller rather than today's. Testing it now is the cheap half; discovering
+    // it from a silently empty results.json is the expensive one.
+    const written: string[] = [];
+    const realWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      written.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      await withOwnedStdout(async (out) => {
+        out('FIRST\n');
+      });
+      await withOwnedStdout(async (out) => {
+        // Would land in stderr, and `written` would hold only FIRST, if the
+        // second call captured the first call's diversion as its handle.
+        out('SECOND\n');
+      });
+    } finally {
+      process.stdout.write = realWrite;
+    }
+
+    expect(written.join('')).toBe('FIRST\nSECOND\n');
+  });
+
+  it('a write diverted during the run still never reaches stdout', async () => {
+    // The property the diversion exists for, asserted directly on the helper
+    // rather than through a full conformance run.
+    const written: string[] = [];
+    const realWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      written.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8'));
+      return true;
+    }) as typeof process.stdout.write;
+
+    try {
+      await withOwnedStdout(async (out) => {
+        process.stdout.write('ADAPTER-NOISE\n');
+        out('DOCUMENT\n');
+      });
+    } finally {
+      process.stdout.write = realWrite;
+    }
+
+    expect(written.join('')).toBe('DOCUMENT\n');
+  });
 });

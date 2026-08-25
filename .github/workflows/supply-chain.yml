@@ -23,7 +23,7 @@ jobs:
   # capacity. Two runner slots for one install is a cost worth not paying.
   supply-chain:
     name: Licence review and SBOM
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     permissions:
       # `gh release upload` below needs contents: write. The workflow-level
       # default is contents: read, which this job inherited — so the upload
@@ -108,7 +108,7 @@ jobs:
   readiness:
     name: Readiness matrix
     if: github.event_name == 'release'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -150,7 +150,7 @@ jobs:
     # matrix fails that job, so this one never runs. A 0.x release passes it
     # advisorily and publishes, saying so in the job summary.
     needs: [supply-chain, readiness]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     permissions:
       contents: read
       # Required for npm provenance — it is what lets npm attest that this

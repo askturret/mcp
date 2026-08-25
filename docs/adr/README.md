@@ -5,23 +5,54 @@ A decision worth an ADR is one where the reasoning outlives the diff — where a
 future reader will otherwise ask *"why on earth is it like this?"* and have to
 reconstruct the answer from commit archaeology.
 
-## Numbering, and a caveat about it
+## The records
 
-**This directory was created by [ADR-021](ADR-021-two-logger-types.md) (#133),
-and does not backfill.**
+| # | Decision | Origin |
+|---|---|---|
+| [002](ADR-002-canonical-source-agnostic-model.md) | The canonical `OperationDefinition` is source-agnostic | reconstructed |
+| [004](ADR-004-no-mutable-global-registry.md) | No mutable global registry; snapshots immutable and atomically swapped | reconstructed |
+| [006](ADR-006-safety-first-effect-defaults.md) | Effect metadata is inferred safety-first from the HTTP method | reconstructed |
+| [007](ADR-007-presets-are-compositions-not-modes.md) | A preset is a configuration composition, not a mode | reconstructed |
+| [010](ADR-010-sealed-execution-envelope.md) | The 12-stage execution envelope is sealed | reconstructed |
+| [011](ADR-011-typed-operational-errors.md) | Typed operational errors; no raw exception crosses a transport boundary | reconstructed |
+| [012](ADR-012-retry-requires-semantic-idempotency.md) | Retry is gated on semantic idempotency, and the decision is pure | reconstructed |
+| [013](ADR-013-bulkheads-with-bounded-queues.md) | Bulkheads with bounded queues, never an unbounded one | reconstructed |
+| [014](ADR-014-executors-are-interchangeable.md) | Executor strategies are interchangeable (golden-output contract) | reconstructed ⚠ |
+| [015](ADR-015-telemetry-ports-not-an-otel-dependency.md) | Telemetry is a port in core; OpenTelemetry lives in the adapter | reconstructed |
+| [016](ADR-016-one-central-redaction-pipeline.md) | Exactly one central redaction pipeline | reconstructed |
+| [018](ADR-018-plugins-get-scoped-typed-setters.md) | Plugins receive scoped, typed setters, never a mutable runtime handle | reconstructed |
+| [019](ADR-019-overlays-carry-provenance.md) | Overlays edit the model without editing the source, and carry provenance | reconstructed |
+| [020](ADR-020-explorer-panels.md) | The Explorer is six fixed panels, and no panel bypasses redaction | reconstructed ⚠ |
+| [021](ADR-021-two-logger-types.md) | Two logger types in `core`, and when the older one retires | written at the time (#133) |
 
-Source comments across this repository already cite fourteen ADRs by number —
-ADR-002, -004, -006, -007, -010, -011, -012, -013, -014, -015, -016, -018, -019
-and -020 — and **none of them is written down anywhere.** Every one of those
-citations is dangling.
+⚠ = the number is cited for more than one subject; the ADR records that
+ambiguity rather than resolving it by invention.
 
-So the numbering starts at 021 rather than 001: reusing a number that a source
-comment already attaches to a different decision would be worse than the gap
-it appears to fill. Writing up the fourteen is real work against merged code
-and belongs in its own issue, not smuggled into an unrelated PR.
+## Numbering, and what "reconstructed" means
 
-If you write one of the missing ones, keep its original number — the citations
-are already in the source and are the only record of what each was about.
+This directory was created by [ADR-021](ADR-021-two-logger-types.md) (#133),
+which numbered itself 021 rather than 001 to avoid colliding with fourteen
+numbers that source comments already cited but that nobody had written down.
+
+**#223 backfilled those fourteen.** Each keeps its original number, because the
+citations in the source are the only record of what each one was about —
+renumbering would break the link between a comment and its rationale.
+
+**A reconstructed ADR is not a contemporaneous record, and says so.** Each
+carries a `Provenance` section listing the citations it was assembled from, and
+separates what is quoted from the source from what is inferred. That distinction
+is the point: a reader must be able to tell a decision that was written down
+from one reassembled afterwards from its consequences.
+
+If you find the original rationale for any of them — in a commit message, a PR
+body, an old design document — correct the ADR and say what the new evidence
+was. Where two numbers (014, 020) are cited for two different subjects, **split
+rather than renumber the citations** if the original allocation resurfaces.
+
+Numbers 001, 003, 005, 008, 009 and 017 are unused. No source comment cites
+them, so there is nothing to reconstruct and no gap to explain. Do not reuse
+them for new decisions: a future reader finding an ADR-003 would reasonably
+assume it was one of the originals.
 
 ## Format
 

@@ -44,9 +44,20 @@ pipeline. It does not reach into a running server, because `createMcpServer` is
 still a v0.1 stub (#131); returning data keeps that honest rather than implying
 a wiring that does not exist.
 
-A **runnable example** lives in `examples/plugin-otel-exporter/`, and the
-reference plugin it loads is `otelExporterPlugin` from
-`@askturret/mcp-observability`.
+Two **runnable examples** exist, one per common seam:
+
+| Example | Seam | Where the plugin lives |
+|---|---|---|
+| [`examples/plugin-otel-exporter/`](../examples/plugin-otel-exporter/) | exporter | `otelExporterPlugin` in `@askturret/mcp-observability` — the example only *loads* it |
+| [`examples/plugin-source/`](../examples/plugin-source/) | source | the example itself, because a source plugin is adopter code and there is no shipped one to load |
+
+Start with the source example if you are contributing operations. It walks the
+whole lifecycle — declare, implement, register, use, and watch the capability
+gate refuse an undeclared call — and it feeds what the plugin registered into
+the real compiler, so what you read is what actually works.
+
+Both are EXECUTED by CI rather than merely built, so neither can rot into a
+reference that no longer runs.
 
 ## Capabilities
 

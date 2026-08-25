@@ -583,6 +583,20 @@ jobs:
       - name: Every package actually executes its tests
         run: node .github/scripts/check-test-execution.mjs
 
+      # Both plugin examples are `testsNotRequired`, which is correct — they are
+      # runnable demos, not libraries. But plugin-otel-exporter's own manifest
+      # names the hazard that creates: "an example nothing builds or tests rots,
+      # and a rotted reference is worse than none because authors copy it."
+      #
+      # So they are EXECUTED here rather than merely built. Both exit non-zero
+      # on failure, and plugin-source compiles its operations through the real
+      # compiler — so a broken plugin seam fails this step instead of printing
+      # something plausible (#270).
+      - name: Plugin examples run
+        run: |
+          node examples/plugin-otel-exporter/index.mjs
+          node examples/plugin-source/index.mjs
+
       # Same class as the step above — a command that reports success for work
       # it did not do. Self-tested first, for the reason stated on every other
       # guard here: a checker that cannot fail is worse than no checker (#207).

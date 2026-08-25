@@ -176,16 +176,22 @@ check(
   0,
 );
 
+// The three expectations below were written for #188, which deferred anchor
+// validation and pinned the deferral so it could not be forgotten. #232 is the
+// deliberate edit those pins were waiting for, so they are FLIPPED rather than
+// deleted — removing them would lose the record that anchors were once unchecked,
+// and the anchor cases further down would be the only trace.
+
 check(
-  'does NOT flag a bare anchor',
-  run(scratch({ 'a.md': '[top](#introduction)' })).code,
+  'a bare anchor is now resolved against the file it sits in',
+  run(scratch({ 'a.md': '# Introduction\n\n[top](#introduction)' })).code,
   0,
 );
 
 check(
-  'strips the fragment and checks only the file',
+  'a fragment on an existing file is now checked, not discarded',
   run(scratch({ 'a.md': '[s](docs/real.md#anything-at-all)', 'docs/real.md': '# Real' })).code,
-  0,
+  1,
 );
 
 check(
@@ -195,12 +201,13 @@ check(
 );
 
 {
-  // The anchor limitation is reported on EVERY run, so a green check cannot be
-  // read as "anchors are fine". #188 defers anchor validation deliberately;
-  // saying so is the condition on deferring it.
-  const r = run(scratch({ 'a.md': '[s](docs/real.md#x)', 'docs/real.md': '# Real' }));
-  check('states the anchor limitation in its summary', /Anchors are NOT validated/.test(r.out), true);
-  check('...with a count of what it skipped', /ignored/.test(r.out) && /1 link/.test(r.out), true);
+  // The summary line still reports the anchor situation on EVERY run — it now
+  // says how many were VALIDATED rather than how many were skipped. The
+  // reporting requirement outlived the limitation it described.
+  const r = run(scratch({ 'a.md': '[s](docs/real.md#real)', 'docs/real.md': '# Real' }));
+  check('reports anchor validation in its summary', /Anchors validated:/.test(r.out), true);
+  check('...with a count of what it checked', /Anchors validated: 1 link/.test(r.out), true);
+  check('...and no longer claims anchors are unvalidated', /Anchors are NOT validated/.test(r.out), false);
 }
 
 // ---------------------------------------------------------------------------
@@ -310,12 +317,215 @@ check(
 }
 
 // ---------------------------------------------------------------------------
+// Anchors (#232). The failure a file-existence check cannot see: the path
+// resolves, so the link reads as correct in review, and the reader still lands
+// at the top of the document instead of the section named.
+// ---------------------------------------------------------------------------
+
+check(
+  'flags a link whose file exists but whose anchor does not',
+  run(
+    scratch({
+      'a.md': 'See [the section](docs/real.md#nope).',
+      'docs/real.md': '# Real\n\n## Actual Section\n',
+    }),
+  ).code,
+  1,
+);
+
+check(
+  'accepts the same link when the anchor DOES resolve',
+  run(
+    scratch({
+      'a.md': 'See [the section](docs/real.md#actual-section).',
+      'docs/real.md': '# Real\n\n## Actual Section\n',
+    }),
+  ).code,
+  0,
+);
+
+{
+  const r = run(
+    scratch({ 'a.md': 'See [the section](docs/real.md#nope).', 'docs/real.md': '# Real\n' }),
+  );
+  check(
+    'names the fragment and the file it was not found in',
+    /a\.md:1 — #nope not found in docs\/real\.md/.test(r.out),
+    true,
+  );
+}
+
+// --- GitHub's slug rules. The double hyphen is the case most likely to be got
+// --- wrong and the most likely to appear in a real document.
+
+check(
+  '"Policies & Governance" slugs to policies--governance, keeping both hyphens',
+  run(
+    scratch({ 'a.md': '[Policies](b.md#policies--governance)', 'b.md': '## Policies & Governance\n' }),
+  ).code,
+  0,
+);
+
+check(
+  'and the single-hyphen spelling of that same anchor is REJECTED',
+  // The paired negative. Punctuation is removed WITHOUT collapsing the space
+  // around it; a slugger that collapsed runs would accept this and be wrong.
+  run(
+    scratch({ 'a.md': '[Policies](b.md#policies-governance)', 'b.md': '## Policies & Governance\n' }),
+  ).code,
+  1,
+);
+
+check(
+  'strips a trailing period and lowercases: "## 9. Non-goals" -> 9-non-goals',
+  run(scratch({ 'a.md': '[x](b.md#9-non-goals)', 'b.md': '## 9. Non-goals\n' })).code,
+  0,
+);
+
+check(
+  'keeps underscores, so an identifier heading resolves',
+  run(scratch({ 'a.md': '[x](b.md#posix_run-behaviour)', 'b.md': '## POSIX_RUN behaviour\n' })).code,
+  0,
+);
+
+check(
+  'resolves a heading containing a markdown link by its TEXT',
+  run(
+    scratch({
+      'a.md': '[x](b.md#see-the-guide)',
+      'b.md': '## See [the guide](c.md)\n',
+      'c.md': '# C',
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'resolves a heading containing a code span by its contents',
+  run(scratch({ 'a.md': '[x](b.md#the-run-helper)', 'b.md': '## The `run` helper\n' })).code,
+  0,
+);
+
+check(
+  'duplicate headings get -1, exactly as GitHub does',
+  run(scratch({ 'a.md': '[x](b.md#notes-1)', 'b.md': '## Notes\n\ntext\n\n## Notes\n' })).code,
+  0,
+);
+
+check(
+  'an explicit <a name> anchor resolves',
+  run(
+    scratch({ 'a.md': '[x](b.md#manual-anchor)', 'b.md': '<a name="manual-anchor"></a>\n\n# B\n' }),
+  ).code,
+  0,
+);
+
+// --- Same-document anchors, which the file-only version skipped entirely.
+
+check(
+  'flags a bare #anchor that does not exist in the SAME file',
+  run(scratch({ 'a.md': '# Title\n\nSee [above](#nope).\n' })).code,
+  1,
+);
+
+check(
+  'accepts a bare #anchor that does exist in the same file',
+  run(scratch({ 'a.md': '# Title\n\n## Real Heading\n\nSee [above](#real-heading).\n' })).code,
+  0,
+);
+
+// --- The fenced-block rule applied to the OTHER side of the link. Getting this
+// --- wrong lets a template's headings vouch for anchors no reader can reach.
+
+check(
+  'a heading inside a fenced block does NOT provide an anchor',
+  run(
+    scratch({
+      'a.md': '[x](b.md#fenced-heading)',
+      'b.md': '# B\n\n```markdown\n## Fenced Heading\n```\n',
+    }),
+  ).code,
+  1,
+);
+
+check(
+  'DOES resolve that same heading when it is outside the fence',
+  run(scratch({ 'a.md': '[x](b.md#fenced-heading)', 'b.md': '# B\n\n## Fenced Heading\n' })).code,
+  0,
+);
+
+// --- The GITHUB_METADATA_CHECKLIST case, named explicitly in #232's acceptance:
+// --- a ```markdown template whose links are correct for the file they are
+// --- DESTINED for, not the one they appear in. A guard that "fixes" these makes
+// --- the repository worse, so it is pinned with a file link AND an anchor link.
+
+check(
+  'does NOT flag a ```markdown template block (the checklist case)',
+  run(
+    scratch({
+      'docs/GITHUB_METADATA_CHECKLIST.md':
+        '# Checklist\n\nRoot `CONTRIBUTING.md` should contain:\n\n' +
+        '```markdown\n' +
+        '[Code of Conduct](CODE_OF_CONDUCT.md)\n' +
+        '[Coding Standards](CONTRIBUTING.md#coding-standards)\n' +
+        '```\n',
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'DOES flag that same target once it is outside the fence',
+  run(
+    scratch({ 'docs/GITHUB_METADATA_CHECKLIST.md': '# Checklist\n\n[CoC](CODE_OF_CONDUCT.md)\n' }),
+  ).code,
+  1,
+);
+
+// --- Query strings: a GitHub-UI convention, not part of the path.
+
+check(
+  'strips a query string before resolving the file',
+  run(
+    scratch({ 'a.md': '[x](t/conformance.test.ts?grep=Express)', 't/conformance.test.ts': 'x' }),
+  ).code,
+  0,
+);
+
+check(
+  'DOES still flag that link when the underlying file is missing',
+  // Proves the query string was STRIPPED rather than the link skipped — an
+  // ambiguity a lone "does not flag" case cannot resolve.
+  run(scratch({ 'a.md': '[x](t/conformance.test.ts?grep=Express)' })).code,
+  1,
+);
+
+// --- A fragment on a non-markdown target is a line reference, not an anchor.
+
+check(
+  'does NOT anchor-check a fragment on a non-markdown file',
+  run(scratch({ 'a.md': '[x](src/foo.ts#L10)', 'src/foo.ts': 'const x = 1;\n' })).code,
+  0,
+);
+
+check(
+  'DOES flag that same link when the .ts file is missing',
+  run(scratch({ 'a.md': '[x](src/foo.ts#L10)' })).code,
+  1,
+);
+
+// ---------------------------------------------------------------------------
 // The repository itself must pass, or the guard is unshippable.
 // ---------------------------------------------------------------------------
 
 {
   const r = run(repoRoot);
   check('this repository has no broken markdown links', r.code, 0);
+  check(
+    '...and validates anchors rather than announcing it skipped them',
+    /Anchors validated: \d+ link\(s\)/.test(r.out),
+    true,
+  );
   check('...and reports what it actually scanned', /Scanned \d+ markdown file\(s\)/.test(r.out), true);
 }
 

@@ -57,3 +57,4 @@
 {"ts":"2026-08-25T19:07:18Z","branch":"test/issue-301-path-grammar-property","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-25T19:35:21Z","branch":"fix/issue-298-compile-time-forbidden-shape-guard","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-25T20:35:44Z","branch":"fix/issue-203-doctor-no-color-tty","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-25T20:51:41Z","branch":"fix/issue-296-default-ignorable-slug","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

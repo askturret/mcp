@@ -136,6 +136,38 @@ leaving it unsaid. See [docs/TESTING.md](docs/TESTING.md) for that rule in full
 and for five named ways a test passes without guarding anything — each drawn from
 a defect that reached review in this repository.
 
+#### Running a subset of the tests
+
+Scoping a run needs **both** `-w <package>` and `--`:
+
+```bash
+npm test -w packages/core -- --testPathPattern="discovery-invocation-parity"
+```
+
+Each half is load-bearing, and dropping either fails in a different direction:
+
+| Command | What actually happens |
+|---|---|
+| `npm test --testPathPattern=X` | **Runs the entire suite.** npm parses the flag as one of its own config options and never passes it to jest. |
+| `npm test -- --testPathPattern=X` | **Breaks unrelated packages.** The flag now reaches jest, but in *every* workspace, and jest exits 1 in each one the pattern matches nothing in. |
+| `npm test -w packages/core -- --testPathPattern=X` | ✅ Runs the matching tests in that one package. |
+
+The first form is the one to watch for. It exits 0, so it looks like it worked —
+npm 11 prints a single `npm warn Unknown cli config` line above the output of
+every test it just ran anyway, and older npm printed nothing at all. Two CI
+steps in this repo ran the full workspace suite that way for months while their
+names claimed to verify one criterion each ([#207](https://github.com/askturret/mcp/issues/207)).
+
+`.github/scripts/check-jest-flag-forwarding.mjs` now fails the build on either
+broken form in a workflow or a `package.json` script. It deliberately does not
+scan prose, which is why this section can show you the wrong commands.
+
+Running `jest` directly is unaffected — there is no npm layer to eat the flag:
+
+```bash
+cd packages/core && npx jest --testPathPattern="parity"
+```
+
 ## Coding Standards
 
 ### TypeScript

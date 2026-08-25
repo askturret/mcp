@@ -28,7 +28,7 @@ on:
 
 jobs:
   reliability:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, askturret]
     # Generous, but bounded: a hung scenario must fail the job rather than
     # occupy a runner until the platform's own limit.
     timeout-minutes: 45

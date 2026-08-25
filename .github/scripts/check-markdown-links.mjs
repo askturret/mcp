@@ -171,7 +171,7 @@ function headingText(raw) {
 }
 
 /**
- * Characters that are combining marks but carry no visible text (#289).
+ * Characters that survive `\p{M}` but render as nothing (#289, #296).
  *
  * `\p{M}` is kept below so decomposed accents survive — `e` + U+0301 must slug
  * as `é`, not `e`. But that category also contains the variation selectors and
@@ -184,13 +184,29 @@ function headingText(raw) {
  * identically. A maintainer copying the "expected" value out of the report
  * would copy the broken one.
  *
- * U+FE00–U+FE0F are the variation selectors, U+E0100–U+E01EF their supplement,
- * U+20E3 the combining enclosing keycap.
+ * #289 fixed this by enumerating the three ranges it had found. #296 is the
+ * bill for that: U+034F and U+180B–U+180D are the same defect and were still
+ * getting through, because the list named the EXAMPLES rather than the property
+ * they share. `\p{Default_Ignorable_Code_Point}` IS that property — Unicode's
+ * own answer to "a renderer is expected to show nothing here" — so it covers
+ * the variation selectors, their supplement, the Mongolian selectors and the
+ * grapheme joiner in one term. Including U+180F, which postdates #296's text:
+ * a hand-picked list written to that issue would already be one short.
+ *
+ * It is narrow in the direction that matters. It does NOT match combining acute
+ * or combining cedilla, so the accented headings the `\p{M}` retention exists
+ * to protect are untouched. Relative to the old ranges the rule strips strictly
+ * MORE and strictly never less, so no anchor that resolved before stops
+ * resolving.
+ *
+ * U+20E3 stays enumerated beside it deliberately, and is the one member that
+ * cannot be folded in: the keycap draws a visible box around its digit, so it
+ * is correctly NOT default-ignorable. Dropping this term regresses #289.
  */
-// Written as escapes on purpose: these characters are invisible, so a literal
-// class here would be unreadable in review and silently corruptible by any
-// editor that normalises them.
-const INVISIBLE_MODIFIERS = /[\uFE00-\uFE0F\u20E3\u{E0100}-\u{E01EF}]/gu;
+// The keycap is written as an escape on purpose: it is a combining character,
+// so a literal here would render on top of the `[` in review and is silently
+// corruptible by any editor that normalises it.
+const INVISIBLE_MODIFIERS = /[\p{Default_Ignorable_Code_Point}\u20E3]/gu;
 
 /**
  * GitHub's heading-slug rules.

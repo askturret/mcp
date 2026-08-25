@@ -513,6 +513,109 @@ check(
   0,
 );
 
+// --- The same defect class, reached by PROPERTY rather than enumeration (#296).
+//
+// #289 excluded three hand-picked ranges. That closed the cases it was filed
+// for and left four more invisible combining marks behind, because the fix
+// named the examples rather than the property they shared. The rule is now
+// `\p{Default_Ignorable_Code_Point}` — "the code points a renderer is expected
+// to show nothing for" — which is what "invisible modifier" always meant.
+//
+// The keycap U+20E3 stays enumerated beside it on purpose: it is VISIBLE (it
+// draws the box around the digit), so the property correctly does not cover it
+// and removing its explicit entry would regress the keycap case above.
+//
+// These cover both ends: characters the old list missed, and the accented
+// headings the `\p{M}` retention exists to protect.
+
+const CGJ = '͏'; // U+034F COMBINING GRAPHEME JOINER
+const MFVS1 = '᠋'; // U+180B MONGOLIAN FREE VARIATION SELECTOR ONE
+const MFVS4 = '᠏'; // U+180F MONGOLIAN FREE VARIATION SELECTOR FOUR
+
+check(
+  'a combining grapheme joiner does not survive into the slug',
+  run(
+    scratch({
+      'a.md': '[x](b.md#cafe-configuration)',
+      'b.md': `## Cafe${CGJ} Configuration\n`,
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'the slug with the grapheme joiner RETAINED is rejected',
+  // The paired negative, exactly as #289 has for the variation selector. Without
+  // it, a "fix" that kept the character AND accepted both spellings would pass.
+  run(
+    scratch({
+      'a.md': `[x](b.md#cafe${CGJ}-configuration)`,
+      'b.md': `## Cafe${CGJ} Configuration\n`,
+    }),
+  ).code,
+  1,
+);
+
+check(
+  'a Mongolian free variation selector does not survive into the slug',
+  run(
+    scratch({
+      'a.md': '[x](b.md#suffix-form)',
+      'b.md': `## Suffix${MFVS1} Form\n`,
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'a heading with an invisible modifier slugs identically to one without',
+  // The invariant behind all of these, stated once: an invisible character must
+  // not change the anchor. Both files below must produce the SAME slug.
+  run(
+    scratch({
+      'a.md': '[x](b.md#suffix-form)',
+      'b.md': '## Suffix Form\n',
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'U+180F is covered too, though no issue enumerated it',
+  // Mongolian FVS4 was added in Unicode 14, AFTER U+180B-U+180D. A hand-picked
+  // list written to #296's text would already be stale; the property is not.
+  // This is the case that justifies the method change rather than a longer list.
+  run(
+    scratch({
+      'a.md': '[x](b.md#suffix-form)',
+      'b.md': `## Suffix${MFVS4} Form\n`,
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'a PRECOMPOSED accent is still not stripped',
+  // The precomposed half of the over-correction guard: U+00E9 is a Letter, not
+  // a Mark, so it travels a different path through the slug rules than the
+  // decomposed `e` + U+0301 case above. Both must survive.
+  run(
+    scratch({ 'a.md': '[x](b.md#café-configuration)', 'b.md': '## Café Configuration\n' }),
+  ).code,
+  0,
+);
+
+check(
+  'a combining cedilla is still not stripped',
+  // Named in #296 as a character the property must NOT match. Asserted rather
+  // than trusted: `\p{Default_Ignorable_Code_Point}` excluding combining marks
+  // that carry visible meaning is the whole reason this fix is safe.
+  run(
+    scratch({ 'a.md': '[x](b.md#français-notes)', 'b.md': '## Français Notes\n' }),
+  ).code,
+  0,
+);
+
 // --- Same-document anchors, which the file-only version skipped entirely.
 
 check(

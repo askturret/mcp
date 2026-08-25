@@ -421,6 +421,167 @@ describe('source rules', () => {
     expect(actions).toEqual(['manual', 'rewrite']);
     expect(result.changed).toEqual(['src/app.ts']);
   });
+
+  // -------------------------------------------------------------------------
+  // Import ranges are bounded to ONE statement (#230)
+  //
+  // #193 added the refusal checks above, but they all sit BEHIND the
+  // import-specifier check — the one occurrence kind rewritten unconditionally.
+  // So anything mis-classified as an import specifier bypasses every refusal
+  // that issue added, and does so silently.
+  //
+  // `importRanges` matched `import … from '…'` with `[^;]*?` between, which
+  // crosses newlines. A side-effect import (`import './x.css'`) has no `from`,
+  // so in a SEMICOLON-FREE file the match ran on from that import to the `from`
+  // of a LATER one — swallowing every statement in between and marking it all
+  // import specifier.
+  //
+  // Semicolons hid it: `[^;]*?` cannot cross one. That is why #193's own tests,
+  // which all use semicolons, passed throughout.
+  // -------------------------------------------------------------------------
+
+  describe('import ranges stop at one statement (#230)', () => {
+    it('does not swallow statements between a side-effect import and a later from-import', () => {
+      // The issue's repro, verbatim. Every line here is the adopter's own code;
+      // none of it is an import specifier.
+      const result = runDurability(
+        `import './styles.css'\n` +
+          `const cfg = { durability: 'required' }\n` +
+          `console.log(cfg.durability)\n` +
+          `import { x } from '@askturret/mcp-core'\n`,
+      );
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toContain(`const cfg = { durability: 'required' }`);
+      expect(out).toContain('cfg.durability');
+      expect(out).not.toContain('durable');
+    });
+
+    it('reports the refusal rather than staying silent about it', () => {
+      // The corruption's defining property was `manual: 0` — a clean report
+      // alongside changed data. Restoring the refusal without restoring the
+      // report would fix half of it.
+      const result = runDurability(
+        `import './styles.css'\n` +
+          `const cfg = { durability: 'required' }\n` +
+          `console.log(cfg.durability)\n` +
+          `import { x } from '@askturret/mcp-core'\n`,
+      );
+
+      expect(result.findings.some((f) => f.action === 'manual')).toBe(true);
+    });
+
+    it('refuses shorthand in the same arrangement', () => {
+      // Shorthand corrupts identically here, and is worse: `{ durable }` changes
+      // the emitted KEY, so the adopter's runtime data shape shifts silently.
+      const result = runDurability(
+        `import './styles.css'\n` + `const o = { durability }\n` + `import { x } from '@askturret/mcp-core'\n`,
+      );
+
+      expect(result.files[0]?.contents ?? '').toContain('const o = { durability }');
+    });
+
+    it('refuses with a from-import on BOTH sides of the side-effect import', () => {
+      // Tester's fourth control: from-import, side-effect, code, from-import.
+      // A fix that only anchored the FIRST import in the file would pass the
+      // repro above and still corrupt this one.
+      const result = runDurability(
+        `import { a } from 'other-lib'\n` +
+          `import './styles.css'\n` +
+          `const cfg = { durability: 'required' }\n` +
+          `import { x } from '@askturret/mcp-core'\n`,
+      );
+
+      expect(result.files[0]?.contents ?? '').toContain(`{ durability: 'required' }`);
+    });
+
+    // --- the controls that were already SAFE, pinned so the fix does not
+    // --- buy correctness here by breaking them.
+
+    it('still rewrites the genuine import specifier in a semicolon-free file', () => {
+      // The point of the rule. A fix that stopped recognising import specifiers
+      // would make every assertion above pass while doing nothing useful.
+      const result = runDurability(
+        `import './styles.css'\n` + `import { durability } from '@askturret/mcp-core'\n` + `durability()\n`,
+      );
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toContain(`import { durable } from '@askturret/mcp-core'`);
+      expect(out).toContain('durable()');
+    });
+
+    it.each([
+      ['default', `import d from 'other-lib'\n`],
+      ['namespace', `import * as ns from 'other-lib'\n`],
+      ['default + named', `import d, { a } from 'other-lib'\n`],
+      ['default + namespace', `import d, * as ns from 'other-lib'\n`],
+      ['type-only', `import type { T } from 'other-lib'\n`],
+      ['multi-line named', `import {\n  a,\n  b,\n} from 'other-lib'\n`],
+      ['side-effect', `import 'other-lib'\n`],
+    ])('a leading %s import does not extend over the adopter code after it', (_form, importLine) => {
+      // Bounding the match structurally means enumerating the clause shapes, and
+      // a shape handled loosely lets the match run on to the NEXT `from`. Each
+      // form is therefore pinned with adopter code and a later from-import
+      // behind it — the arrangement that corrupts.
+      const result = runDurability(
+        `${importLine}` +
+          `const cfg = { durability: 'required' }\n` +
+          `import { x } from '@askturret/mcp-core'\n`,
+      );
+
+      expect(result.files[0]?.contents ?? '').toContain(`{ durability: 'required' }`);
+    });
+
+    it.each([
+      ['named', `import { durability } from '@askturret/mcp-core'\n`],
+      ['default + named', `import d, { durability } from '@askturret/mcp-core'\n`],
+      ['multi-line named', `import {\n  durability,\n  other,\n} from '@askturret/mcp-core'\n`],
+    ])('still rewrites the specifier in the %s form without a semicolon', (_form, importLine) => {
+      // The other direction: a shape left out of the clause grammar is not a
+      // crash, it silently stops being an import range — so the one occurrence
+      // the rule exists to rewrite gets refused instead. Quiet under-reach.
+      const result = runDurability(`${importLine}durability()\n`);
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toContain('durable');
+      expect(out).toContain('durable()');
+    });
+
+    it.each([
+      ['no space before the named clause', `import{durability}from'@askturret/mcp-core'\n`],
+      ['no space before the namespace clause', `import*as ns from'@askturret/mcp-core'\n`],
+    ])('handles %s', (_label, importLine) => {
+      // `import{a}from'x'` is valid and shows up in tight or minified source.
+      // The old `[^;]*?` accepted it, so a grammar demanding whitespace would
+      // have narrowed behaviour without anything failing — under-reach again.
+      const result = runDurability(`${importLine}const cfg = { durability: 1 }\n`);
+      const out = result.files[0]?.contents ?? '';
+
+      // The adopter's object is refused either way; what is pinned here is that
+      // the import statement itself is still RECOGNISED and bounded.
+      expect(out).toContain('const cfg = { durability: 1 }');
+    });
+
+    it('rewrites the specifier when there is no space around the clause', () => {
+      const result = runDurability(`import{durability}from'@askturret/mcp-core'\ndurability()\n`);
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toContain('import{durable}from');
+      expect(out).toContain('durable()');
+    });
+
+    it('was always safe WITH semicolons, and still is', () => {
+      // The control that explains why this survived #193: `[^;]*?` cannot cross
+      // a semicolon, so the identical shape was never affected.
+      const result = runDurability(
+        `import './styles.css';\n` +
+          `const cfg = { durability: 'required' };\n` +
+          `import { x } from '@askturret/mcp-core';\n`,
+      );
+
+      expect(result.files[0]?.contents ?? '').toContain(`{ durability: 'required' }`);
+    });
+  });
 });
 
 describe('overlay rules', () => {

@@ -420,6 +420,99 @@ check(
   0,
 );
 
+// --- Emoji and their invisible modifiers (#289).
+//
+// `\p{M}` is kept so decomposed accents survive, but that category also holds
+// the VARIATION SELECTORS and the keycap mark, which are emoji modifiers. The
+// base character was stripped as a symbol while the modifier survived, so
+// `### <U+26A0><U+FE0F> What Option B costs` slugged to
+// `<U+FE0F>-what-option-b-costs`.
+//
+// Worse than an ordinary miss: the surviving character is INVISIBLE, so the
+// guard's own error message rendered the right and wrong anchors identically.
+// Written with explicit escapes below for exactly that reason — a literal here
+// would be unreviewable.
+
+const WARNING = '\u26A0\uFE0F'; // U+26A0 WARNING SIGN + U+FE0F VARIATION SELECTOR-16
+const HEADING_289 = `### ${WARNING} What Option B costs`;
+
+check(
+  'an emoji heading resolves without its variation selector (the #289 heading)',
+  run(
+    scratch({ 'a.md': `[cost](b.md#-what-option-b-costs)`, 'b.md': `${HEADING_289}\n` }),
+  ).code,
+  0,
+);
+
+check(
+  'the slug with the variation selector RETAINED is rejected',
+  // The paired negative, and the whole point: before the fix this was the form
+  // the guard accepted, while rejecting the one a reader can actually reach.
+  run(
+    scratch({
+      'a.md': `[cost](b.md#\uFE0F-what-option-b-costs)`,
+      'b.md': `${HEADING_289}\n`,
+    }),
+  ).code,
+  1,
+);
+
+check(
+  'the same heading WITHOUT the variation selector slugs identically',
+  // The real invariant: an invisible modifier must not change the anchor. If
+  // these two ever diverge again, the bug is back in some other form.
+  run(
+    scratch({
+      'a.md': '[cost](b.md#-what-option-b-costs)',
+      'b.md': '### \u26A0 What Option B costs\n',
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'an emoji-prefixed heading keeps its LEADING hyphen',
+  // Not a quirk to be tidied away. The emoji goes, the space after it stays and
+  // becomes `-`. Verified against a real rendered document rather than reasoned
+  // about: `prompts`' readme heads a section `## <U+276F> Prompt Objects` and its
+  // own working table of contents links to `#-prompt-objects`.
+  //
+  // #289's acceptance text said this heading anchors as `#what-option-b-costs`
+  // with no leading hyphen. It does not, and accepting that spelling would make
+  // the guard bless a link that 404s on GitHub.
+  run(scratch({ 'a.md': '[x](b.md#what-option-b-costs)', 'b.md': `${HEADING_289}\n` })).code,
+  1,
+);
+
+check(
+  'a keycap sequence loses both of its invisible parts',
+  run(
+    scratch({
+      'a.md': '[x](b.md#1-first-step)',
+      'b.md': '## 1\uFE0F\u20E3 First step\n',
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'an emoji in the MIDDLE of a heading leaves a double hyphen',
+  // Same rule as `Policies & Governance`: the symbol goes, both spaces stay.
+  run(scratch({ 'a.md': '[x](b.md#status--done)', 'b.md': '## Status ✅ Done\n' })).code,
+  0,
+);
+
+check(
+  'a decomposed accent is NOT stripped along with the modifiers',
+  // The paired guard against over-correcting. `e` + U+0301 is a real combining
+  // mark that GitHub keeps; excluding all of `\p{M}` would have silently
+  // broken every accented heading while fixing the emoji case.
+  run(
+    scratch({ 'a.md': '[x](b.md#cafe\u0301-configuration)', 'b.md': '## Cafe\u0301 Configuration\n' }),
+  ).code,
+  0,
+);
+
 // --- Same-document anchors, which the file-only version skipped entirely.
 
 check(

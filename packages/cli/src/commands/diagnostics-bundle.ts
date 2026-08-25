@@ -154,20 +154,49 @@ const WIN_SEG = String.raw`[^\s\\/'"<>]+(?:${BLANK}+[^\s\\/'"<>]+)*`;
 const POSIX_RUN = new RegExp(String.raw`\/(?:${POSIX_SEG}\/)+[^\s/'"<>]+`);
 
 /**
- * Drive-letter AND UNC paths (#163).
+ * Drive-letter AND UNC paths (#163), with EITHER separator at every position (#286).
  *
  * `[A-Za-z]:\\` alone never matched a UNC path, so
  * `\\fileserver\acme-share\private\spec.yaml` passed through untouched —
  * leaking the file-server hostname, the share name and the layout. Reachable
  * whenever an operator points `--spec` or `--log-file` at a network share,
  * which is ordinary in the enterprise Windows environments the Regulated
- * preset targets, so this was the more consequential of the two gaps.
+ * preset targets.
+ *
+ * ## Why a single separator was not enough (#286)
+ *
+ * Windows accepts `/` and `\` interchangeably, and real paths mix them — a
+ * config file written on one platform, an argument pasted from another. The
+ * #163 version hard-coded `\\` as the separator and `WIN_SEG` excludes `/`, so
+ * a mixed path was matched only up to its first forward slash:
+ *
+ *   \\SECRETHOST\SECRETSHARE/SECRETDIR/spec.yaml
+ *   └── WINDOWS_RUN ───────┘└── POSIX_RUN ─────┘
+ *
+ * Two independent matches, each correctly reduced to its own last segment, the
+ * results landing adjacent: `SECRETSHAREspec.yaml`. The share name survives and
+ * the filename is corrupted — the round-3 shape yet again, one separator along.
+ *
+ * #163 did improve it: before that fix nothing matched and the HOSTNAME
+ * survived too. Partial credit is still a leak, which is why the README wording
+ * is corrected alongside this rather than left to imply the shape was covered.
+ *
+ * The same defect hit `C:/Program Files/acme/spec.yaml`, which is NOT in the
+ * issue — the drive prefix required a backslash, so POSIX_RUN took the tail and
+ * left `C:spec.yaml`. Accepting either separator in both positions fixes both.
+ *
+ * The lookbehind stops the drive-letter branch matching a single letter inside
+ * a longer token: without it, the `p` of `http:/host/a` would read as a drive.
+ * (That string is still mangled by POSIX_RUN, as it was before — a malformed
+ * URL is out of this matcher's remit, and it is noted rather than silently
+ * changed.)
  *
  * `lastPathSegment` needed no change: it already splits on both separators, and
  * drops the empty leading fields the `\\` prefix produces.
  */
+const WIN_SEP = String.raw`[\\/]`;
 const WINDOWS_RUN = new RegExp(
-  String.raw`(?:[A-Za-z]:\\|\\\\)(?:${WIN_SEG}\\)+[^\s\\/'"<>]+`,
+  String.raw`(?:(?<![A-Za-z])[A-Za-z]:${WIN_SEP}|\\\\)(?:${WIN_SEG}${WIN_SEP})+[^\s\\/'"<>]+`,
 );
 
 const UNQUOTED = new RegExp(
@@ -362,8 +391,8 @@ export function bundleReadme(inputs: BundleInputs, filenames: readonly string[] 
     '  this tool, so they cannot leak even if a redaction rule is wrong.',
     '- File paths appear as basenames. Directory layout is not included for any',
     '  path shape this tool recognises: POSIX, Windows drive-letter, Windows UNC',
-    '  (`\\\\server\\share\\...`) and `file://` URLs, including names containing',
-    '  spaces or tabs.',
+    '  (`\\\\server\\share\\...`) and `file://` URLs — with `/` and `\\` accepted',
+    '  interchangeably, and including names containing spaces or tabs.',
     '',
     '## Redaction LIMITS — please read before sharing',
     '',
@@ -372,9 +401,13 @@ export function bundleReadme(inputs: BundleInputs, filenames: readonly string[] 
     '  opaque token under a field called `note`) may NOT be detected.',
     '- Path reduction is pattern-based, over the shapes listed above. A path',
     '  written in some other notation may survive with its directory layout',
-    '  intact. This was stated as an unconditional guarantee until two such',
-    '  shapes were found (UNC and tab-separated names, both now covered); the',
-    '  wording is scoped so the claim matches what the code can actually do.',
+    '  intact. This was stated as an unconditional guarantee until such shapes',
+    '  were found — UNC, tab-separated names, and mixed `/` and `\\` separators,',
+    '  all now covered. The wording is scoped so the claim matches what the code',
+    '  can actually do, and each round of scoping followed a real finding.',
+    '- A bare host reference with no path (`\\\\SERVER` on its own) is NOT',
+    '  reduced. Basename reduction cannot help: the host IS the last segment, so',
+    '  redacting it needs a different rule than the one this section describes.',
     '- **Review this bundle before you send it.** These guarantees reduce risk;',
     '  they do not replace a look.',
     '',

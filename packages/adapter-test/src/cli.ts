@@ -173,47 +173,79 @@ export interface CliIo {
  * owns stdout, and everything the run emits goes to stderr where a human can
  * still read it and a pipe ignores it.
  */
+/**
+ * The diversion this module installed, and the handle it displaced.
+ *
+ * Only used to make a SECOND call re-entrant. Without it, a second call would
+ * capture the first call's diversion as its "original" and emit the document
+ * into stderr — the document silently vanishing, which is worse than the bug
+ * this helper exists to fix. Both shipped callers invoke it once, so this is a
+ * guard against a future one rather than a fix for today.
+ */
+let installed: { divert: typeof process.stdout.write; original: typeof process.stdout.write } | null =
+  null;
+
 export async function withOwnedStdout<T>(
   body: (out: (text: string) => void) => Promise<T>,
 ): Promise<T> {
-  const original = process.stdout.write.bind(process.stdout);
+  // Re-entrant only while OUR diversion is the one installed. If something else
+  // replaced `process.stdout.write` since — a test harness restoring its own
+  // seam, say — the previous capture is stale and a fresh one is correct.
+  if (installed === null || process.stdout.write !== installed.divert) {
+    const original = process.stdout.write.bind(process.stdout);
 
-  process.stdout.write = ((
-    chunk: string | Uint8Array,
-    encoding?: BufferEncoding | ((error?: Error | null) => void),
-    callback?: (error?: Error | null) => void,
-  ): boolean => {
-    // Diverted, never dropped: a conformance failure is often explained by
-    // whatever the adapter printed on the way down, and swallowing it would
-    // trade a parsing bug for a debugging one.
-    if (typeof encoding === 'function') return process.stderr.write(chunk, encoding);
-    return process.stderr.write(chunk, encoding as BufferEncoding, callback);
-  }) as typeof process.stdout.write;
+    const divert = ((
+      chunk: string | Uint8Array,
+      encoding?: BufferEncoding | ((error?: Error | null) => void),
+      callback?: (error?: Error | null) => void,
+    ): boolean => {
+      // Diverted, never dropped: a conformance failure is often explained by
+      // whatever the adapter printed on the way down, and swallowing it would
+      // trade a parsing bug for a debugging one.
+      if (typeof encoding === 'function') return process.stderr.write(chunk, encoding);
+      return process.stderr.write(chunk, encoding as BufferEncoding, callback);
+    }) as typeof process.stdout.write;
 
-  try {
-    // `out` writes through the CAPTURED handle, so a caller emits its document
-    // while diversion is still in force.
-    //
-    // That ordering is the fix for a residual edge QA found in the first
-    // version, which restored stdout in `finally` and emitted afterwards. A
-    // write scheduled during the run to land later — a `setTimeout` inside an
-    // adapter — could then arrive between the restore and the emit, landing
-    // BEFORE the document, which is the one position that makes it
-    // unparseable. Emitting first makes any late write strictly trailing:
-    // still unwanted, but a parser reading one JSON value off the stream is
-    // unaffected.
-    //
-    // EXPORTED, and that matters. The first version of this fix lived only in
-    // the CLI, and bin/generate-table.mjs — which produces docs/adapters.md, a
-    // §54 acceptance artifact — had the identical bug: 518 lines of compiler
-    // output ahead of the table. One shared helper is what stops a sibling
-    // script drifting back.
-    return await body((text) => {
-      original(text);
-    });
-  } finally {
-    process.stdout.write = original;
+    process.stdout.write = divert;
+    installed = { divert, original };
   }
+
+  const emit = installed.original;
+
+  // `out` writes through the CAPTURED handle, so a caller emits its document
+  // while diversion is still in force.
+  //
+  // ## The diversion is NEVER restored, and that is the fix (#174)
+  //
+  // It used to be restored in a `finally`. QA's round-1 reading was that the
+  // hole lay between that restore and the emit, and that emitting first would
+  // close it. Round 2 corrected that, and the correction is the important part:
+  //
+  //   the window is not between the restore and the emit — it is EVERYTHING
+  //   after the restore, until the process exits.
+  //
+  // A non-unref'd `setTimeout` inside an adapter is exactly what extends that
+  // window, because it keeps the event loop alive long enough to fire. Emitting
+  // first moved a late write from leading to trailing, which is a genuine
+  // improvement — but `JSON.parse(readFileSync('results.json'))`, the usage the
+  // README documents, still throws on trailing garbage.
+  //
+  // So the restore is gone. Nothing legitimately belongs on this process's
+  // stdout after the document: both shipped callers invoke this once and set
+  // `process.exitCode` rather than calling `process.exit`, so the process ends
+  // by draining the event loop — precisely when a pending timer would have
+  // fired. Holding the diversion until then is what makes "stdout carries the
+  // document and nothing else" true for the whole life of the run, rather than
+  // for most of it.
+  //
+  // EXPORTED, and that matters. The first version of this fix lived only in
+  // the CLI, and bin/generate-table.mjs — which produces docs/adapters.md, a
+  // §54 acceptance artifact — had the identical bug: 518 lines of compiler
+  // output ahead of the table. One shared helper is what stops a sibling
+  // script drifting back.
+  return await body((text) => {
+    emit(text);
+  });
 }
 
 /**

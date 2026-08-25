@@ -51,12 +51,15 @@ const README_PATH = join(__dirname, '../../README.md');
  * Strip SGR colour codes.
  *
  * The README transcribes output as a TERMINAL renders it, so the escapes are
- * applied rather than shown. Note this is not the same as a no-colour run:
- * `colorize` emits codes unconditionally (it honours neither `NO_COLOR` nor
- * whether stdout is a TTY), and the E/W columns are padded BEFORE colouring, so
- * a coloured count ends up a space narrower. Both are pre-existing cosmetic
- * quirks, deliberately not changed under a docs-reconciliation issue — but they
- * are why this strips rather than disables colour.
+ * applied rather than shown. Stripping them is therefore the faithful
+ * comparison, and it is what this test has always done.
+ *
+ * Since #203/#204 a stripped coloured render and a no-colour run are also
+ * IDENTICAL: colour is now suppressed under `NO_COLOR` or a non-TTY stdout,
+ * and the E/W cells are padded before colouring rather than after, so the two
+ * modes no longer differ by the width of a padded column. That equivalence is
+ * asserted directly in `doctor-color.test.ts` — if it ever breaks, that test
+ * fails rather than this one silently comparing two different layouts.
  */
 const SGR = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 const stripColour = (s: string): string => s.replace(SGR, '');

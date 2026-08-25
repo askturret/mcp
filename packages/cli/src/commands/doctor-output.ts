@@ -4,12 +4,26 @@
  */
 
 import type { PresetDescription } from '@askturret/mcp-core';
+import { shouldUseColor } from '../color.js';
 import type { AnalysisResult, Finding, OperationAnalysis } from './doctor-types.js';
 
+export interface FormatOptions {
+  /**
+   * Force colour on or off. Omitted, colour is detected from `NO_COLOR` and
+   * whether stdout is a TTY (see `shouldUseColor`). Present so tests can pin
+   * either mode without mutating globals.
+   */
+  readonly color?: boolean;
+}
+
 /**
- * Format result as human-readable colorized text
+ * Format result as human-readable text, colorized when the terminal wants it.
  */
-export function formatHumanReadable(result: AnalysisResult): string {
+export function formatHumanReadable(
+  result: AnalysisResult,
+  options: FormatOptions = {},
+): string {
+  const color = options.color ?? shouldUseColor();
   const lines: string[] = [];
 
   // Header
@@ -34,8 +48,12 @@ export function formatHumanReadable(result: AnalysisResult): string {
   // Summary
   lines.push('Summary:');
   lines.push(`  Total Operations: ${result.summary.totalOperations}`);
-  lines.push(`  Errors:           ${colorize(result.summary.errors, 'red', result.summary.errors > 0)}`);
-  lines.push(`  Warnings:         ${colorize(result.summary.warnings, 'yellow', result.summary.warnings > 0)}`);
+  lines.push(
+    `  Errors:           ${colorize(result.summary.errors, 'red', color && result.summary.errors > 0)}`,
+  );
+  lines.push(
+    `  Warnings:         ${colorize(result.summary.warnings, 'yellow', color && result.summary.warnings > 0)}`,
+  );
   lines.push(`  Info:             ${result.summary.info}`);
   lines.push(`  Light Exposed:    ${result.summary.lightExposed}`);
   lines.push(`  Light Dropped:    ${result.summary.lightDropped}`);
@@ -54,7 +72,7 @@ export function formatHumanReadable(result: AnalysisResult): string {
   if (result.operations.length > 0) {
     lines.push('Operations:');
     lines.push('');
-    lines.push(formatOperationsTable(result.operations));
+    lines.push(formatOperationsTable(result.operations, color));
     lines.push('');
   }
 
@@ -147,9 +165,17 @@ function formatFinding(finding: Finding, indent: string): string {
 }
 
 /**
- * Format operations as a table
+ * Format operations as a table.
+ *
+ * The E and W cells are padded to width BEFORE any colour is applied. Padding
+ * a coloured string instead measures the SGR escape bytes as visible
+ * characters, so `padEnd(2)` silently no-ops on a coloured count and that
+ * column renders a space narrower than an uncoloured one (#204). Because the
+ * padding is inside the colour span, the two modes now produce identical
+ * column widths — which is what lets the README transcript be asserted with
+ * colour merely stripped.
  */
-function formatOperationsTable(operations: OperationAnalysis[]): string {
+function formatOperationsTable(operations: OperationAnalysis[], color: boolean): string {
   const rows: string[] = [];
 
   // Header
@@ -165,10 +191,18 @@ function formatOperationsTable(operations: OperationAnalysis[]): string {
     const warnings = op.findings.filter((f) => f.severity === 'warning').length;
     const light = op.wouldBeExposedInLight ? '✓' : '✗';
 
-    const errorStr = errors > 0 ? colorize(errors.toString(), 'red', true) : '-';
-    const warnStr = warnings > 0 ? colorize(warnings.toString(), 'yellow', true) : '-';
+    const errorStr = colorize(
+      (errors > 0 ? errors.toString() : '-').padEnd(2),
+      'red',
+      color && errors > 0,
+    );
+    const warnStr = colorize(
+      (warnings > 0 ? warnings.toString() : '-').padEnd(2),
+      'yellow',
+      color && warnings > 0,
+    );
 
-    rows.push(`  ${method}  ${path}  ${opId}  ${errorStr.padEnd(2)}  ${warnStr.padEnd(2)}  ${light}`);
+    rows.push(`  ${method}  ${path}  ${opId}  ${errorStr}  ${warnStr}  ${light}`);
   }
 
   return rows.join('\n');
@@ -183,7 +217,11 @@ function truncate(str: string, maxLen: number): string {
 }
 
 /**
- * Colorize text (simple terminal colors)
+ * Colorize text (simple terminal colors).
+ *
+ * `condition` folds together "is this value worth highlighting" and "is colour
+ * enabled at all" — callers pass `color && <predicate>`. Colour support itself
+ * is decided once per render in `formatHumanReadable`, never re-detected here.
  */
 function colorize(value: string | number, color: 'red' | 'yellow' | 'green', condition: boolean): string {
   if (!condition) return value.toString();

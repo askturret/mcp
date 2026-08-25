@@ -226,9 +226,9 @@ Operations:
 
   Method  Path                          OpID                  E  W  Light
   ──────  ────────────────────────────  ────────────────────  ─  ─  ─────
-  GET     /users                        -                     2  1  ✓
-  POST    /users                        p1_post_v3            -   4  ✗
-  PUT     /users/{id}                   updateUser            -   3  ✗
+  GET     /users                        -                     2   1   ✓
+  POST    /users                        p1_post_v3            -   4   ✗
+  PUT     /users/{id}                   updateUser            -   3   ✗
 
 Detailed Findings:
 

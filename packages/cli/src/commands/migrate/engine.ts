@@ -186,6 +186,23 @@ function precedingWord(s: string, index: number): string {
 
 const BINDING_KEYWORDS = new Set(['const', 'let', 'var', 'function', 'class']);
 
+const IDENT = String.raw`[A-Za-z_$][A-Za-z0-9_$]*`;
+
+/**
+ * The clause between `import` and `from`, as a structure rather than a span.
+ *
+ * `{…}` deliberately forbids an inner brace pair: an import clause cannot
+ * contain one, so allowing it would let the match run past the statement — the
+ * whole failure this grammar exists to prevent.
+ */
+const IMPORT_CLAUSE = [
+  String.raw`\{[^{}]*\}`, // named:      { a, b as c }
+  String.raw`\*\s*as\s+${IDENT}`, // namespace:  * as ns
+  String.raw`${IDENT}\s*,\s*\{[^{}]*\}`, // default + named
+  String.raw`${IDENT}\s*,\s*\*\s*as\s+${IDENT}`, // default + namespace
+  IDENT, // default
+].join('|');
+
 /**
  * Byte ranges of `import … from '…'` statements.
  *
@@ -193,10 +210,42 @@ const BINDING_KEYWORDS = new Set(['const', 'let', 'var', 'function', 'class']);
  * which is where the module specifier lives. Each hit is then confirmed against
  * the mask, so an `import` appearing inside a comment or a string is not
  * mistaken for a statement.
+ *
+ * ## Why the clause is matched structurally (#230)
+ *
+ * This was `\bimport\b[^;]*?\bfrom\b…`. `[^;]*?` crosses newlines, and a
+ * side-effect import (`import './styles.css'`) has no `from` of its own — so in
+ * a SEMICOLON-FREE file the match started at the side-effect import and ran on
+ * to the `from` of a LATER one, swallowing every statement in between.
+ *
+ * That is not a cosmetic mis-range. Everything inside a range is classified
+ * `import-specifier`, the one kind rewritten UNCONDITIONALLY, ahead of every
+ * refusal check #193 added — so the adopter's own object keys and property
+ * accesses were rewritten silently, reporting `manual: 0`.
+ *
+ * Semicolons hid it for so long because `[^;]*?` cannot cross one, and every
+ * test written for #193 used them.
+ *
+ * Enumerating the clause shapes is what bounds the match to one statement
+ * without an AST. The failure direction if a shape is missed is under-reach —
+ * the statement stops being an import range, so its specifier is refused and
+ * REPORTED rather than rewritten. That is the safe direction, but it is still
+ * wrong, so each accepted form is pinned by a test.
+ *
+ * A side-effect import matches nothing here BY DESIGN: it has no specifier to
+ * rewrite, and its module string is masked before classification anyway.
  */
 function importRanges(contents: string, masked: string): ReadonlyArray<readonly [number, number]> {
   const ranges: [number, number][] = [];
-  const re = /\bimport\b[^;]*?\bfrom\b\s*['"][^'"]+['"]/g;
+  // `\s+` OR a lookahead at `{`/`*`: `import{a}from'x'` is valid and appears in
+  // tight or minified source, but a default binding does need the space — there
+  // is no word boundary in `importd`. The old `[^;]*?` accepted both, so
+  // requiring whitespace unconditionally would have narrowed behaviour quietly.
+  const gap = String.raw`(?:\s+|(?=[{*]))`;
+  const re = new RegExp(
+    String.raw`\bimport\b${gap}(?:type${gap})?(?:${IMPORT_CLAUSE})\s*\bfrom\b\s*['"][^'"]+['"]`,
+    'g',
+  );
   let m: RegExpExecArray | null;
 
   while ((m = re.exec(contents)) !== null) {

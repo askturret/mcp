@@ -258,22 +258,67 @@ function lastPathSegment(value: string): string {
  * bundle, whereas a URL that quietly lost its userinfo looks like the
  * operator never supplied any. The query string goes too — tokens live there
  * at least as often as in userinfo.
+ *
+ * ## `url.origin` is "null" for every NON-SPECIAL scheme (#294)
+ *
+ * Not just `file:`. The WHATWG special set is exactly `http`, `https`, `ws`,
+ * `wss`, `ftp` and `file`; for anything else — `redis:`, `s3:`, `postgres:`,
+ * `mongodb:`, `amqp:`, `git+ssh:` — `url.origin` is the literal string
+ * `"null"`, so `${origin}${pathname}` emitted `null/DB`, `null/DIR/spec.yaml`,
+ * `null/ORG/repo.git`.
+ *
+ * The `file:` case above was fixed for the right reason but scoped to one
+ * scheme, while the property is general — and the pinning test was named
+ * "never emits the literal null for a FILE: URL", narrow enough that the
+ * general case stayed invisible. So the branch below tests the PROPERTY
+ * (`origin === 'null'`) rather than a scheme name.
+ *
+ * Two consequences beyond the stray "null", both fixed here: the path
+ * survived (database, bucket, vhost and org all leaked), and the
+ * `[REDACTED]@` marker silently failed to fire, because `clean` had no
+ * `"://"` for the replace to match. Credential VALUES were never emitted —
+ * they are not in `url.origin` either — but the marker exists to say
+ * "credentials were here", and that is precisely what stopped working.
+ *
+ * ## Why host AND path both go, rather than a basename
+ *
+ * There is no scheme-agnostic rule that keeps either one safely, because
+ * which component carries the secret VARIES BY SCHEME:
+ *
+ *   s3://BUCKET/DIR/spec.yaml     — the bucket is the HOST
+ *   redis://HOST:6379/DB          — the database is the ENTIRE PATH
+ *
+ * So keeping the host leaks the bucket, and reducing the path to a basename
+ * leaks the database name (`lastPathSegment('/DB')` is `DB`). Only dropping
+ * both satisfies every case without teaching this function a list of schemes,
+ * which is the coupling that produced the bug in the first place.
+ *
+ * The scheme is KEPT because it is the diagnostic part — "the redis URL was
+ * unreachable" is the useful sentence — and it is not operator-specific. The
+ * cost is real and worth naming: for `s3://BUCKET/DIR/spec.yaml` the filename
+ * is lost too, where `file:` would have kept it. That asymmetry is deliberate;
+ * a `file:` pathname is known to be a filesystem path, whereas a non-special
+ * scheme's path is opaque and may be the identifier itself.
  */
 function sanitizeUrlText(raw: string): string {
   try {
     const url = new URL(raw);
 
-    // `file:` has NO origin — `url.origin` is the literal string "null" — so
-    // building from it produced `null/srv/customer-acme/private/spec.yaml`:
-    // the operator's full path, leaked, with a stray "null" in front. A file
-    // URL is a path wearing a scheme, so it gets the path treatment.
+    const hadCredentials = url.username !== '' || url.password !== '';
+    const credentialMarker = hadCredentials ? '[REDACTED]@' : '';
+
+    // A file URL is a path wearing a scheme, so it gets the path treatment.
+    // Checked before the general non-special branch below: `file:` also has a
+    // "null" origin, but its pathname is known to be a filesystem path, which
+    // is the one case where a basename is both safe and useful.
     if (url.protocol === 'file:') return lastPathSegment(decodeURIComponent(url.pathname));
 
-    const hadCredentials = url.username !== '' || url.password !== '';
+    if (url.origin === 'null') return `${url.protocol}//${credentialMarker}[REDACTED:host]`;
+
     url.username = '';
     url.password = '';
     const clean = `${url.origin}${url.pathname}`;
-    return hadCredentials ? clean.replace('://', '://[REDACTED]@') : clean;
+    return hadCredentials ? clean.replace('://', `://${credentialMarker}`) : clean;
   } catch {
     // Unparseable but URL-shaped: refuse to emit it at all rather than guess
     // which part was the secret.
@@ -419,6 +464,15 @@ export function bundleReadme(inputs: BundleInputs, filenames: readonly string[] 
     '  path shape this tool recognises: POSIX, Windows drive-letter, Windows UNC',
     '  (`\\\\server\\share\\...`) and `file://` URLs — with `/` and `\\` accepted',
     '  interchangeably, and including names containing spaces or tabs.',
+    '- URLs keep their scheme. For schemes with a real origin (`http`, `https`,',
+    '  `ws`, `wss`, `ftp`) the host and path are kept as well, since they are the',
+    '  diagnostic part. For every OTHER scheme — connection URLs such as `redis`,',
+    '  `postgres`, `mongodb`, `amqp`, `s3` and `git+ssh` — host and path are both',
+    '  removed, because which of the two carries the secret varies by scheme: the',
+    '  bucket is the host, whereas the database or vhost is the path.',
+    '- Where a URL carried credentials, a `[REDACTED]@` marker is emitted in their',
+    '  place, for every scheme, so the bundle says that credentials were present',
+    '  rather than looking as though none were supplied.',
     '',
     '## Redaction LIMITS — please read before sharing',
     '',

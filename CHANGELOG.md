@@ -165,6 +165,25 @@ when `1.0.0` ships.
   Not a covered surface — `details` is optional and this is additive.
 
 ### Fixed
+- The `diagnostics` bundle no longer emits a literal `"null"` or leaks the path
+  for a **non-special URL scheme** (#294). `url.origin` is the string `"null"`
+  for every scheme outside the WHATWG special set — not just `file:` — so
+  `redis://user:pw@HOST:6379/DB` became `null/DB`, and `s3://BUCKET/DIR/spec.yaml`
+  became `null/DIR/spec.yaml`, carrying the database name and bucket with them.
+  The `file:` case had been fixed for the right reason but scoped to one scheme
+  while the property is general, and its pinning test was named "never emits the
+  literal null for a FILE: URL" — narrow enough that the general case stayed
+  invisible. The branch now tests the property, not a scheme name. Two further
+  consequences are fixed with it: the path survived, and the `[REDACTED]@`
+  credential marker silently failed to fire for exactly these schemes because
+  the built string had no `"://"` to replace against. Credential *values* were
+  never emitted either way. Host and path are both dropped rather than reduced
+  to a basename, because which component carries the secret varies by scheme —
+  the bucket is the host, the database is the path — so no scheme-agnostic rule
+  can safely keep either.
+  **Not a covered surface** — redaction of error text is a guarantee of the
+  bundle, not a typed API; the fix only removes output that should never have
+  been emitted.
 - The `diagnostics` bundle no longer leaks directory names from a path written
   with **consecutive separators** (#293). Each path segment required at least one
   non-separator character, so a doubled separator broke the match run: it either

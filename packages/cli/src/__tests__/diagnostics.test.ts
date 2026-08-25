@@ -480,6 +480,75 @@ describe('sanitizeErrorText', () => {
       'spec.yaml\nother.yaml',
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // Non-special URL schemes (#294)
+  //
+  // `url.origin` is the literal string "null" for EVERY scheme outside the
+  // WHATWG special set, not just `file:`. The `file:` fix was scoped to one
+  // scheme while the property is general, and its pinning test was named
+  // "never emits the literal null for a FILE: URL" — narrow enough that the
+  // general case stayed invisible. These assert the PROPERTY, across schemes.
+  // ---------------------------------------------------------------------------
+
+  it.each([
+    ['redis', 'redis://user:pw@SECRETHOST:6379/SECRETDB', ['SECRETHOST', 'SECRETDB', 'pw'], true],
+    ['mongodb', 'mongodb://u:pw@SECRETHOST:27017/SECRETDB', ['SECRETHOST', 'SECRETDB', 'pw'], true],
+    ['postgres', 'postgres://u:pw@SECRETHOST:5432/SECRETDB', ['SECRETHOST', 'SECRETDB', 'pw'], true],
+    ['amqp', 'amqp://u:pw@SECRETHOST:5672/SECRETVHOST', ['SECRETHOST', 'SECRETVHOST', 'pw'], true],
+    ['s3', 's3://SECRETBUCKET/SECRETDIR/spec.yaml', ['SECRETBUCKET', 'SECRETDIR'], false],
+    ['git+ssh', 'git+ssh://SECRETHOST/SECRETORG/repo.git', ['SECRETHOST', 'SECRETORG'], false],
+  ])('never emits "null" or leaks components for a %s: URL', (_scheme, input, leaked, hadCreds) => {
+    const out = sanitizeErrorText(input as string);
+
+    expect(out).not.toContain('null');
+    for (const token of leaked as string[]) {
+      expect(out).not.toContain(token);
+    }
+    // The marker must fire uniformly regardless of scheme. Its whole purpose is
+    // to say "credentials were here", and it silently stopped firing for
+    // exactly these schemes because `clean` had no "://" to replace against.
+    if (hadCreds) {
+      expect(out).toContain('[REDACTED]@');
+    } else {
+      expect(out).not.toContain('[REDACTED]@');
+    }
+  });
+
+  it('keeps the scheme, which is the diagnostic part', () => {
+    // Redaction that removed the whole message would make the bundle useless
+    // for the thing it exists to explain: "the redis URL was unreachable" is
+    // the sentence a support engineer needs.
+    expect(sanitizeErrorText('connect failed: redis://u:pw@HOST:6379/DB')).toBe(
+      'connect failed: redis://[REDACTED]@[REDACTED:host]',
+    );
+    expect(sanitizeErrorText('s3://BUCKET/DIR/spec.yaml')).toBe('s3://[REDACTED:host]');
+  });
+
+  it('CONTROLS: special schemes are unchanged by the non-special branch', () => {
+    // Paired guard. A branch inserted ahead of these is the realistic
+    // regression, and it would leave every new assertion above green.
+    expect(sanitizeErrorText('http://u:p@example.com:8080/mcp/x')).toBe(
+      'http://[REDACTED]@example.com:8080/mcp/x',
+    );
+    expect(sanitizeErrorText('https://example.com/a?token=sk_live_zzz')).toBe(
+      'https://example.com/a',
+    );
+    expect(sanitizeErrorText('ftp://HOST/dir/f.txt')).toBe('ftp://host/dir/f.txt');
+    expect(sanitizeErrorText('ws://HOST/sock')).toBe('ws://host/sock');
+  });
+
+  it('CONTROL: file: still reduces to a basename, not the host marker', () => {
+    // `file:` also has a "null" origin, so ORDERING matters: it must be caught
+    // before the general branch. A file pathname is known to be a filesystem
+    // path, the one case where a basename is both safe and useful.
+    const out = sanitizeErrorText('failed for file:///srv/customer-acme/x.log');
+
+    expect(out).toBe('failed for x.log');
+    expect(out).not.toContain('null');
+    expect(out).not.toContain('customer-acme');
+    expect(out).not.toContain('[REDACTED:host]');
+  });
 });
 
 describe('bundle contents (§13)', () => {

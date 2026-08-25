@@ -22,10 +22,18 @@
  *
  * ## What is checked
  *
- *   1. Inline links and images — `[text](path)`, `![alt](path)`
+ *   1. Inline links and images — `[text](path)`, `![alt](path)`, INCLUDING ones
+ *      that wrap across a line break (#244)
  *   2. Reference definitions — `[label]: path`
  *   3. Repo-internal ABSOLUTE URLs — `https://github.com/<owner>/<repo>/{blob,tree}/main/<path>`
  *   4. ANCHORS on markdown targets, including same-document `#anchor` (#232)
+ *
+ * On (1): the scan was line-based until #244, so `[a](\n  docs/nope.md)` — valid
+ * CommonMark that renders as a real link — was never matched, and the file
+ * reported "0 resolvable link(s) checked" alongside a clean bill. Under-reach
+ * wearing the same output as a genuinely link-free file. Two links in this
+ * repository were invisible that way, both wrapping in the link TEXT rather
+ * than the destination, which is the likelier way to write it by accident.
  *
  * (3) is not padding. Two genuinely dead links in
  * `.github/ISSUE_TEMPLATE/question.md` pointed at `docs/quick-start.md` and
@@ -46,6 +54,12 @@
  *   - **HTML anchors as LINKS.** `<a href="...">` is not markdown link syntax.
  *     `<a name="…">` IS read, but only as an anchor TARGET.
  *   - **Indented (4-space) code blocks.** Only FENCED blocks are skipped.
+ *   - **Reference DEFINITIONS whose destination wraps.** `[label]:\n  path` is
+ *     legal CommonMark. #244 made INLINE links line-break tolerant, but
+ *     `REF_DEFINITION` is anchored to the start of a line, so matching it
+ *     against joined text would be meaningless — a genuine remaining gap, in
+ *     the same under-detecting direction, and listed rather than left to be
+ *     rediscovered. (A self-URL cannot hit this: a URL holds no raw newline.)
  *   - **Underscore emphasis in a heading.** `_italic_` slugs with its
  *     underscores kept, because GitHub keeps underscores and this repo's
  *     headings carry identifiers (`POSIX_RUN`) far more often than
@@ -413,44 +427,71 @@ for (const file of files) {
   // collection so the two cannot disagree about what is inside a fence.
   const scan = nonFencedLines(lines);
 
-  scan.lines.forEach((rawLine, i) => {
-    const text = stripCodeSpans(rawLine);
-    const lineNo = scan.numbers[i];
+  // Code spans are stripped PER LINE, then the lines are joined for the inline
+  // pass below. Stripping the joined text instead would let one backtick on each
+  // of two lines swallow everything between them, hiding real links (#244).
+  const strippedLines = scan.lines.map(stripCodeSpans);
 
-    const record = (target, resolved, kind) => {
-      checked += 1;
-      if (!existsSync(resolved)) {
-        broken.push({ file: rel, line: lineNo, target, kind });
-        return false;
-      }
-      return true;
-    };
+  /**
+   * Offset within the joined text -> original 1-based file line number.
+   *
+   * The inline pass matches across line breaks, so a finding's offset has to be
+   * mapped back before it can be reported. Reporting the wrong line on a real
+   * break is its own kind of unhelpful.
+   */
+  const lineStarts = [];
+  {
+    let at = 0;
+    for (const line of strippedLines) {
+      lineStarts.push(at);
+      at += line.length + 1; // +1 for the '\n' join
+    }
+  }
+  const lineAt = (offset) => {
+    let lo = 0;
+    let hi = lineStarts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (lineStarts[mid] <= offset) lo = mid;
+      else hi = mid - 1;
+    }
+    return scan.numbers[lo];
+  };
 
-    /**
-     * Validate `#fragment` against the target document's headings.
-     *
-     * Only for markdown targets: `foo.ts#L10` is a line reference GitHub
-     * synthesises, with no heading behind it, and treating it as an anchor
-     * would invent findings.
-     */
-    const checkAnchor = (target, absTarget, fragment) => {
-      if (fragment === null) return;
-      if (!absTarget.endsWith('.md')) return;
+  const record = (target, resolved, kind, lineNo) => {
+    checked += 1;
+    if (!existsSync(resolved)) {
+      broken.push({ file: rel, line: lineNo, target, kind });
+      return false;
+    }
+    return true;
+  };
 
-      const anchors = anchorsFor(absTarget);
-      if (anchors === null) return;
+  /**
+   * Validate `#fragment` against the target document's headings.
+   *
+   * Only for markdown targets: `foo.ts#L10` is a line reference GitHub
+   * synthesises, with no heading behind it, and treating it as an anchor
+   * would invent findings.
+   */
+  const checkAnchor = (target, absTarget, fragment, lineNo) => {
+    if (fragment === null) return;
+    if (!absTarget.endsWith('.md')) return;
 
-      anchorsChecked += 1;
-      if (!anchors.has(fragment.toLowerCase())) {
-        deadAnchors.push({
-          file: rel,
-          line: lineNo,
-          target,
-          fragment,
-          inFile: posix(relative(repoRoot, absTarget)),
-        });
-      }
-    };
+    const anchors = anchorsFor(absTarget);
+    if (anchors === null) return;
+
+    anchorsChecked += 1;
+    if (!anchors.has(fragment.toLowerCase())) {
+      deadAnchors.push({
+        file: rel,
+        line: lineNo,
+        target,
+        fragment,
+        inFile: posix(relative(repoRoot, absTarget)),
+      });
+    }
+  };
 
     /**
      * Validate one raw target, whichever syntax produced it.
@@ -465,34 +506,57 @@ for (const file of files) {
      * Keeping them merged is the actual guarantee here; the self-tests for
      * both shapes are the backstop, not the mechanism.
      */
-    const checkTarget = (rawTarget, kind) => {
-      const raw = rawTarget.trim();
-      const { path, fragment } = parseTarget(rawTarget);
+  const checkTarget = (rawTarget, kind, lineNo) => {
+    const raw = rawTarget.trim();
+    const { path, fragment } = parseTarget(rawTarget);
 
-      // A bare `#anchor` is same-document — resolved against THIS file.
-      // External schemes also yield a null path, but their fragment belongs to
-      // a document we do not have, so they are left alone.
-      if (path === null) {
-        if (fragment !== null && !EXTERNAL_SCHEME.test(raw)) checkAnchor(raw, file, fragment);
-        return;
+    // A bare `#anchor` is same-document — resolved against THIS file.
+    // External schemes also yield a null path, but their fragment belongs to
+    // a document we do not have, so they are left alone.
+    if (path === null) {
+      if (fragment !== null && !EXTERNAL_SCHEME.test(raw)) {
+        checkAnchor(raw, file, fragment, lineNo);
       }
+      return;
+    }
 
-      const absTarget = resolve(dirname(file), path);
-      if (record(raw, absTarget, kind)) checkAnchor(raw, absTarget, fragment);
-    };
+    const absTarget = resolve(dirname(file), path);
+    if (record(raw, absTarget, kind, lineNo)) checkAnchor(raw, absTarget, fragment, lineNo);
+  };
 
-    for (const m of text.matchAll(INLINE_LINK)) checkTarget(m[1] ?? '', 'link');
+  /**
+   * Inline links are matched against the JOINED lines, not line by line (#244).
+   *
+   * `[a](\n  docs/nope.md)` is valid CommonMark and renders as a real link, but
+   * a per-line scan never sees a complete `[...](...)` and so reported "0
+   * resolvable links checked" on a file that plainly had one — under-reach
+   * wearing the same clean bill of health as a genuinely link-free file.
+   *
+   * `parseTarget` already trims and takes the first whitespace-delimited token
+   * (it has to, for the `(path "title")` form), so a destination that arrives
+   * with a newline and indentation in front of it needs no special handling.
+   */
+  const joined = strippedLines.join('\n');
+  for (const m of joined.matchAll(INLINE_LINK)) {
+    checkTarget(m[1] ?? '', 'link', lineAt(m.index));
+  }
+
+  // Reference definitions stay per-line: REF_DEFINITION is anchored to the
+  // start of a line, so matching it against joined text would be meaningless.
+  // Self-URLs stay per-line because a URL cannot contain a raw newline.
+  strippedLines.forEach((text, i) => {
+    const lineNo = scan.numbers[i];
 
     const refMatch = REF_DEFINITION.exec(text);
-    if (refMatch) checkTarget(refMatch[1], 'reference');
+    if (refMatch) checkTarget(refMatch[1], 'reference', lineNo);
 
     for (const m of text.matchAll(SELF_URL)) {
       const [pathRaw, fragmentRaw] = m[1].split('#');
       const path = (pathRaw ?? '').split('?')[0];
       if (path === '') continue;
       const absTarget = resolve(repoRoot, decode(path));
-      if (record(m[1], absTarget, 'self-url') && fragmentRaw) {
-        checkAnchor(m[1], absTarget, decode(fragmentRaw));
+      if (record(m[1], absTarget, 'self-url', lineNo) && fragmentRaw) {
+        checkAnchor(m[1], absTarget, decode(fragmentRaw), lineNo);
       }
     }
   });

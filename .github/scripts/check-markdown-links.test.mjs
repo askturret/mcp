@@ -630,6 +630,69 @@ check(
   0,
 );
 
+// --- The SAME construct written as a reference definition (#290).
+//
+// `[x](#dead)` was checked and `[lbl]: #dead` was not, because the
+// same-document branch had been added to the inline path only. Both spellings
+// now go through one `checkTarget`, so the divergence cannot recur by
+// construction — these cases assert the behaviour that guarantee is for.
+//
+// Under-reach, note, not a false accept: the old code skipped the definition
+// rather than blessing it. The tell was `Anchors validated: 0` on a file that
+// plainly carried a fragment.
+
+const REF_DOC = (target) => `# Title\n\n## Real Heading\n\nSee [ref] here.\n\n[ref]: ${target}\n`;
+
+check(
+  'FLAGS a reference definition whose bare #anchor does not exist',
+  run(scratch({ 'a.md': REF_DOC('#nope-dead') })).code,
+  1,
+);
+
+check(
+  'accepts a reference definition whose bare #anchor does exist',
+  // The paired positive. Without it, a "fix" that rejected every reference
+  // definition outright would satisfy the negative case above.
+  run(scratch({ 'a.md': REF_DOC('#real-heading') })).code,
+  0,
+);
+
+check(
+  'the two spellings agree on the SAME dead anchor',
+  // The actual invariant behind #290, stated once: how a link is written must
+  // not change whether it is checked.
+  run(scratch({ 'a.md': '# T\n\n## Real Heading\n\n[x](#gone)\n' })).code,
+  run(scratch({ 'a.md': REF_DOC('#gone') })).code,
+);
+
+check(
+  'the two spellings agree on the same LIVE anchor',
+  run(scratch({ 'a.md': '# T\n\n## Real Heading\n\n[x](#real-heading)\n' })).code,
+  run(scratch({ 'a.md': REF_DOC('#real-heading') })).code,
+);
+
+check(
+  'a reference definition pointing at ANOTHER file still validates its fragment',
+  // Regression guard: this path already worked, and the #290 refactor routed it
+  // through the shared helper. It must not have been lost on the way.
+  run(
+    scratch({
+      'a.md': 'See [ref].\n\n[ref]: b.md#no-such-heading\n',
+      'b.md': '# B\n\n## Real Heading\n',
+    }),
+  ).code,
+  1,
+);
+
+check(
+  'a reference definition to an EXTERNAL url with a fragment is left alone',
+  // Its path is null too, but the fragment belongs to a document we do not
+  // have. Treating those alike would invent a finding on every external link
+  // that carries an anchor.
+  run(scratch({ 'a.md': '# T\n\n[e]: https://example.com/x#some-frag\n' })).code,
+  0,
+);
+
 // --- The fenced-block rule applied to the OTHER side of the link. Getting this
 // --- wrong lets a template's headings vouch for anchors no reader can reach.
 

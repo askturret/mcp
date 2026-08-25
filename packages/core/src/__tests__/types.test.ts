@@ -5,7 +5,11 @@
  * 1. All 14 OperationErrorCode values are present
  * 2. OperationDefinition structure is correct
  * 3. OperationResult discriminated union works
- * 4. No raw Error objects leak (type-level check)
+ * 4. No raw Error objects leak (compile-time check)
+ * 5. Source-specific fields cannot reach the canonical model (compile-time check)
+ *
+ * Checks 4 and 5 are enforced by `tsc`, not by the test runner — see the
+ * "forbidden shapes" section at the bottom of this file for how that works.
  */
 
 import type {
@@ -185,32 +189,64 @@ export function testOperationErrorWireShape(): void {
 }
 
 // =============================================================================
-// Type-level test: raw Error objects cannot be assigned to OperationError
+// Type-level tests: forbidden shapes must not compile
 // =============================================================================
 
 /**
- * Type test: raw Error cannot be used as OperationError
- * This test should FAIL to compile if uncommented
+ * How the two guards below are enforced.
+ *
+ * They run at COMPILE time, not at run time — `tsc` is the test runner. This
+ * file is inside `packages/core`'s `include` (`src/**\/*`), so `npm run build
+ * -w packages/core` type-checks it, and CI runs exactly that in the
+ * `test-core` job before the jest step.
+ *
+ * `@ts-expect-error` inverts the build: the directive is only satisfied while
+ * the line below it is still an error. If a forbidden shape ever starts
+ * compiling — someone widens `OperationError`, or adds an index signature to
+ * `OperationDefinition` — TypeScript reports the now-unnecessary directive
+ * ("Unused '@ts-expect-error' directive") and the build FAILS. That inversion
+ * is what makes these live guards rather than commented-out intentions.
+ *
+ * Note this is independent of whether jest executes this file (#216): these
+ * assertions are checked by the compiler either way.
  */
-/*
+
+/**
+ * Type test: a raw `Error` is not an `OperationError`.
+ *
+ * `OperationError` is the wire shape; a raw `Error` carries `name`/`stack` and
+ * lacks `code`, so leaking one across the boundary must be a type error. The
+ * runtime half of this claim is `testOperationErrorWireShape` above.
+ */
 const rawError = new Error('Something went wrong');
-const operationError: OperationError = rawError; // ❌ Should be a type error
-*/
-
-// =============================================================================
-// Type-level test: source-specific fields rejected
-// =============================================================================
+// @ts-expect-error - a raw Error has no `code` and is not a valid OperationError
+const operationError: OperationError = rawError;
+void operationError; // Type-level test - intentionally unused
 
 /**
- * Type test: adding source-specific fields to OperationDefinition should fail
- * This test should FAIL to compile if uncommented
+ * Type test: source-specific fields cannot be added to `OperationDefinition`.
+ *
+ * This is the compile-time enforcement of `OperationDefinition` invariant 2
+ * ("No source-specific fields - use annotations or provenance instead"), and
+ * the evidence cited by readiness criterion 1. `openApiPath` stands in for any
+ * source-native field: the canonical shape is closed, so an OpenAPI-specific
+ * key is rejected by TypeScript's excess-property check.
+ *
+ * The directive sits on the PROPERTY, not on the `const`, because that is the
+ * line the excess-property error is reported against — on the declaration it
+ * would suppress nothing and silently pass.
+ *
+ * The sanctioned escape hatch is asserted positively by `fullDefinition`
+ * above, which sets `annotations` and `provenance` and must keep compiling.
+ * Without that counterpart this guard would also be satisfied by a
+ * `OperationDefinition` that rejected everything.
  */
-/*
 const invalidDefinition: OperationDefinition = {
   ...validDefinition,
-  openApiPath: '/users', // ❌ Should be a type error - use annotations instead
+  // @ts-expect-error - source-specific data belongs in `annotations`, not the canonical shape
+  openApiPath: '/users',
 };
-*/
+void invalidDefinition; // Type-level test - intentionally unused
 
 // =============================================================================
 // Run tests

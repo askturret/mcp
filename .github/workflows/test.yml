@@ -82,6 +82,11 @@ jobs:
               # The suite drives the adapters through a real OpenAPI source, so
               # a change there can break parity with no adapter file touched (#213).
               - 'packages/sources-openapi/**'
+              # Both adapters serve the Explorer, so parity depends on it even
+              # though adapter-conformance never names it (#282). "The shared
+              # machinery underneath them", above, is transitive — this is the
+              # entry that makes the comment true.
+              - 'packages/explorer/**'
             gateway:
               - 'packages/gateway/**'
               # The gateway is assembled ENTIRELY from these packages and adds
@@ -120,6 +125,12 @@ jobs:
               - 'packages/adapters-fastify/**'
               - 'packages/core/**'
               - 'packages/transports/**'
+              # Reached through adapter-conformance, which the kit runs (#282).
+              # A published conformance result depends on both, and neither
+              # appears in this package's own manifest — which is exactly why
+              # the guard now walks the closure rather than direct deps.
+              - 'packages/sources-openapi/**'
+              - 'packages/explorer/**'
             # The five filters below each declare a dependency on core and, until
             # #213, listed only their own directory — so a core change did not
             # re-run any of them. check-path-filters.mjs now asserts this from

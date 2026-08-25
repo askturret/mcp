@@ -186,8 +186,8 @@ function packageIndex() {
   return { byName, dirs };
 }
 
-/** First-party dependencies declared by a package, across all dependency scopes. */
-function firstPartyDeps(dir, byName) {
+/** DIRECTLY declared first-party dependencies, across all dependency scopes. */
+function directDeps(dir, byName) {
   const pkg = JSON.parse(readFileSync(join(repoRoot, 'packages', dir, 'package.json'), 'utf-8'));
   const all = {};
   for (const scope of ['dependencies', 'peerDependencies', 'devDependencies']) {
@@ -198,6 +198,88 @@ function firstPartyDeps(dir, byName) {
     .sort();
 }
 
+/**
+ * Every first-party package reachable from `dir`, not just its direct ones (#282).
+ *
+ * Direct declarations are not the dependency surface. `adapter-test` depends on
+ * `adapter-conformance`, which depends on `adapters-express`, which is built
+ * from `explorer` — so an explorer-only change can break the adapter-test suite
+ * without appearing anywhere in adapter-test's own manifest. Stopping at direct
+ * deps left three such holes, and they are invisible in exactly the way the
+ * original #213 holes were: the filter looks thorough, and the job simply does
+ * not run.
+ *
+ * The filters' own comments already asked for this — `adapter-conformance` says
+ * it must re-run "when the shared machinery underneath them" changes. Underneath
+ * is transitive; the first implementation read it as one level.
+ *
+ * `seen` is a cycle guard, not an optimisation. npm workspaces permit a
+ * dependency cycle between packages, and a plain recursive walk would hang the
+ * guard rather than fail it — a CI job that never finishes is worse than one
+ * that reports wrongly, because nothing tells you which it is doing. There is
+ * no cycle today; this costs nothing and removes the failure mode.
+ *
+ * `dir` itself is excluded: `packages/<dir>/**` is the filter's own entry, and
+ * a self-edge would demand it twice.
+ */
+function transitiveDeps(dir, byName, cache) {
+  const cached = cache.get(dir);
+  if (cached !== undefined) return cached;
+
+  // Traversal is in DIRECTORY space, because that is what a manifest is read
+  // by and what a path filter is written in. `directDeps` yields npm names, so
+  // each hop converts; mixing the two silently reads the wrong manifest.
+  const toDir = (npmName) => byName.get(npmName);
+
+  const seen = new Set();
+  const stack = directDeps(dir, byName).map(toDir);
+
+  while (stack.length > 0) {
+    const next = stack.pop();
+    if (next === undefined || next === dir || seen.has(next)) continue;
+    seen.add(next);
+    stack.push(...directDeps(next, byName).map(toDir));
+  }
+
+  const result = [...seen].sort();
+  cache.set(dir, result);
+  return result;
+}
+
+/**
+ * The shortest dependency route from `from` to `to`, for the error message.
+ *
+ * A guard that says `adapter-test` depends on `explorer` sends the maintainer
+ * to a package.json that does not mention it, where the obvious conclusion is
+ * that the guard is broken. Naming the hop — `adapter-conformance ->
+ * adapters-express -> explorer` — turns a confusing report into an actionable
+ * one, and lets a reader disagree with the guard on the evidence.
+ *
+ * Breadth-first, so the route printed is the shortest rather than whichever the
+ * depth-first walk happened to take.
+ */
+function describeRoute(from, to, byName) {
+  const queue = [[from]];
+  const visited = new Set([from]);
+
+  while (queue.length > 0) {
+    const path = queue.shift();
+    const tail = path[path.length - 1];
+
+    for (const npmName of directDeps(tail, byName)) {
+      const dir = byName.get(npmName);
+      if (dir === undefined || visited.has(dir)) continue;
+      if (dir === to) return [...path.slice(1), to].join(' -> ');
+      visited.add(dir);
+      queue.push([...path, dir]);
+    }
+  }
+
+  // Unreachable in practice: only called for members of the closure. Falling
+  // back to a bare name beats asserting a route that was not found.
+  return to;
+}
+
 // ---------------------------------------------------------------------------
 
 if (!existsSync(workflowPath)) cannotCheck(`${workflowPath} does not exist`);
@@ -206,6 +288,12 @@ const workflowText = readFileSync(workflowPath, 'utf-8');
 const filters = parseFilters(extractFiltersBlock(workflowText));
 const declaredOutputs = parseChangesOutputs(workflowText);
 const { byName, dirs } = packageIndex();
+
+/** Shared across filters — a hub package's closure is recomputed otherwise. */
+const closureCache = new Map();
+
+/** Directory -> npm name, so a violation can name both. */
+const dirToName = new Map([...byName].map(([npmName, dir]) => [dir, npmName]));
 
 const violations = [];
 
@@ -224,15 +312,29 @@ for (const [name, globs] of Object.entries(filters)) {
     continue;
   }
 
-  // B: the #213 invariant.
-  for (const dep of firstPartyDeps(name, byName)) {
-    const required = `packages/${byName.get(dep)}/**`;
-    if (!globs.includes(required)) {
-      violations.push(
-        `filter '${name}' depends on ${dep} but does not include '${required}' — ` +
-          `a change to ${dep} would not re-run ${name}'s tests`,
-      );
-    }
+  // B: the #213 invariant, over the TRANSITIVE closure since #282.
+  const direct = new Set(directDeps(name, byName).map((n) => byName.get(n)));
+
+  for (const depDir of transitiveDeps(name, byName, closureCache)) {
+    const required = `packages/${depDir}/**`;
+    if (globs.includes(required)) continue;
+
+    // Both vocabularies, deliberately: the npm name is what the manifest
+    // declares and what a maintainer greps for, the directory is what the
+    // filter is written in. Reporting only one leaves them a translation step.
+    const depName = dirToName.get(depDir) ?? depDir;
+
+    // Naming the route matters for a transitive hit. A maintainer told only
+    // that `adapter-test` depends on explorer will look in its package.json,
+    // fail to find it, and reasonably conclude the guard is wrong.
+    const how = direct.has(depDir)
+      ? `depends on ${depName}`
+      : `transitively depends on ${depName} (via ${describeRoute(name, depDir, byName)})`;
+
+    violations.push(
+      `filter '${name}' ${how} but does not include '${required}' — ` +
+        `a change to ${depName} would not re-run ${name}'s tests`,
+    );
   }
 }
 

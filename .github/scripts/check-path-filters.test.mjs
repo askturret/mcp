@@ -162,6 +162,159 @@ check(
   3,
 );
 
+// --- the transitive closure (#282) -----------------------------------------
+//
+// Direct declarations are not the dependency surface. adapter-test depends on
+// adapter-conformance, which depends on adapters-express, which is built from
+// explorer — so an explorer change can break adapter-test's suite without
+// appearing anywhere in adapter-test's manifest. The first version stopped at
+// one level and left exactly that hole in three places.
+
+const EXPLORER = '@askturret/mcp-explorer';
+const MID = '@askturret/mcp-mid';
+
+check(
+  'flags a dependency reachable only through another package',
+  withFixture(
+    { explorer: [], mid: [EXPLORER], top: [MID] },
+    `            explorer:
+              - 'packages/explorer/**'
+            mid:
+              - 'packages/mid/**'
+              - 'packages/explorer/**'
+            top:
+              - 'packages/top/**'
+              - 'packages/mid/**'`,
+  ).code,
+  1,
+);
+
+check(
+  'accepts it once the transitive path is listed',
+  withFixture(
+    { explorer: [], mid: [EXPLORER], top: [MID] },
+    `            explorer:
+              - 'packages/explorer/**'
+            mid:
+              - 'packages/mid/**'
+              - 'packages/explorer/**'
+            top:
+              - 'packages/top/**'
+              - 'packages/mid/**'
+              - 'packages/explorer/**'`,
+  ).code,
+  0,
+);
+
+{
+  const r = withFixture(
+    { explorer: [], mid: [EXPLORER], top: [MID] },
+    `            explorer:
+              - 'packages/explorer/**'
+            mid:
+              - 'packages/mid/**'
+              - 'packages/explorer/**'
+            top:
+              - 'packages/top/**'
+              - 'packages/mid/**'`,
+  );
+  check(
+    'says the dependency is TRANSITIVE rather than implying it is declared',
+    r.out.includes('transitively depends on'),
+    true,
+  );
+  check(
+    'and names the route, so the maintainer is not sent to a manifest that lacks it',
+    r.out.includes('via mid -> explorer'),
+    true,
+  );
+}
+
+check(
+  'a direct dependency is still described as direct, not transitive',
+  // Guards the message split: if everything were labelled transitive, the route
+  // text would be noise on the common case and the distinction would be lost.
+  withFixture(
+    { core: [], cli: [CORE] },
+    `            core:
+              - 'packages/core/**'
+            cli:
+              - 'packages/cli/**'`,
+  ).out.includes('transitively'),
+  false,
+);
+
+check(
+  'a dependency cycle terminates instead of hanging',
+  // npm workspaces permit a cycle between packages. A plain recursive walk
+  // would hang the guard rather than fail it — and a CI job that never
+  // finishes is worse than one that reports wrongly, because nothing tells you
+  // which it is doing. There is no cycle in this repo; the guard should not
+  // depend on that staying true.
+  withFixture(
+    { a: ['@askturret/mcp-b'], b: ['@askturret/mcp-a'] },
+    `            a:
+              - 'packages/a/**'
+              - 'packages/b/**'
+            b:
+              - 'packages/b/**'
+              - 'packages/a/**'`,
+  ).code,
+  0,
+);
+
+check(
+  'a package reached only via a cycle is still required',
+  // The cycle guard must not swallow a real gap on its way past.
+  withFixture(
+    { a: ['@askturret/mcp-b'], b: ['@askturret/mcp-a'] },
+    `            a:
+              - 'packages/a/**'
+            b:
+              - 'packages/b/**'
+              - 'packages/a/**'`,
+  ).code,
+  1,
+);
+
+check(
+  'a package does not require a filter entry for ITSELF via a cycle',
+  // `packages/a/**` is a's own entry; a self-edge reached through the cycle
+  // must not demand it a second time or every cyclic package fails forever.
+  withFixture(
+    { a: ['@askturret/mcp-b'], b: ['@askturret/mcp-a'] },
+    `            a:
+              - 'packages/a/**'
+              - 'packages/b/**'
+            b:
+              - 'packages/b/**'
+              - 'packages/a/**'`,
+  ).out.includes("filter 'a'"),
+  false,
+);
+
+check(
+  'a three-hop chain is walked all the way down',
+  // Two hops could be satisfied by a fix that only looks one level further.
+  withFixture(
+    { d: [], c: ['@askturret/mcp-d'], b: ['@askturret/mcp-c'], a: ['@askturret/mcp-b'] },
+    `            d:
+              - 'packages/d/**'
+            c:
+              - 'packages/c/**'
+              - 'packages/d/**'
+            b:
+              - 'packages/b/**'
+              - 'packages/c/**'
+              - 'packages/d/**'
+            a:
+              - 'packages/a/**'
+              - 'packages/b/**'
+              - 'packages/c/**'`,
+  ).code,
+  1,
+);
+
 // --- the same defect one level up ------------------------------------------
 
 // Note the outputs list is non-empty but simply does not mention `core`. A

@@ -359,6 +359,71 @@ describe('sanitizeErrorText', () => {
       'open "spec.yaml"',
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // Either separator, at every position (#286)
+  //
+  // Windows accepts `/` and `\` interchangeably and real paths mix them. #163
+  // hard-coded `\` as the separator, so a mixed path matched only up to its
+  // first forward slash: WINDOWS_RUN took the backslash prefix, POSIX_RUN took
+  // the tail, and the two reductions landed adjacent —
+  // `\\HOST\SHARE/DIR/spec.yaml` -> `SHAREspec.yaml`. Share name leaked, filename
+  // corrupted; the round-3 shape one separator along.
+  // ---------------------------------------------------------------------------
+
+  it.each([
+    ['backslash then forward (the issue repro)', 'open \\\\SECRETHOST\\SECRETSHARE/SECRETDIR/spec.yaml failed'],
+    ['forward then backslash', 'open \\\\SECRETHOST/SECRETSHARE\\SECRETDIR\\spec.yaml failed'],
+    ['all forward slashes after the prefix', 'open \\\\SECRETHOST/SECRETSHARE/SECRETDIR/spec.yaml failed'],
+  ])('reduces a mixed-separator UNC path: %s', (_label, input) => {
+    const out = sanitizeErrorText(input);
+
+    // The acceptance criterion, stated as three separate absences rather than
+    // one equality: a future partial match could still produce a string that
+    // happens to contain "spec.yaml" while leaking a component.
+    expect(out).not.toContain('SECRETHOST');
+    expect(out).not.toContain('SECRETSHARE');
+    expect(out).not.toContain('SECRETDIR');
+    expect(out).toContain('spec.yaml');
+  });
+
+  it('reduces a mixed-separator UNC path to exactly the basename', () => {
+    expect(
+      sanitizeErrorText('open \\\\SECRETHOST\\SECRETSHARE/SECRETDIR/spec.yaml failed'),
+    ).toBe('open spec.yaml failed');
+  });
+
+  it('handles blanks in a mixed-separator UNC path', () => {
+    // Both #163 fixes have to survive the #286 change: spaces are the norm in
+    // Windows names, and the tab case was its own leak.
+    expect(sanitizeErrorText('open \\\\file server\\Acme Holdings/private/spec.yaml')).toBe(
+      'open spec.yaml',
+    );
+    expect(sanitizeErrorText('open \\\\host\\Acme\tHoldings/private/spec.yaml')).toBe(
+      'open spec.yaml',
+    );
+  });
+
+  it('reduces a drive-letter path written with forward slashes', () => {
+    // NOT in #286, found while reproducing it: the drive prefix required a
+    // backslash, so POSIX_RUN took the tail and left `C:spec.yaml`. No directory
+    // leaked, but the filename was corrupted — same root cause, same fix.
+    expect(sanitizeErrorText('open "C:/Program Files/acme/spec.yaml"')).toBe('open "spec.yaml"');
+    expect(sanitizeErrorText('open "C:\\Program Files/acme\\spec.yaml"')).toBe('open "spec.yaml"');
+  });
+
+  it('does not read a letter inside a longer token as a drive', () => {
+    // Accepting `/` after the drive letter makes `p:/` in `http:/…` look like a
+    // drive path. The lookbehind is what prevents that; without it the match
+    // would start mid-word and eat the scheme.
+    expect(sanitizeErrorText('see http://host/a/b/mcp')).toContain('http://host');
+  });
+
+  it('still does not run across a newline, with either separator', () => {
+    expect(sanitizeErrorText('\\\\host\\a/spec.yaml\n\\\\host\\b/other.yaml')).toBe(
+      'spec.yaml\nother.yaml',
+    );
+  });
 });
 
 describe('bundle contents (§13)', () => {

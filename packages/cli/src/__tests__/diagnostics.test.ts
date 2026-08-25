@@ -424,6 +424,62 @@ describe('sanitizeErrorText', () => {
       'spec.yaml\nother.yaml',
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // Consecutive separators (#293)
+  //
+  // `SEG` requires >=1 non-separator character, so `(?:SEG SEP)+` could not
+  // traverse an empty segment. A doubled separator broke the run: the match
+  // either failed outright (everything leaked) or restarted mid-path, landing
+  // a partial reduction next to the unmatched head — the round-3 signature,
+  // directory leaked AND filename corrupted, for the fourth time (#50, #163,
+  // #286, this).
+  //
+  // The five inputs below are the issue's acceptance criterion verbatim.
+  // ---------------------------------------------------------------------------
+
+  it.each([
+    ['doubled backslashes throughout', 'C:\\\\DIR\\\\SUB\\\\spec.yaml', ['DIR', 'SUB']],
+    ['doubled forward slashes throughout', '/srv//DIR//spec.yaml', ['srv', 'DIR']],
+    ['one doubled backslash mid-path', 'C:\\DIR\\\\SUB\\spec.yaml', ['DIR', 'SUB']],
+    ['doubled backslash after the UNC prefix', '\\\\HOST\\\\SHARE\\spec.yaml', ['HOST', 'SHARE']],
+    ['one doubled forward slash mid-path', '/srv/DIR//SUB/spec.yaml', ['srv', 'DIR', 'SUB']],
+  ])('reduces a path with consecutive separators: %s', (_label, input, leaked) => {
+    const out = sanitizeErrorText(input);
+
+    // Stated as absences AND an equality: a partial match can still produce a
+    // string containing "spec.yaml" while leaking a component, which is exactly
+    // how every previous round in this area passed its own new assertions.
+    for (const token of leaked as string[]) {
+      expect(out).not.toContain(token);
+    }
+    expect(out).toBe('spec.yaml');
+  });
+
+  it('reduces a JSON-stringified UNC path, where every backslash is doubled', () => {
+    // The motivating shape. Bundles are largely serialized error payloads, and
+    // `JSON.stringify('\\HOST\SHARE\spec.yaml')` prints a FOUR-backslash prefix.
+    // With a prefix of exactly two, the match started at the third backslash and
+    // left `\\` stranded in front of the basename.
+    const out = sanitizeErrorText('\\\\\\\\HOST\\\\SHARE\\\\spec.yaml');
+
+    expect(out).not.toContain('HOST');
+    expect(out).not.toContain('SHARE');
+    expect(out).toBe('spec.yaml');
+  });
+
+  it('still does not swallow the prose after a doubled-separator path', () => {
+    // Quantifying the separator must not let the run walk past the filename.
+    expect(sanitizeErrorText('/srv//x//spec.yaml is missing')).toBe('spec.yaml is missing');
+    expect(sanitizeErrorText('open "C:\\\\a\\\\spec.yaml" failed')).toBe('open "spec.yaml" failed');
+  });
+
+  it('still does not run across a newline when separators are doubled', () => {
+    // A blank line between two paths is two newlines, not a separator run.
+    expect(sanitizeErrorText('/srv//a/spec.yaml\n/srv//b/other.yaml')).toBe(
+      'spec.yaml\nother.yaml',
+    );
+  });
 });
 
 describe('bundle contents (§13)', () => {

@@ -4,7 +4,9 @@ This document certifies that the architecture defined in §17 has met all 12 acc
 
 Every criterion links to the test or deliverable that verifies it. CI verifies the matrix on every pull request and every push to `main`: if any row is not `✅ met`, the build fails.
 
-**There is no tag-time enforcement.** No workflow in this repository has a tag trigger, so nothing currently prevents `v1.0.0` from being tagged over a red row. Designing that gate, and the release process around it, is [#269](https://github.com/askturret/mcp/issues/269).
+**Publication of a `1.0.*` release is refused if any row is red.** The same check runs on `release: published`, and the `publish` job depends on it — so a red matrix means nothing reaches npm. A `0.x` release is advisory: the check runs and reports, but does not block, because this page certifies *1.0* readiness and [the compatibility policy](compatibility-policy.md) makes no guarantee below it.
+
+**Tagging is still not blocked, and cannot be.** GitHub Actions runs after a ref exists, so no workflow can refuse a tag — only fail a run afterwards. The gate is at publication, which is the act that ships artifacts. [`docs/releasing.md`](releasing.md) sets out the full process.
 
 ---
 
@@ -29,24 +31,42 @@ Every criterion links to the test or deliverable that verifies it. CI verifies t
 
 ## Verification
 
-**CI readiness gate** (the `test-integrity` job in `.github/workflows/test.yml`):
+Both gates below run the same script — [`check-readiness-matrix.mjs`](../.github/scripts/check-readiness-matrix.mjs),
+itself self-tested by [`check-readiness-matrix.test.mjs`](../.github/scripts/check-readiness-matrix.test.mjs)
+before either gate trusts its verdict. One implementation is what keeps the
+commit-time and release-time answers from drifting apart.
+
+**Commit-time gate** (the `test-integrity` job in `.github/workflows/test.yml`):
 
 1. Runs all 12 test suites referenced above.
 2. On every pull request and every push to `main`, verifies all rows are `✅ met`.
    It counts only numbered matrix rows and requires exact equality, so a
    restructured table fails rather than silently passing.
 
+**Release-time gate** (the `readiness` job in `.github/workflows/supply-chain.yml`):
+
+3. On `release: published`, evaluates the same matrix. The `publish` job
+   declares `needs: [supply-chain, readiness]`, so a `1.0.*` release with any
+   red row publishes nothing to npm. `0.x` releases run it advisorily.
+4. Writes `met`, `total` and `ok` to `$GITHUB_OUTPUT`, and the verdict to the
+   job summary — on both the passing and failing paths, so the machine-readable
+   result exists for every run rather than only the ones that fail.
+
 ### What it does not do
 
 Listed rather than omitted, because a gate assumed to be stricter than it is
 gets trusted for work it never did.
 
-- **No tag-time check.** No workflow here has a tag trigger, so tagging
-  `v1.0.0` over a red row is not blocked by anything. → [#269](https://github.com/askturret/mcp/issues/269)
-- **No structured output.** The gate fails the build; it does not publish the
-  matrix as a machine-readable job output.
-- **No release automation.** There is no documented release process for it to
-  hook into yet. → [#269](https://github.com/askturret/mcp/issues/269)
+- **It does not block tagging, and no workflow can.** Actions runs after the
+  ref exists. [`tag-readiness-advisory.yml`](../.github/workflows/tag-readiness-advisory.yml)
+  reports the matrix on a `v*` tag so it is visible before someone publishes a
+  Release, but it is advisory and refuses nothing.
+- **It does not block a `0.x` release.** Deliberate — this page certifies 1.0
+  readiness. The verdict is still reported.
+- **It has never run on a real release.** No release has ever been cut from
+  this repository, so the release-time path is built and unit-tested but
+  unexercised end to end. [`releasing.md`](releasing.md) describes the
+  rehearsal that would change that.
 
 What it *does* enforce, it enforces without exceptions: no per-criterion
 overrides, and no evidence from unmerged branches.
@@ -68,8 +88,14 @@ This certification covers **architectural readiness**, not feature completeness:
 - [x] All 12 rows are `met`
 - [x] Evidence links are current and passing
 - [x] CI gate merges into `.github/workflows/test.yml`
-- [ ] Release automation refuses `1.0.0` tag on any red row — **not built**; no
-      workflow has a tag trigger. Tracked in [#269](https://github.com/askturret/mcp/issues/269)
+- [ ] Release automation refuses to **publish** a red `1.0.*` release — **built,
+      not yet exercised.** The `readiness` job gates `publish` in
+      `supply-chain.yml` and the evaluator is self-tested, but no release has
+      ever been cut from this repository, so the end-to-end path is unproven.
+      This box is ticked when a real release run demonstrates it, not when the
+      workflow merges. (The original wording — "refuses `1.0.0` tag" — was
+      false twice over: nothing had a tag trigger, and no workflow can refuse a
+      tag. See [`releasing.md`](releasing.md).)
 - [x] Doc merged into `docs/readiness.md`
 
 ---
@@ -77,11 +103,15 @@ This certification covers **architectural readiness**, not feature completeness:
 ## Related
 
 - [Architecture overview](architecture-overview.md) — the design these criteria are assessed against
+- [Releasing](releasing.md) — the release process, and where this matrix gates it
 
 This page is itself the §17 readiness definition. It previously linked to a
 `§17 Architectural Readiness` section of the architecture overview and to a
-`releasing.md` release checklist; **neither has ever existed**, and both links
-are now gone rather than left pointing at nothing.
+`releasing.md` release checklist; **neither existed at the time**. The `§17`
+link is gone, because that section still does not exist. The `releasing.md`
+link is back, because [that document now does](releasing.md) — written in
+[#269](https://github.com/askturret/mcp/issues/269) along with the gate it
+describes.
 
 That sentence was here before this page could support it, which is worth
 recording because it is the same defect the page was fixing. The `releasing.md`
@@ -91,6 +121,9 @@ removed at all; it was still live, pointing at an anchor that does not exist in
 a file that has no numbered sections. A note describing its own cleanup outlived
 the cleanup being finished.
 
-Both gaps are closed above: the outward `§17` link is gone, and the enforcement
-claims now say what CI actually does. The release process and the tag-time gate
-that would make the stronger claim true are [#269](https://github.com/askturret/mcp/issues/269).
+Both gaps were closed in #233: the outward `§17` link is gone, and the
+enforcement claims say what CI actually does. #269 then built the mechanism the
+stronger claim needed — but note what changed and what did not. Publication is
+gated; **the tag still is not**, because no workflow can refuse a tag. The
+claim was corrected to match a mechanism, rather than a mechanism being bent to
+match the claim.

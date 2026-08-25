@@ -24,6 +24,13 @@ jobs:
   supply-chain:
     name: Licence review and SBOM
     runs-on: [self-hosted, Linux, X64, askturret]
+    permissions:
+      # `gh release upload` below needs contents: write. The workflow-level
+      # default is contents: read, which this job inherited — so the upload
+      # would have failed with a 403 on the first real release (#269). It was
+      # never observed because no release has ever been cut. `publish` already
+      # declares its own block for id-token: write; this job was simply missed.
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -87,12 +94,62 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "${{ github.event.release.tag_name }}" sbom.cdx.json --clobber
 
+  # The readiness matrix, evaluated for the release event itself (#269).
+  #
+  # This is the RELEASE-time gate. test.yml runs the same script at commit
+  # time, but it triggers on pull_request and push only — so before this job
+  # existed, publishing a Release fired an automated npm publish with the
+  # matrix never evaluated for that event at all.
+  #
+  # Note what this does NOT do: it does not block the tag. Actions runs after
+  # a ref exists, so no workflow can refuse a tag — it can only fail a run
+  # afterwards. Publication is the act worth gating, and `publish` depends on
+  # this job below. docs/releasing.md states the distinction.
+  readiness:
+    name: Readiness matrix
+    if: github.event_name == 'release'
+    runs-on: [self-hosted, Linux, X64, askturret]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No `npm ci`: the script and its self-test use only Node builtins, so
+      # this job needs no install to be trustworthy.
+      - name: Self-test the readiness matrix gate
+        run: node .github/scripts/check-readiness-matrix.test.mjs
+
+      - name: Evaluate the readiness matrix
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # readiness.md certifies 1.0 readiness, and compatibility-policy.md is
+          # explicit that 0.x "carries no compatibility guarantee at all" — so
+          # the matrix BLOCKS from 1.0.0 onwards and is ADVISORY below it.
+          #
+          # An unparseable tag yields a major that is not "0" and therefore
+          # blocks. That is the safe direction: a release whose version cannot
+          # be read is not one to publish on an unchecked matrix.
+          VERSION="${TAG#v}"
+          MAJOR="${VERSION%%.*}"
+          if [ "$MAJOR" = "0" ]; then
+            echo "Release $TAG is 0.x — readiness matrix is advisory."
+            node .github/scripts/check-readiness-matrix.mjs --advisory
+          else
+            echo "Release $TAG is >= 1.0.0 — readiness matrix is blocking."
+            node .github/scripts/check-readiness-matrix.mjs
+          fi
+
   # Publishes with npm provenance, linking the tarball to this workflow run.
   # Release-triggered only: it must never run on a PR.
   publish:
     name: Publish with provenance
     if: github.event_name == 'release'
-    needs: [supply-chain]
+    # `readiness` is the one-word gate (#269): a 1.0.* release with a red
+    # matrix fails that job, so this one never runs. A 0.x release passes it
+    # advisorily and publishes, saying so in the job summary.
+    needs: [supply-chain, readiness]
     runs-on: [self-hosted, Linux, X64, askturret]
     permissions:
       contents: read

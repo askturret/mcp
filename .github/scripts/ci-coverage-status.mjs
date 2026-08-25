@@ -51,8 +51,8 @@
  * reading and is also correct for unfiltered always-run jobs.
  */
 
-import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { realpathSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 
 /** @typedef {{ result: string, outputs?: Record<string, string> }} NeedEntry */
 
@@ -181,20 +181,43 @@ export function report(outcome) {
 /**
  * Is this module the process entry point (rather than imported by the self-test)?
  *
- * Compared as resolved FILESYSTEM PATHS, not as a hand-built `file://` string.
- * The naive `import.meta.url === \`file://${process.argv[1]}\`` fails whenever the
- * checkout path contains a character `import.meta.url` percent-encodes — a space
- * is enough — and it fails SILENTLY: the module loads, the entry block is
- * skipped, and the process exits 0 having evaluated nothing. For a script whose
- * job is to say whether a diff was tested, exiting 0 without running is the one
- * outcome that must be impossible. It was caught here by a worktree path
- * containing "Application Support".
+ * Byte-identical to the check in `check-audit-append-only.mjs` and
+ * `packages/gateway/src/cli.ts`. Keep it that way: three copies of one idiom at
+ * three hardening levels is precisely how this drifted (#242), and the copy
+ * that lagged was the one guarding whether a diff had been tested at all.
+ *
+ * Both sides are normalised to a symlink-resolved `file://` URL, which closes
+ * two distinct failure modes, each silent in the same way — the module loads,
+ * the entry block is skipped, and the process exits 0 having evaluated nothing:
+ *
+ *   1. **Percent-encoding.** `import.meta.url` encodes characters a raw path
+ *      does not, so `` import.meta.url === `file://${process.argv[1]}` `` breaks
+ *      on any checkout path containing a space. Caught here by a worktree path
+ *      containing "Application Support".
+ *   2. **Symlinks (#242).** `resolve()` makes a path absolute but does NOT
+ *      resolve symlinks, while `fileURLToPath(import.meta.url)` IS
+ *      symlink-resolved — so the two disagree whenever the launch path
+ *      traverses one. `realpathSync` is what makes the comparison agree.
+ *
+ * Mode 2 is not hypothetical. Operum agent worktrees are reached through a
+ * symlinked path (`<agent>/repo` -> the real worktree), and macOS resolves
+ * `/tmp` to `/private/tmp`, so a launch through either silently no-opped this
+ * guard before #242.
+ *
+ * What it still does NOT cover, stated so the next reader is not told it is
+ * safer than it is: a hard link to the script (two real paths, no symlink to
+ * resolve) reads as "not the entry point". That is inherent to comparing
+ * paths, and the fail direction is the safe one — the guard declines to run
+ * rather than running when it should not.
  */
 function isEntryPoint() {
-  if (!process.argv[1]) return false;
+  const entry = process.argv[1];
+  if (entry === undefined) return false;
   try {
-    return fileURLToPath(import.meta.url) === resolve(process.argv[1]);
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
   } catch {
+    // argv[1] does not resolve to a real file. Not the entry point, and not
+    // worth crashing over — the caller is doing something unusual.
     return false;
   }
 }

@@ -616,6 +616,98 @@ check(
   0,
 );
 
+// --- A malformed percent-escape must REPORT, never crash (#244).
+//
+// `decodeURIComponent('%ZZ')` throws `URIError`. Every decode in this guard
+// goes through one try/catch'd helper, whose documented policy is that a
+// malformed escape is not a broken link — it is left to render as written and
+// judged as an ordinary path.
+//
+// The distinction these assert is between the two red outcomes, which an exit
+// code alone cannot tell apart: a clean broken-link REPORT, versus a Node stack
+// trace. Both exit 1, but a reader scanning a red log would take the second as
+// evidence the GUARD is broken rather than the content — a misdiagnosis that
+// costs more than the bug. So they assert on the OUTPUT, not just the code.
+
+const MALFORMED = 'docs/%ZZ.md';
+
+for (const [shape, body] of [
+  ['relative', `[Broken](${MALFORMED})`],
+  ['self-url', `[Broken](https://github.com/askturret/mcp/blob/main/${MALFORMED})`],
+]) {
+  const result = run(scratch({ 'a.md': `# T\n\n${body}\n` }));
+
+  check(`a malformed escape in the ${shape} form still exits 1`, result.code, 1);
+  check(
+    `...and in the ${shape} form reports it as a broken link`,
+    result.out.includes('broken markdown link(s)'),
+    true,
+  );
+  check(
+    `...and in the ${shape} form does NOT crash with a URIError`,
+    result.out.includes('URIError'),
+    false,
+  );
+}
+
+// --- Inline links whose destination or text wraps across lines (#244).
+//
+// Valid CommonMark, and a per-line scan never sees a complete `[...](...)`, so
+// the file reported "0 resolvable links checked" and a clean bill — under-reach
+// wearing the same output as a genuinely link-free file.
+//
+// Not hypothetical: this repository already contained two such links (both
+// wrapping in the link TEXT rather than the destination, which is the more
+// natural way to hit it), and neither was being checked before this change.
+
+check(
+  'FLAGS a multi-line link whose destination is on the next line',
+  run(scratch({ 'a.md': '# T\n\nSee [a](\n  docs/nope.md) here.\n' })).code,
+  1,
+);
+
+check(
+  'accepts a multi-line link whose target exists',
+  // The paired positive: a fix that simply flagged everything wrapped would
+  // satisfy the negative above.
+  run(
+    scratch({ 'a.md': '# T\n\nSee [a](\n  docs/real.md) here.\n', 'docs/real.md': '# Real' }),
+  ).code,
+  0,
+);
+
+check(
+  'FLAGS a link whose TEXT wraps — the shape this repo actually uses',
+  run(scratch({ 'a.md': '# T\n\nSee [the\nguide](docs/nope.md) here.\n' })).code,
+  1,
+);
+
+check(
+  'a wrapped link is reported against the line it STARTS on',
+  // A finding on the wrong line is its own kind of unhelpful, and the offset
+  // has to be mapped back deliberately once matching spans lines.
+  run(scratch({ 'a.md': '# T\n\nSee [a](\n  docs/nope.md) here.\n' })).out.includes('a.md:3'),
+  true,
+);
+
+check(
+  'a wrapped SAME-DOCUMENT anchor is validated too',
+  // The +1 anchor this change added on the real tree came from exactly this
+  // shape, so it is asserted rather than assumed.
+  run(scratch({ 'a.md': '# T\n\n## Real Heading\n\nSee [the\nheading](#nope-dead).\n' })).code,
+  1,
+);
+
+check(
+  'code spans are still stripped PER LINE, not across the join',
+  // The subtle way to break this: stripping code spans on the joined text lets
+  // one backtick on each of two lines swallow everything between them, hiding a
+  // real link. Here the broken link sits between two inline code spans on
+  // separate lines and must still be found.
+  run(scratch({ 'a.md': '# T\n\n`a` and [x](docs/nope.md)\n`b` and more\n' })).code,
+  1,
+);
+
 // --- Same-document anchors, which the file-only version skipped entirely.
 
 check(

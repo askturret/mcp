@@ -23,12 +23,14 @@
  * it is correct and equally invisible when it is not. Nothing else in CI
  * notices a job that quietly stopped running.
  *
- * ## Deliberately narrow (#213)
+ * ## Deliberately narrow (#153), with the general case now covered elsewhere
  *
- * This asserts the two adapters named in #153 and nothing else. #213 tracks the
- * broader gap — only some of the twelve filters include `packages/core/**` —
- * and widening the rest is that issue's call, not this one's. Asserting the
- * general rule here would silently decide it.
+ * This asserts the two adapters named in #153 and nothing else. The broader gap
+ * it deferred to #213 — only some of the filters included `packages/core/**` —
+ * has since been closed, and the general rule is enforced against package.json
+ * by `.github/scripts/check-path-filters.mjs` rather than restated here. That
+ * guard is what catches a NEW package; this file remains the record of the
+ * specific near-miss #153 found.
  *
  * The workflow is read as text rather than through a YAML library: `filters` is
  * a YAML document embedded in a YAML string, and js-yaml is not a declared
@@ -117,13 +119,18 @@ describe('CI path filters for the adapters (#153)', () => {
     expect(filters[filter]).toContain(path);
   });
 
-  it('leaves the #213 filters alone', () => {
-    // #153 is scoped to the two adapters. #213 tracks the broader gap, and
-    // deciding it here would pre-empt an issue nobody has routed yet. Pinned so
-    // a future widening is a deliberate edit to this expectation rather than a
-    // drive-by — and so this test does not read as a claim that the general
-    // case is handled.
-    expect(filters['cli']).not.toContain('packages/core/**');
-    expect(filters['explorer']).not.toContain('packages/core/**');
+  it('the #213 filters have since been widened too', () => {
+    // This expectation was previously pinned INVERTED — asserting cli and
+    // explorer did NOT include core — so that widening them had to be a
+    // deliberate edit here rather than a drive-by. #213 is that deliberate
+    // edit, so the pin is flipped rather than deleted: dropping it would lose
+    // the signal that these two were once uncovered.
+    //
+    // The GENERAL rule — every filter covers every first-party dependency the
+    // package declares — is now enforced from package.json by
+    // .github/scripts/check-path-filters.mjs, which is where a new package gets
+    // caught. This file stays scoped to #153's near-miss.
+    expect(filters['cli']).toContain('packages/core/**');
+    expect(filters['explorer']).toContain('packages/core/**');
   });
 });

@@ -54,6 +54,10 @@ jobs:
               # the day that filter is narrowed.
               - 'packages/core/**'
               - 'packages/transports/**'
+              # Also built from the OpenAPI source (#213) — declared in
+              # package.json, so a change there can break this adapter without
+              # touching a file the other entries match.
+              - 'packages/sources-openapi/**'
             adapters-fastify:
               - 'packages/adapters-fastify/**'
               # Same reasoning as adapters-express: this adapter serves the
@@ -63,6 +67,8 @@ jobs:
               # transports, so both must re-run it.
               - 'packages/core/**'
               - 'packages/transports/**'
+              # Same OpenAPI-source dependency as adapters-express (#213).
+              - 'packages/sources-openapi/**'
             adapter-conformance:
               # The conformance suite asserts PARITY, so it must re-run when any
               # adapter changes, and when the shared machinery underneath them
@@ -73,6 +79,9 @@ jobs:
               - 'packages/adapters-fastify/**'
               - 'packages/core/**'
               - 'packages/transports/**'
+              # The suite drives the adapters through a real OpenAPI source, so
+              # a change there can break parity with no adapter file touched (#213).
+              - 'packages/sources-openapi/**'
             gateway:
               - 'packages/gateway/**'
               # The gateway is assembled ENTIRELY from these packages and adds
@@ -111,16 +120,26 @@ jobs:
               - 'packages/adapters-fastify/**'
               - 'packages/core/**'
               - 'packages/transports/**'
+            # The five filters below each declare a dependency on core and, until
+            # #213, listed only their own directory — so a core change did not
+            # re-run any of them. check-path-filters.mjs now asserts this from
+            # each package.json, which is why the entries are no longer a matter
+            # of remembering.
             sources-openapi:
               - 'packages/sources-openapi/**'
+              - 'packages/core/**'
             transports:
               - 'packages/transports/**'
+              - 'packages/core/**'
             observability:
               - 'packages/observability/**'
+              - 'packages/core/**'
             explorer:
               - 'packages/explorer/**'
+              - 'packages/core/**'
             cli:
               - 'packages/cli/**'
+              - 'packages/core/**'
             workspace:
               - 'package.json'
               - 'tsconfig.json'
@@ -405,6 +424,21 @@ jobs:
 
       - name: CODEOWNERS routes what it claims to
         run: node .github/scripts/check-codeowners.mjs
+
+      # #213: the per-package path filters decide which suites run at all, so a
+      # filter missing a dependency produces a GREEN pull request in which the
+      # packages affected by the change were never scheduled — the #110/#121
+      # family again. Five filters were missing core and three were missing
+      # sources-openapi when this was written; none of it was visible in a diff.
+      #
+      # Self-tested first, like the guards above: this one's YAML parser is
+      # hand-rolled (builtins only, no new dependency), so "the guard still
+      # understands the file it reads" is itself part of what needs asserting.
+      - name: Self-test the path-filter guard
+        run: node .github/scripts/check-path-filters.test.mjs
+
+      - name: CI path filters cover every declared dependency
+        run: node .github/scripts/check-path-filters.mjs
 
       # #128: merge=union protects the MERGE. Nothing protects a hand-edit, a
       # whole-file restore, or a conflict resolved by taking one side — and an

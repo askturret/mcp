@@ -17,7 +17,6 @@
     "build": "tsc",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "test:watch": "npm test -- --watch",
-    "test:types": "npm run build && node dist/__tests__/types.test.js",
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {},

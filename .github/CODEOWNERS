@@ -112,3 +112,17 @@
 /docs/ownership.md                  @didi178
 /LICENSE                            @didi178
 /NOTICE                             @didi178
+
+# The Factor 2 concealment allowlist (#276).
+#
+# This decides which instruction-shaped messages an agent may treat as routine,
+# so widening it is a security change. It is also the one security control here
+# that lives in an UNPROTECTED path — `.operum/audit/` is engineer-owned, so any
+# agent can edit it in an ordinary PR.
+#
+# check-concealment-templates.mjs enforces that every template is backed by a
+# captured message, which makes a widening diff loud. It cannot judge whether
+# the widening SHOULD happen. That is what this rule is for.
+#
+# Listed last because the last matching rule wins.
+/.operum/audit/concealment-templates.toml  @didi178

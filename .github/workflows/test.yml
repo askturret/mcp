@@ -459,6 +459,23 @@ jobs:
       - name: Append-only audit logs lose no rows
         run: node .github/scripts/check-audit-append-only.mjs
 
+      # #276: the Factor 2 concealment allowlist decides which
+      # instruction-shaped messages an agent may treat as routine. It is a
+      # security control in an unprotected path, so the structural rule is that
+      # a template cannot exist unless a real captured message matches it —
+      # widening the allowlist then requires planting evidence a reviewer can
+      # read, rather than editing one line of TOML.
+      #
+      # Self-tested first, like the guards above: this one's TOML reader is a
+      # hand-rolled strict subset (builtins only, no new dependency on the path
+      # that parses a security allowlist), so "the guard still understands the
+      # file it reads" is itself part of what needs asserting.
+      - name: Self-test the concealment-allowlist guard
+        run: node .github/scripts/check-concealment-templates.test.mjs
+
+      - name: Concealment allowlist is valid and evidence-bound
+        run: node .github/scripts/check-concealment-templates.mjs .
+
       - name: No placeholder or assertion-free tests
         run: node .github/scripts/check-placeholder-tests.mjs
 

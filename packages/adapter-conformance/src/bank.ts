@@ -630,7 +630,7 @@ export const CATEGORIES: readonly Category[] = [
     name: 'error-mapping',
     async run({ start }) {
       const codes = [
-        'INVALID_INPUT', 'UNAUTHENTICATED', 'FORBIDDEN', 'CONFIRMATION_REQUIRED',
+        'INVALID_INPUT', 'UNAUTHENTICATED', 'FORBIDDEN', 'NOT_FOUND', 'CONFIRMATION_REQUIRED',
         'RATE_LIMITED', 'QUEUE_FULL', 'TIMEOUT', 'CANCELLED',
         'UPSTREAM_UNAVAILABLE', 'OUTCOME_UNKNOWN', 'OUTPUT_TOO_LARGE', 'INTERNAL_ERROR',
       ] as const;

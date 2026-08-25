@@ -407,9 +407,10 @@ export interface ResultMetadata {
  * Agents must not auto-retry OUTCOME_UNKNOWN.
  */
 export type OperationErrorCode =
-  | 'INVALID_INPUT'           // Input validation failed
+  | 'INVALID_INPUT'           // Input validation failed, here or upstream
   | 'UNAUTHENTICATED'         // No valid principal
   | 'FORBIDDEN'               // Principal not authorized
+  | 'NOT_FOUND'               // Target resource does not exist (see note below)
   | 'CONFIRMATION_REQUIRED'   // High-risk operation needs confirmation
   | 'RATE_LIMITED'            // Rate limit exceeded
   | 'QUEUE_FULL'              // Bulkhead capacity exhausted
@@ -420,6 +421,39 @@ export type OperationErrorCode =
   | 'REQUEST_TOO_LARGE'       // Request exceeds size limit (see note below)
   | 'OUTPUT_TOO_LARGE'        // Response exceeds size limit
   | 'INTERNAL_ERROR';         // Unexpected internal error
+
+/**
+ * A note on `NOT_FOUND` (#201).
+ *
+ * An upstream 404 used to collapse into `INTERNAL_ERROR: "Upstream service
+ * error"`, so an adopter debugging a missing record was told "something broke
+ * on our end" rather than "your input matches nothing". Same class as #125's
+ * oversized-body-becomes-500.
+ *
+ * ## Mapped by HTTP semantics, NEVER by what the spec documented
+ *
+ * The tempting narrower rule — only map a 404 the OpenAPI document declares for
+ * that operation — cannot be built, and should not be. The documented response
+ * codes do not survive compilation: the OpenAPI source reads `operation.responses`
+ * only to pick a success schema, and emits just `{method, path, baseUrl}` into
+ * the executor binding, because hints are dropped at freeze-and-hash. Reaching
+ * them at execution time would mean threading spec-derived data through
+ * `executor.config`.
+ *
+ * That is a source-specific field, which readiness criterion 1 forbids outright.
+ * The consequence is worse than the type error: the same endpoint would return
+ * `NOT_FOUND` when compiled from OpenAPI and `INTERNAL_ERROR` when registered as
+ * an explicit definition. The error contract would depend on where the operation
+ * was DISCOVERED, which is exactly what ADR-002's source-agnostic model exists to
+ * prevent. There is a test pinning that the two agree.
+ *
+ * So: 404 and 410 both mean "not here, and asking again will not change that" —
+ * 410 adds only that it is permanent. One code covers both.
+ *
+ * 409, 405 and the rest of the 4xx range keep `INTERNAL_ERROR`, now carrying
+ * `details.upstreamStatus`. They are distinguishable without growing this union,
+ * and inventing a code for each would assert a caller remedy we do not know.
+ */
 
 /**
  * A note on the two size codes (#125).

@@ -127,6 +127,20 @@ export const DEFAULT_BREAKERS: BreakersConfig = {
  * `CANCELLED` is excluded because the client hung up; that is not the
  * upstream's fault, and counting it would let a burst of client disconnects
  * open a breaker on a perfectly healthy service.
+ *
+ * `NOT_FOUND` (#201) is excluded for the same reason as `FORBIDDEN`, and it is
+ * worth stating rather than leaving to the omission: asking for a resource that
+ * does not exist is ORDINARY TRAFFIC. A crawler walking stale links, or a
+ * client polling for a record not yet created, would otherwise trip the breaker
+ * on a completely healthy upstream — and opening it would neither create the
+ * missing resource nor let anything else through.
+ *
+ * Note this list is an ALLOWLIST, so a new code is excluded by default. That is
+ * the safe direction — a code wrongly absent under-trips a breaker, whereas one
+ * wrongly present takes out a working dependency — but it does mean types.ts's
+ * "explicitly rather than by omission" rule is satisfied here in prose rather
+ * than by an entry. Anything added to `OperationErrorCode` should get a
+ * sentence here saying which way it went, and why.
  */
 export const BREAKER_FAILURE_CODES: readonly OperationErrorCode[] = [
   'UPSTREAM_UNAVAILABLE',

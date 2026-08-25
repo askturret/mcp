@@ -2,7 +2,7 @@
  * Type-level and runtime tests for canonical types
  *
  * Verifies:
- * 1. All 12 OperationErrorCode values are present
+ * 1. All 14 OperationErrorCode values are present
  * 2. OperationDefinition structure is correct
  * 3. OperationResult discriminated union works
  * 4. No raw Error objects leak (type-level check)
@@ -107,17 +107,18 @@ const snapshot: RegistrySnapshot = {
 void snapshot; // Type-level test - intentionally unused
 
 // =============================================================================
-// Runtime tests - all 12 error codes present
+// Runtime tests - all 14 error codes present
 // =============================================================================
 
 /**
- * Test: All 12 OperationErrorCode values are reachable
+ * Test: All 14 OperationErrorCode values are reachable
  */
 export function testAllErrorCodesPresent(): void {
   const allCodes: OperationErrorCode[] = [
     'INVALID_INPUT',
     'UNAUTHENTICATED',
     'FORBIDDEN',
+    'NOT_FOUND',
     'CONFIRMATION_REQUIRED',
     'RATE_LIMITED',
     'QUEUE_FULL',
@@ -125,12 +126,13 @@ export function testAllErrorCodesPresent(): void {
     'CANCELLED',
     'UPSTREAM_UNAVAILABLE',
     'OUTCOME_UNKNOWN',
+    'REQUEST_TOO_LARGE',
     'OUTPUT_TOO_LARGE',
     'INTERNAL_ERROR',
   ];
 
-  if (allCodes.length !== 12) {
-    throw new Error(`Expected 12 error codes, found ${allCodes.length}`);
+  if (allCodes.length !== 14) {
+    throw new Error(`Expected 14 error codes, found ${allCodes.length}`);
   }
 
   // Verify each code can be used in an OperationError
@@ -144,7 +146,7 @@ export function testAllErrorCodesPresent(): void {
     }
   });
 
-  console.log('✓ All 12 OperationErrorCode values present and valid');
+  console.log('✓ All 14 OperationErrorCode values present and valid');
 }
 
 // =============================================================================

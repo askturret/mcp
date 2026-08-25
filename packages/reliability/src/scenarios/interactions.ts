@@ -470,6 +470,8 @@ export const PERMITTED_CODES: readonly string[] = [
   'INVALID_INPUT',
   'UNAUTHENTICATED',
   'FORBIDDEN',
+  // #201 — executor-returnable, so it belongs in the injection set.
+  'NOT_FOUND',
   'CONFIRMATION_REQUIRED',
   'RATE_LIMITED',
   'QUEUE_FULL',

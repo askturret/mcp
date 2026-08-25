@@ -64,6 +64,18 @@ compatibility guarantee is in force** — see the policy document for what chang
 when `1.0.0` ships.
 
 ### Added
+- `NOT_FOUND` on `OperationErrorCode` (#201). An upstream 404 or 410 now returns
+  it instead of collapsing into `INTERNAL_ERROR: "Upstream service error"`, so an
+  adopter chasing a missing record is told their input matches nothing rather
+  than that something broke on our end.
+  **Changed — core public types** (compatibility-policy §1), returned value.
+  Additive for consumers who read `error.code`; **breaking for any exhaustive
+  `switch`** over the union. Pre-1.0, so no guarantee is in force.
+  Mapped by HTTP semantics only, never by what an OpenAPI document happened to
+  declare — the declared responses do not survive compilation, and consulting
+  them would need a source-specific field in the executor binding, which
+  readiness criterion 1 forbids. A test pins that the same operation returns the
+  same code whether discovered from a spec or registered explicitly.
 - `docs/releasing.md` — the release process (#269): order of operations, why
   publishing the Release rather than tagging is the privileged act, what
   signing attests versus what npm `--provenance` attests, an explicit list of
@@ -138,6 +150,19 @@ when `1.0.0` ships.
   #44, #61) had each independently rediscovered a documented name with no
   referent. The reverse direction is deliberately not checked: a doc that omits
   a field is abridged, a doc that names one that does not exist is wrong.
+
+### Changed
+- `INVALID_INPUT` now also covers an upstream 400 or 422 (#201), widening it
+  from "our schema rejected it" to "rejected as malformed, here or upstream".
+  **Changed — core public types** (compatibility-policy §1), returned value.
+  The caller's remedy is identical either way, which is why this reuses an
+  existing code rather than adding one. Retry behaviour is unaffected:
+  `INVALID_INPUT` was already in `NEVER_RETRY_CODES`.
+- Every remaining upstream 4xx, and 500, now carry `details.upstreamStatus`
+  (#201). The code stays `INTERNAL_ERROR` because no single caller remedy
+  follows from a 409 or a 405, but the residual class becomes inspectable
+  without growing the union.
+  Not a covered surface — `details` is optional and this is additive.
 
 ### Fixed
 - The publish step would have published **nothing**, successfully (#269). All

@@ -469,7 +469,11 @@ jobs:
       - name: Self-test the markdown link guard
         run: node .github/scripts/check-markdown-links.test.mjs
 
-      - name: No broken markdown links
+      # #232: also validates ANCHORS now, not just files. A link whose file
+      # exists but whose heading does not is the case a file-existence check
+      # cannot see — the path resolves, so it reads as correct in review, and
+      # the reader still lands at the top of the document.
+      - name: No broken markdown links or anchors
         run: node .github/scripts/check-markdown-links.mjs .
 
       # #119: nothing else in CI reads source at the byte level, so a NUL byte

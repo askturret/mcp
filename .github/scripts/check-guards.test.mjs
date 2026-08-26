@@ -519,7 +519,69 @@ check(
     encoding: 'utf-8',
   });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-  const suiteLine = (name) => new RegExp(String.raw`(?:PASS|FAIL)[^\n]*${name}\.test\.js`).test(out);
+
+  // THE GUARD'S OWN REGEX, READ FROM ITS SOURCE — not a second description of
+  // it (#393).
+  //
+  // This block exists to pin jest AS THE GUARD'S PARSER SEES IT. It used to do
+  // that through a second, independently-drifting description:
+  //
+  //   guard parses   /^\s*(?:PASS|FAIL)\s+(\S+)/gm
+  //   this test used (?:PASS|FAIL)[^\n]*<name>\.test\.js
+  //
+  // The feared drift does not currently exist — both use the same PASS|FAIL
+  // alphabet, checked rather than assumed — but the risk is ASYMMETRIC. The
+  // looser form is safe for the NEGATIVE, which fails loudly if it over-matches,
+  // and unsafe for the CONTROL POSITIVE, which the whole block depends on: it
+  // could be satisfied by a line the guard's parser would reject, reporting
+  // "jest ran" on output the guard cannot read. A copy that agrees with the
+  // original today is the Transcribed Oracle shape, not an exception to it.
+  //
+  // WHY NOT EXPORT `parseExecutedFiles` AND IMPORT IT — the obvious fix, and it
+  // is not available at this scope. `check-test-execution.mjs` has NO exports
+  // and NO entry guard: importing it RUNS THE WHOLE GUARD. Measured, not
+  // assumed — an `await import(...)` of it walks all 16 workspace packages and
+  // prints the report, and would `process.exit(1)` on a repo where the guard
+  // fails, killing this self-test with the wrong error. Adding an entry guard
+  // to a wired script is a larger change than the two findings this addresses.
+  //
+  // Reading the literal out of the source needs neither, and removes the second
+  // description rather than making it currently-equal.
+  // Keyed on the regex's CONTENT, not on the call that uses it. Keying on
+  // `output.matchAll(...)` also works and breaks on a refactor that merely
+  // lifts the literal into a named const — a legitimate edit that would fail
+  // this self-test for no reason. Content-keying survives that, and is
+  // unambiguous here: exactly ONE regex literal in the guard mentions both
+  // PASS and FAIL, asserted below rather than assumed.
+  const guardSource = readFileSync(EXECUTION, 'utf-8');
+  const perSuiteAll = [...guardSource.matchAll(/\/((?:[^/\\\n]|\\.)+)\/([gimsuy]*)/g)].filter(
+    (m) => m[1].includes('PASS') && m[1].includes('FAIL'),
+  );
+
+  // Fail loudly if the extraction stops working, and fail loudly if it becomes
+  // ambiguous. A silent miss makes every assertion below vacuous, which is the
+  // failure this block is about; a silent SECOND match would bind the test to
+  // whichever literal happened to come first.
+  check('jest: exactly one per-suite regex was located in the guard\'s source (#393)', perSuiteAll.length, 1);
+
+  const perSuite = perSuiteAll[0] ?? null;
+
+  const executedFiles = (text) =>
+    perSuite === null
+      ? null
+      : new Set([...text.matchAll(new RegExp(perSuite[1], perSuite[2]))].map((m) => m[1].split('\\').join('/')));
+
+  // Positive control on the extraction itself: the regex we just read must
+  // recognise a real jest per-suite line. Without this, a regex that compiles
+  // and matches nothing would make `suiteLine` uniformly false — and the
+  // negative assertion below would pass for exactly the wrong reason.
+  check(
+    'jest: ...and it recognises a real per-suite line, so the extraction is not vacuous',
+    executedFiles('  PASS src/sample.test.js\n')?.has('src/sample.test.js') === true,
+    true,
+  );
+
+  const suiteLine = (name) => [...(executedFiles(out) ?? [])].some((f) => f.endsWith(`${name}.test.js`));
 
   // THE PAIRED POSITIVE, and it is the load-bearing half of this pair.
   //
@@ -534,10 +596,68 @@ check(
   // The property the docstring rests on.
   check('jest: a fully-skipped file emits NO per-suite line (#346)', suiteLine('skipped'), false);
 
-  // Belt to the braces: jest's own summary must agree that a suite was skipped
-  // rather than never collected. Distinguishes "skipped" from "never found",
-  // which the two assertions above cannot tell apart on their own.
+  // NOT REDUNDANCY. This closes a SECOND vacuity path that neither assertion
+  // above can see, and it was labelled "belt to the braces" until #393 — which
+  // is the label a later tidy-up deletes after checking the other two still
+  // pass. They will still pass. That is the point.
+  //
+  // The path: the skipped file is NEVER COLLECTED rather than skipped — a
+  // `testPathIgnorePatterns` entry, a `testMatch` that misses it, a rename.
+  // Walk all three assertions against it, with jest running perfectly:
+  //
+  //   control "running emitted a line"   TRUE  -> passes (jest really did run)
+  //   "skipped emitted no line"          TRUE  -> passes VACUOUSLY
+  //   summary reports a suite skipped    FALSE -> FAILS, alone
+  //
+  // The paired positive is blind to this BY CONSTRUCTION: it proves jest RAN,
+  // never that jest SAW the second file. So the negative can pass for the wrong
+  // reason while everything looks healthy, and only this assertion notices.
+  //
+  // The block below is that path as a FIXTURE rather than as this paragraph.
   check('jest: ...and reports it as SKIPPED rather than never collected', /Test Suites:[^\n]*\bskipped\b/.test(out), true);
+
+  // ---------------------------------------------------------------------
+  // The never-collected path, run for real (#393).
+  //
+  // Same two files, same jest, one config change: the second file is excluded
+  // from collection. Nothing is skipped, so jest's summary says nothing about
+  // skipped suites — and the two assertions above cannot tell that from the
+  // genuine skip they are written for.
+  //
+  // WHAT THIS DOES AND DOES NOT DO, because the difference matters and the
+  // issue asked for the stronger thing: it demonstrates MECHANICALLY that the
+  // first two assertions are blind here and the third is not, so the "belt to
+  // the braces" reading is contradicted by a fixture rather than by a comment.
+  // It CANNOT make deleting the third assertion go red — no assertion can
+  // observe its own absence, and a source-scan asserting "this file still
+  // contains that line" would be a Decorative Guard checking a string in the
+  // file that contains it. The defence is that the necessity is now
+  // demonstrated next to it, not that removal is blocked.
+  // ---------------------------------------------------------------------
+  writeFileSync(
+    join(dir, 'jest.ignored.config.js'),
+    "module.exports = { testEnvironment: 'node', rootDir: '.', testPathIgnorePatterns: ['/node_modules/', 'skipped\\\\.test\\\\.js'] };\n",
+  );
+  const rIgnored = spawnSync(
+    process.execPath,
+    [jestBin, '--config', join(dir, 'jest.ignored.config.js'), '--ci'],
+    { cwd: dir, encoding: 'utf-8' },
+  );
+  const outIgnored = `${rIgnored.stdout ?? ''}${rIgnored.stderr ?? ''}`;
+  const ignoredHas = (name) =>
+    [...(executedFiles(outIgnored) ?? [])].some((f) => f.endsWith(`${name}.test.js`));
+
+  check('jest/never-collected: the control STILL passes — jest ran perfectly (#393)', ignoredHas('running'), true);
+  check(
+    'jest/never-collected: ...and the no-per-suite-line negative passes VACUOUSLY',
+    ignoredHas('skipped'),
+    false,
+  );
+  check(
+    'jest/never-collected: ...while the SUMMARY assertion fails — the only one that notices (#393)',
+    /Test Suites:[^\n]*\bskipped\b/.test(outIgnored),
+    false,
+  );
 }
 
 check(

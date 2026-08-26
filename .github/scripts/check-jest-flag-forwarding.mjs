@@ -56,6 +56,22 @@
  *   - `-w` present but AFTER the `--`, where npm forwards it to jest instead of
  *     scoping the run (#312) — the full suite runs and the pattern filters
  *     nothing, which is the #207 silent no-op this guard exists to prevent
+ *   - any ONE command in a chain being broken (#331); each is judged separately
+ *
+ * ## What the command split does NOT model, and why that is the right trade
+ *
+ * `splitCommands` tracks quotes and nothing else. It is deliberately not a
+ * shell tokeniser — no expansion, no subshells, no here-docs, no `$(...)` —
+ * because that is the parser dependency this repo's guards refuse, and every
+ * shell construct hand-rolled here is a fresh way to mis-read a command.
+ *
+ * The residual, stated plainly: a separator hidden inside a construct this does
+ * not model can split a command that should not be split. That produces a
+ * segment which may be reported — a FALSE POSITIVE, which fails loud and prints
+ * the command it objected to. The opposite choice, treating anything uncertain
+ * as one command, hides a broken second command and is the FALSE NEGATIVE this
+ * whole issue is about. When the two cannot both be avoided, this guard takes
+ * the loud one — see the unbalanced-quote fallback in `splitCommands`.
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -95,8 +111,73 @@ const FLAG_ALTERNATION = JEST_FLAGS.join('|');
  */
 const CANONICAL = 'npm test -w packages/<pkg> -- --testPathPattern="<pattern>"';
 
-/** An `npm test` / `npm run test` command, up to the end of the line. */
+/** An `npm test` / `npm run test` command, up to the end of its SEGMENT. */
 const NPM_TEST = new RegExp(String.raw`\bnpm\s+(?:run\s+)?test\b[^\n]*`, 'g');
+
+/**
+ * Split one line into shell commands at `&&`, `||`, `;`, `|` and `&` (#331).
+ *
+ * `NPM_TEST` runs to the end of what it is given, so before this a chain was
+ * consumed as ONE command: in
+ *
+ *   npm test -w a -- --testPathPattern=Y && npm test --testPathPattern=Z
+ *
+ * the well-formed first half matched, classified clean, and the SECOND half was
+ * never examined — while that second half is precisely the silent full-suite run
+ * #207 exists to prevent. Latent when fixed (nothing in this repo chains
+ * `npm test`), which is exactly why it was worth closing before someone writes a
+ * two-package step and the guard stays green at them.
+ *
+ * ## Quote tracking, and what this deliberately is NOT
+ *
+ * A separator inside a quoted argument is not a separator:
+ * `--testPathPattern="a|b"` must stay one command. So quote state is tracked —
+ * and that is the ONLY shell concept modelled here. This is not a tokeniser and
+ * must not grow into one: no word splitting, no expansion, no subshells, no
+ * here-docs. Those are the parser dependency this repo's guards refuse.
+ *
+ * ## The failure direction is chosen, not incidental
+ *
+ * If a line ends with a quote still open, the quoting is beyond what this
+ * models. Rather than trusting the state we ended up with — which suppresses
+ * splits and therefore hides a broken second command, the FALSE NEGATIVE
+ * direction that #312 and this issue are both about — the line is re-split with
+ * quote tracking off. The residual failure is then a false POSITIVE that fails
+ * loud and prints the command, which is the cheap direction.
+ */
+function splitCommands(line, { respectQuotes = true } = {}) {
+  const parts = [];
+  let start = 0;
+  let quote = null;
+
+  for (let i = 0; i < line.length; i += 1) {
+    const c = line[i];
+
+    if (quote !== null) {
+      // Backslash escapes only inside double quotes, as in sh.
+      if (c === '\\' && quote === '"') i += 1;
+      else if (c === quote) quote = null;
+      continue;
+    }
+    if (respectQuotes && (c === '"' || c === "'")) {
+      quote = c;
+      continue;
+    }
+    if (c === '\\') {
+      i += 1;
+      continue;
+    }
+    if (c === ';' || c === '&' || c === '|') {
+      parts.push(line.slice(start, i));
+      if (line[i + 1] === c) i += 1; // `&&` and `||` are one separator, not two
+      start = i + 1;
+    }
+  }
+  parts.push(line.slice(start));
+
+  if (respectQuotes && quote !== null) return splitCommands(line, { respectQuotes: false });
+  return parts;
+}
 
 const posix = (p) => p.split(sep).join('/');
 
@@ -134,7 +215,11 @@ function classify(command) {
   // `-w` AFTER the separator is handed to jest as a plain argument, NOT
   // consumed by npm as a workspace selector — so npm runs every workspace and
   // the pattern scopes nothing. Presence alone was the #312 false negative.
-  const wMatch = /(?:^|\s)(?:-w|--workspace)(?:=|\s)/.exec(command);
+  // The spelling is CAPTURED rather than sliced back out: `wMatch.index` points
+  // at the leading whitespace, so `slice(index, index + 2)` yielded " -", which
+  // trimmed to "-" and made both spellings print as a flag that does not exist —
+  // in the very message #312 added to remove ambiguity (#332 QA).
+  const wMatch = /(?:^|\s)(-w|--workspace)(?:=|\s)/.exec(command);
   const scoped = wMatch !== null && (sepAt === -1 || wMatch.index < sepAt);
 
   if (!forwarded) {
@@ -148,7 +233,7 @@ function classify(command) {
   // who already typed it is the ambiguity that produced this defect.
   if (wMatch !== null && !scoped) {
     return {
-      problem: `\`${command.slice(wMatch.index, wMatch.index + 2).trim()}\` sits AFTER \`--\`, so npm forwards it to jest instead of scoping the run; every workspace runs and --${flag[1]} scopes nothing`,
+      problem: `\`${wMatch[1]}\` sits AFTER \`--\`, so npm forwards it to jest instead of scoping the run; every workspace runs and --${flag[1]} scopes nothing`,
       fix: `move \`-w <package>\` BEFORE the \`--\`: ${CANONICAL}`,
     };
   }
@@ -166,15 +251,19 @@ const findings = [];
 function scan(file, text) {
   const lines = text.split('\n');
   lines.forEach((line, i) => {
-    for (const m of line.matchAll(NPM_TEST)) {
-      const verdict = classify(m[0]);
-      if (verdict) {
-        findings.push({
-          file: posix(relative(repoRoot, file)),
-          line: i + 1,
-          command: m[0].trim(),
-          ...verdict,
-        });
+    // Per COMMAND, not per line (#331). Each segment is classified on its own,
+    // so a well-formed first command can no longer vouch for a broken second.
+    for (const segment of splitCommands(line)) {
+      for (const m of segment.matchAll(NPM_TEST)) {
+        const verdict = classify(m[0]);
+        if (verdict) {
+          findings.push({
+            file: posix(relative(repoRoot, file)),
+            line: i + 1,
+            command: m[0].trim(),
+            ...verdict,
+          });
+        }
       }
     }
   });
@@ -198,15 +287,17 @@ for (const file of collect(repoRoot, (e) => e === 'package.json')) {
   }
   for (const [name, command] of Object.entries(pkg.scripts ?? {})) {
     if (typeof command !== 'string') continue;
-    for (const m of command.matchAll(NPM_TEST)) {
-      const verdict = classify(m[0]);
-      if (verdict) {
-        findings.push({
-          file: `${posix(relative(repoRoot, file))} (scripts.${name})`,
-          line: null,
-          command: m[0].trim(),
-          ...verdict,
-        });
+    for (const segment of splitCommands(command)) {
+      for (const m of segment.matchAll(NPM_TEST)) {
+        const verdict = classify(m[0]);
+        if (verdict) {
+          findings.push({
+            file: `${posix(relative(repoRoot, file))} (scripts.${name})`,
+            line: null,
+            command: m[0].trim(),
+            ...verdict,
+          });
+        }
       }
     }
   }

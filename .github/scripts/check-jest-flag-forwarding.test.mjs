@@ -235,6 +235,132 @@ check(
   0,
 );
 
+// --- #331: a line may hold SEVERAL commands, and each is judged on its own.
+// ---
+// --- NPM_TEST runs to the end of what it is handed, so a chain was consumed as
+// --- ONE command: the well-formed first half matched, classified clean, and the
+// --- second half was never examined. That second half is the #207 silent
+// --- full-suite run, so a chain could reintroduce it while the guard stayed
+// --- green. Latent when fixed — nothing in this repo chains `npm test` — which
+// --- is the point: the next person to write a two-package step walks into it.
+
+for (const sep of ['&&', '||', ';', '|']) {
+  check(
+    `FAILS on a chain joined by \`${sep}\` whose SECOND command is broken (#331)`,
+    run(
+      scratch({
+        '.github/workflows/t.yml': workflow(
+          `npm test -w packages/core -- --testPathPattern=Y ${sep} npm test --testPathPattern=Z`,
+        ),
+      }),
+    ).status,
+    1,
+  );
+}
+
+check(
+  'PASSES a chain in which BOTH commands are well-formed (#331)',
+  // The paired positive: a split that flagged correct chains would satisfy every
+  // negative above and still be wrong.
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -w packages/core -- --testPathPattern=Y && npm test -w packages/cli -- --testPathPattern=Z',
+      ),
+    }),
+  ).status,
+  0,
+);
+
+{
+  const chained = run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -w packages/core -- --testPathPattern=Y && npm test --testPathPattern=Z',
+      ),
+    }),
+  );
+  check(
+    'names the SECOND command, not the whole line (#331)',
+    // Quoting the whole chain would leave the reader to work out which half is
+    // broken; the report has to point at the command that is wrong.
+    chained.stderr.includes('npm test --testPathPattern=Z'),
+    true,
+  );
+  check(
+    '...and does not quote the well-formed first command back as the finding',
+    /FAIL[\s\S]*npm test -w packages\/core -- --testPathPattern=Y/.test(chained.stderr),
+    false,
+  );
+}
+
+// --- A separator inside a QUOTED argument is not a separator. This is where a
+// --- naive split breaks, and a jest pattern is exactly where `|` turns up.
+
+check(
+  'does NOT split on a `|` inside a double-quoted pattern (#331)',
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow('npm test -w packages/core -- --testPathPattern="a|b"'),
+    }),
+  ).status,
+  0,
+);
+
+check(
+  'does NOT split on a `;` inside a single-quoted pattern (#331)',
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow("npm test -w packages/core -- --testPathPattern='a;b'"),
+    }),
+  ).status,
+  0,
+);
+
+check(
+  'STILL flags a broken command AFTER a quoted separator (#331)',
+  // The paired positive for the two above: quote handling must not swallow the
+  // rest of the line, or it becomes the false negative it was written to avoid.
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -w packages/core -- --testPathPattern="a|b" && npm test --testPathPattern=Z',
+      ),
+    }),
+  ).status,
+  1,
+);
+
+// --- #332 QA: the message must name the flag that was actually written.
+// ---
+// --- `wMatch.index` points at the LEADING WHITESPACE, so slicing two characters
+// --- back out yielded " -", which trimmed to "-". BOTH spellings printed as a
+// --- flag that does not exist, inside the very message #312 added in order to
+// --- remove an ambiguity. The spelling is captured now rather than re-derived.
+
+{
+  const short = run(
+    scratch({
+      '.github/workflows/t.yml': workflow('npm test -- -w packages/core --testPathPattern=X'),
+    }),
+  );
+  check('names `-w` when `-w` was written (#332 QA)', short.stderr.includes('`-w` sits AFTER'), true);
+  check('...and never prints a bare `-`', short.stderr.includes('`-` sits AFTER'), false);
+
+  const long = run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -- --workspace=packages/core --testPathPattern=X',
+      ),
+    }),
+  );
+  check(
+    'names `--workspace` when `--workspace` was written (#332 QA)',
+    long.stderr.includes('`--workspace` sits AFTER'),
+    true,
+  );
+}
+
 // --- The guard names the offending file and line, since a report that cannot
 // --- be acted on is only a slower way to fail.
 

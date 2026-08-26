@@ -49,6 +49,7 @@
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -283,6 +284,80 @@ function describeRoute(from, to, byName) {
 // ---------------------------------------------------------------------------
 
 if (!existsSync(workflowPath)) cannotCheck(`${workflowPath} does not exist`);
+/* ---------------------------------------------------------------------------
+ * Lane classification (#327)
+ *
+ * `ci:cheap` is not a preference, it is a claim: "this change schedules no
+ * package suite, so it contends on nothing." The gate believes that claim —
+ * `ci:cheap` PRs are EXEMPT from the sequential-PR capacity check — so a
+ * mislabelled one consumes a signing-runner slot the gate thinks is free
+ * (#3908/#5196). A gate that reads as enforced and silently is not.
+ *
+ * The discriminator is the PATH TOUCHED, not the kind of change. "Adds a guard
+ * => ci:full" is the tempting generalisation and it is WRONG: PR #342 added a
+ * whole per-file check and was genuinely cheap, because it EXTENDED a guard
+ * already wired into the workflow and so edited no workflow file.
+ *
+ * Trip-paths are read from the filters block this guard already parses, never
+ * hardcoded. A second copy of that list would drift from the filters it mirrors
+ * — the same defect one level down from the one this file exists to catch.
+ * ------------------------------------------------------------------------- */
+
+const CHEAP_LABEL = 'ci:cheap';
+
+/**
+ * The labels on the PR being built, or null when this is not a PR run.
+ *
+ * Read from `GITHUB_EVENT_PATH`, which Actions sets for EVERY step — so this
+ * needs no workflow change to obtain. That matters here more than usual: a new
+ * workflow step to pass labels in would have tripped the very filter this check
+ * exists to police, making the fix `ci:full` and self-contradicting.
+ */
+function pullRequestLabels() {
+  const eventPath = process.env['GITHUB_EVENT_PATH'];
+  if (eventPath === undefined || eventPath === '' || !existsSync(eventPath)) return null;
+
+  let event;
+  try {
+    event = JSON.parse(readFileSync(eventPath, 'utf-8'));
+  } catch {
+    return null; // not a payload we understand; the other checks still run
+  }
+
+  const pr = event?.pull_request;
+  if (pr === undefined || pr === null) return null; // push build, not a PR
+
+  const labels = Array.isArray(pr.labels) ? pr.labels : [];
+  return labels
+    .map((l) => (typeof l === 'string' ? l : l?.name))
+    .filter((n) => typeof n === 'string');
+}
+
+/** Files this PR changes against its base, or null when that cannot be determined. */
+function changedFiles(baseRef) {
+  const r = spawnSync('git', ['diff', '--name-only', `${baseRef}...HEAD`], {
+    cwd: repoRoot,
+    encoding: 'utf-8',
+  });
+  if (r.status !== 0) return null;
+  return r.stdout.split('\n').map((s) => s.trim()).filter((s) => s !== '');
+}
+
+/**
+ * Does one `dorny/paths-filter` glob match this path?
+ *
+ * Only the two shapes the filters block actually uses: a literal path, and a
+ * `dir/**` prefix. Anything else would be silently mismatched, so it is refused
+ * rather than guessed at.
+ */
+function globMatches(glob, file) {
+  if (glob.endsWith('/**')) return file.startsWith(`${glob.slice(0, -3)}/`);
+  if (glob.includes('*')) {
+    cannotCheck(`filters use an unsupported glob shape '${glob}' — the lane check cannot match it`);
+  }
+  return file === glob;
+}
+
 const workflowText = readFileSync(workflowPath, 'utf-8');
 
 const filters = parseFilters(extractFiltersBlock(workflowText));
@@ -344,6 +419,49 @@ for (const match of workflowText.matchAll(/needs\.changes\.outputs\.([A-Za-z0-9.
     violations.push(
       `workflow references needs.changes.outputs.${match[1]}, which the \`changes\` job does not declare — ` +
         `that expression is always falsy, so the job it gates never runs`,
+    );
+  }
+}
+
+// E: a `ci:cheap` PR that trips any filter is mislabelled (#327).
+//
+// Only runs on a labelled pull_request build; a push build and a local run have
+// no label to check, and inventing one would be worse than saying nothing.
+const labels = pullRequestLabels();
+if (labels !== null && labels.includes(CHEAP_LABEL)) {
+  const baseRef =
+    process.argv[3] ??
+    (process.env['GITHUB_BASE_REF'] ? `origin/${process.env['GITHUB_BASE_REF']}` : 'origin/main');
+
+  const changed = changedFiles(baseRef);
+  if (changed === null) {
+    // The lane claim cannot be checked, and an unverifiable claim is not a
+    // verified one. Same rule the rest of this file follows.
+    cannotCheck(
+      `could not diff against '${baseRef}' to classify the lane — a shallow checkout will do this; ` +
+        'the guards job uses fetch-depth: 0 for exactly this reason',
+    );
+  }
+
+  const tripped = [];
+  for (const [name, globs] of Object.entries(filters)) {
+    const hits = changed.filter((file) => globs.some((glob) => globMatches(glob, file)));
+    if (hits.length > 0) tripped.push({ name, hits });
+  }
+
+  if (tripped.length > 0) {
+    const detail = tripped
+      .map(({ name, hits }) => `filter '${name}' <- ${hits.slice(0, 4).join(', ')}${hits.length > 4 ? `, +${hits.length - 4} more` : ''}`)
+      .join('; ');
+
+    violations.push(
+      `this PR is labelled \`${CHEAP_LABEL}\` but changes paths that trip ${tripped.length} ` +
+        `path filter(s): ${detail}. Every package test job gates on \`<pkg> || workspace\`, so those ` +
+        'suites are scheduled and the change is not cheap. `ci:cheap` PRs are EXEMPT from the ' +
+        'sequential-PR capacity gate, so a mislabelled one consumes a signing-runner slot the gate ' +
+        'believes is free (#3908/#5196). Either relabel to `ci:full`, or avoid the tripping path — ' +
+        'note that EXTENDING an already-wired guard needs no workflow edit and stays genuinely cheap, ' +
+        'which is why #342 was cheap while #326 was not',
     );
   }
 }

@@ -307,16 +307,37 @@ the mistake **quoted the offending phrase in full**, re-arming it a third time.
 Markdown emphasis does not stop GitHub parsing a reference.
 
 **Where that matters, precisely — because the broad version of the rule would
-suppress write-ups like this one.** GitHub parses closing keywords on the
-surfaces it links from: a **PR body**, a **commit message**, an **issue or PR
-comment**. On those, quoting a closing keyword is applying one, and the quoting
-marks buy nothing. It does **not** parse repository **file content** — which is
-why the paragraph above can quote `Also fixes #395` in full, in this `.md` file,
-safely, and why you should not hesitate to write such an incident down.
+suppress write-ups like this one.** GitHub links a pull request to an issue from
+a **PR description** or a **commit message**, and from nowhere else. Its own
+documentation is explicit: *"You can link a pull request to an issue by using a
+supported keyword in the pull request's description or in a commit message."* On
+those two surfaces, quoting a closing keyword is applying one and the quoting
+marks buy nothing.
 
-So the rule is: *on a parsed surface, a quoted keyword is a live one.* Stated
+Three surfaces where it is **not** a closing link, and the second is worth
+knowing rather than merely excluding:
+
+| surface | what a keyword does there |
+|---|---|
+| PR description, commit message | **closes the issue on merge** |
+| issue or PR **comment** | creates a **reference**, not a closing link — a cross-reference and a timeline event, so not wholly inert, but nothing closes |
+| repository **file content** | nothing at all |
+
+That last row is why the paragraph above can quote `Also fixes #395` in full, in
+this `.md` file, safely — and why you should not hesitate to write such an
+incident down.
+
+So the rule is: *on a linking surface, a quoted keyword is a live one.* Stated
 any wider it would cost in the wrong direction, making people reluctant to
-document the very mistakes this section exists to collect.
+document the very mistakes this section exists to collect — and a version that
+included comments would discourage quoting keywords in **code review**, which is
+exactly where these incidents get discussed.
+
+**Settled by reading the vendor's documentation, not by experiment**, and
+deliberately so: the only direct test is posting a live closing keyword and
+watching an issue close, which is a real mutation with side effects on a shared
+repository for the sake of a documentation check. *"What does this third-party
+API do"* is a question for the vendor's docs.
 
 The remedy is the operational test applied to prose, and it costs seconds: name
 the mutation that falsifies *"this wording is not close-intent"* — the wording
@@ -659,12 +680,33 @@ Derive the expected names from `.github/workflows/` rather than from the live
 list. The workflow files are the only in-repo statement of what *should* run,
 and unlike the live list they do not grow while you watch them.
 
-**This narrows the gap; it does not close it,** and the difference matters:
-job names can be conditional, matrix-expanded, or supplied by a reusable
-workflow, so a name derived this way is a *better* source than the live list and
-still **not** an authoritative required set. Treat a check you expected and
-never saw as *"I could not check"* — which is never *"it passed"* — rather than
-as a name you got wrong.
+**This narrows the gap; it does not close it,** and the difference matters. A
+derived name is a *better* source than the live list and still **not** an
+authoritative required set — for four reasons, and the fourth is a different
+kind of item from the first three:
+
+| mechanism | what it does to a derived list |
+|---|---|
+| conditional jobs | the name is **unknowable from the file** |
+| matrix expansion | ″ |
+| reusable workflows | ″ |
+| **`needs:` ordering** | the name is perfectly derivable; the **check is temporally absent** until its dependencies resolve |
+
+The first three stop you *predicting the name*. `needs:` leaves you with a name
+you got right for a check that **does not exist yet** — and it is that timing
+half, not the naming half, that produced the instance below. Filing it
+unlabelled among the others blurs what the list is saying.
+
+Treat a check you expected and never saw as *"I could not check"* — which is
+never *"it passed"* — rather than as a name you got wrong.
+
+**One observation, recorded rather than used to soften the caveat.** Of the
+three naming mechanisms, this repository has **no** matrix jobs and **no**
+reusable workflows, and its conditional jobs still materialise as `skipped`
+rather than absent. So on *this* repo today a workflow-derived list **would**
+have caught the observed instance. That is a claim about one case; the caveat
+above is a claim about what the practice can *guarantee*. Both are true and they
+do not collide — the label under-claims, which is the safe direction.
 
 Before stamping, re-verify the head has not moved. A terminal check on a
 superseded head is a fact about a different commit.
@@ -673,8 +715,18 @@ superseded head is a fact about a different commit.
 
 A guard verifying that a waiter waited for the right set would need to know the
 required set. That is **precisely** what the `403` withholds. A guard built
-anyway would check the waiter against the same incomplete list the waiter used,
-agree with it, and report clean.
+anyway would check the waiter against an incomplete list, agree with it, and
+report clean.
+
+**The reason is that NO IN-REPO LIST IS AUTHORITATIVE — not that the guard would
+happen to reuse the waiter's one.** The distinction decides the obvious
+counter-proposal. Derive the guard's set from `.github/workflows/` and it is a
+*different* list, so "it would use the same list" reads as a fixable
+coincidence and points straight at the fix. It is not one: a workflow-derived
+guard is a **better** incomplete list checked against a **better** incomplete
+list. Same class, higher-quality inputs, same clean report. The section above
+says why no derivation closes the gap — this refusal is that fact applied to a
+guard rather than to a waiter.
 
 That is [Unobserved Guarantee](#6-unobserved-guarantee) — reassurance without
 coverage — so building one here would be an instance of the class rather than a

@@ -232,6 +232,37 @@ The structural claim above does not drift, because it is definitional rather
 than observed: `unverifiable` is recorded precisely when the boundary could not
 be established, which is what `channel: unknown` means.
 
+### `template_id` is a PROSE match, and always has been (#408)
+
+The paragraph above tells you to read `factor_1` and `template_id` as separate
+axes. It is worth knowing what the second axis actually measures, because it is
+narrower than the field's name suggests:
+
+> A row's `template_id` records that the template's **prose** matched the
+> message's head. For a template declaring a `trailing_attachment`, the
+> whole-message rule was applied at classification time, to the **live message**,
+> and is **not recoverable from the capture.**
+
+**This is a description, not a weakening.** Both of this ADR's corpus-facing
+numbers — evidence binding and `corpus_matches` — already compute exactly this,
+in `check-concealment-templates.mjs`, deliberately and with the reasoning in a
+comment: *captures elide their attachment*, so an attachment-bearing template is
+compared on its head. That has run on every PR since the guard shipped. #408
+found a **type error** — the field written in one matcher's vocabulary and read
+in another's — rather than a gap that had been hiding.
+
+The consequence for reading the corpus: an entry's `template_id` is
+self-verifying only where the template declares `trailing_attachment = "none"`.
+Elsewhere it is checkable on prose alone, which cannot separate T1 from T1C —
+they share their prose byte-for-byte — and cannot show whether the live
+attachment satisfied the template. The full residue, its containment by Factor
+1, and why a *derived* witness cannot close it, are recorded where a capturing
+agent will meet them:
+[`.operum/audit/concealment-reminders/README.md`](../../.operum/audit/concealment-reminders/README.md).
+
+**No entry is wrong because of this**, and none is to be corrected. The field
+means what it always meant; only the documentation was silent.
+
 **None of this is a defect, and the caveat must not be read as scheduling a
 fix.** Refusing to certify a boundary that cannot be observed is the classifier
 working: `unverifiable → anomalous` is the load-bearing clause, and loosening it

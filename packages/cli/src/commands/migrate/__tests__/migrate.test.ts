@@ -1069,6 +1069,20 @@ describe('the no-changes report (#284)', () => {
       // docblock. `sourceOnly` carries a source rule and nothing else, so a
       // project with no matching code produces no findings at all, which is the
       // only state in which this branch runs.
+      //
+      // `--check` IS LOAD-BEARING. DO NOT REMOVE IT AS TIDYING.
+      //
+      // It is not here to make the test faster or to express intent — it is the
+      // only thing standing between the injected migration and the write loop.
+      // An injected migration REPLACES the registry selection and reaches
+      // `applyMigrations` -> `result.files` -> `if (!options.check)` in three
+      // hops; QA proved it by writing `HIJACKED` into a fixture file through
+      // this parameter with `--check` omitted.
+      //
+      // The seam's docblock previously claimed the parameter could never cause
+      // a write, which would have made this flag look redundant to anyone
+      // tidying the file. That claim was false and is gone. Removing `--check`
+      // here is removing a guard.
       await migrateCommand(['--dir', dir, '--check'], [sourceOnly]);
     } catch (e) {
       if (!(e instanceof Error) || e.message !== '__exit__') throw e;

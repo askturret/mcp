@@ -103,27 +103,42 @@ function group(findings: readonly Finding[]): { rewrite: Finding[]; manual: Find
  * `--check` never writes. It is the same engine call as a real run; only the
  * write is skipped, so a preview cannot disagree with what it previews.
  *
- * ## The `migrations` seam, and why it is not optional-for-convenience (#284 QA)
+ * ## The `migrations` seam — PROVISIONAL, and slated for removal under #432
  *
- * `migrations` overrides what `selectMigrations` would have chosen. It exists
- * because the no-changes branch below is **unreachable through the shipped
- * registry**, and a test that cannot reach a branch cannot witness it.
+ * `migrations` REPLACES what `selectMigrations` would have chosen. Not narrows,
+ * not intersects — `migrations ?? selectMigrations(...)`, so a caller can pass a
+ * migration absent from the registry entirely.
  *
- * `output` rules push a finding UNCONDITIONALLY — they describe a moved
- * machine-readable surface, which is advice every adopter needs regardless of
- * their code. The only migration in the registry today (`0.x -> 1.0`) carries
- * one, so `manual.length` is never 0, so `rewrite.length === 0 && manual.length
- * === 0` is never true. The branch is correct and reachable in principle — a
- * future migration with only source and config rules gets there — but nothing
- * in the current registry can exercise it.
+ * It exists because the no-changes branch below is unreachable through the
+ * shipped registry: `output` rules push a finding UNCONDITIONALLY, and the only
+ * migration there carries one, so `rewrite.length === 0 && manual.length === 0`
+ * is never true. #432 makes the branch reachable for real, at which point this
+ * parameter has nothing left to justify it and should be DELETED rather than
+ * re-documented. Do not build on it.
  *
- * Without this parameter the only honest options were to leave the branch
- * untested (the defect QA filed) or to test the message text in isolation from
- * the condition that prints it, which witnesses the wording and not the wiring.
+ * ## What contains it — three things, none of them a property of the parameter
  *
- * It can only ever NARROW what runs: the value replaces the selection and is
- * then processed by exactly the same code path, so a wrong value produces a
- * wrong REPORT, never a wrong WRITE. Production callers pass nothing.
+ * An earlier version of this comment claimed the seam "can only ever NARROW
+ * what runs … a wrong value produces a wrong REPORT, never a wrong WRITE."
+ * **Both halves are false**, and QA falsified them by writing `HIJACKED` into an
+ * adopter file through this parameter with no `--check`. The injected value
+ * reaches `applyMigrations` -> `result.files` -> the `if (!options.check)` write
+ * loop below in three hops. Recorded rather than quietly replaced, because a
+ * justification stated wider than it holds is the defect this PR is about, and
+ * this was its third instance.
+ *
+ * The real containments are stronger than the one claimed, and are facts about
+ * the CALLERS rather than about this parameter:
+ *
+ *   1. `cli.ts` calls `migrateCommand(args.slice(1))` — production passes
+ *      nothing, so the default path is the only one an adopter runs.
+ *   2. `src/index.ts` does not export `migrateCommand`, and `package.json`'s
+ *      `exports` map declares only `"."`. Deep subpath imports are blocked, so
+ *      **no consumer of the published package can reach this parameter at all.**
+ *      This one survives refactoring of the other two.
+ *   3. The only in-repo caller passes `--check`, so the write path is never
+ *      exercised through the seam. **That `--check` is load-bearing — see the
+ *      note at the call site.**
  */
 export async function migrateCommand(
   args: readonly string[],

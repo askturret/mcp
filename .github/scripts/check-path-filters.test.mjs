@@ -86,8 +86,30 @@ ${opts.extraJobs ?? ''}`,
   return dir;
 }
 
+/**
+ * Run the guard against a fixture, with the ambient event payload withheld (#365).
+ *
+ * These fixtures are plain temp directories, NOT git repositories. Actions sets
+ * `GITHUB_EVENT_PATH` on every step, and check E engages whenever that payload
+ * carries the `ci:cheap` label — at which point it diffs against the base inside
+ * `repoRoot`, which here is the fixture, and cannot. Every case below then
+ * returned CANNOT CHECK (2) instead of the verdict it was written to assert.
+ *
+ * The tell was that this looked environmental and was not. The payload is a
+ * SNAPSHOT taken when the event fired, and a PR is created before it is
+ * labelled — so the `opened` build carries no `ci:cheap` and passes, while every
+ * later `synchronize` carries it and fails. Same commit, same runner, opposite
+ * result, which is what made it read as runner drift rather than a leak.
+ *
+ * Only this one variable is withheld, not the whole environment: PATH is still
+ * needed to spawn node, and check E is gated solely on the label, so dropping
+ * the payload skips the block outright and `GITHUB_BASE_REF` is never consulted.
+ * `laneFixture` passes a payload EXPLICITLY when it wants that path, so the
+ * cases that do need it are unaffected.
+ */
 function run(dir) {
-  const r = spawnSync('node', [GUARD, dir], { encoding: 'utf-8' });
+  const { GITHUB_EVENT_PATH: _ambient, ...env } = process.env;
+  const r = spawnSync('node', [GUARD, dir], { encoding: 'utf-8', env });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -590,6 +612,40 @@ check(
   run(join(tmpdir(), 'path-filters-does-not-exist')).code,
   2,
 );
+
+// ---------------------------------------------------------------------------
+// Hermeticity (#365)
+//
+// The suite must reach the same verdict whether or not the runner happens to
+// have a `ci:cheap` pull_request payload in the environment. Asserted here
+// rather than left to `run()`'s implementation, because the failure it guards
+// is invisible locally: a developer's shell has no GITHUB_EVENT_PATH, so the
+// leak is silent everywhere except the one place it breaks CI.
+//
+// This case fails on exactly the ambient payload that broke it — a `ci:cheap`
+// label — so reverting the withhold in `run()` turns it RED rather than merely
+// changing a count somewhere.
+// ---------------------------------------------------------------------------
+
+{
+  const evDir = mkdtempSync(join(tmpdir(), 'path-filters-ambient-'));
+  const evPath = join(evDir, 'event.json');
+  writeFileSync(evPath, JSON.stringify({ pull_request: { labels: [{ name: 'ci:cheap' }] } }));
+
+  const previous = process.env['GITHUB_EVENT_PATH'];
+  process.env['GITHUB_EVENT_PATH'] = evPath;
+  try {
+    check(
+      'an ambient ci:cheap event payload does not reach a fixture run (#365)',
+      withFixture({ core: [] }, `            core:\n              - 'packages/core/**'`).code,
+      0,
+    );
+  } finally {
+    if (previous === undefined) delete process.env['GITHUB_EVENT_PATH'];
+    else process.env['GITHUB_EVENT_PATH'] = previous;
+    rmSync(evDir, { recursive: true, force: true });
+  }
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

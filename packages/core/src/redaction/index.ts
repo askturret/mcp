@@ -18,6 +18,10 @@ export {
   AUDIT_STRUCTURAL_FIELDS,
   BUILTIN_RULES,
   SENSITIVE_KEY_NAMES,
+  // Exported so the truncation-length guard asserts against the PRODUCTION
+  // regex rather than a copy (#383 item 4). A re-declared copy would be a
+  // Transcribed Oracle: it would agree with itself after the real one drifted.
+  SNAPSHOT_HASH,
   bearerRule,
   creditCardRule,
   highEntropyRule,

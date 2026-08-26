@@ -123,6 +123,37 @@ describe('audit keeps its structural fields (§9.4 surface-specific)', () => {
     expect(result.eventId).toBe(event.eventId);
   });
 
+  it('does NOT exempt a structural field name NESTED inside an audit payload (#383 item 3)', () => {
+    // THE AUDIT ANCHORING ASSERTION.
+    //
+    // Before the per-surface refactor, `path.length === 1` made root-anchoring a
+    // COMPILE-TIME invariant. The refactor turned it into `anchored: true` — a
+    // data flag — and nothing observed it. Flipping the audit entries to
+    // `anchored: false` left the entire suite green while materially widening
+    // what stays unredacted: protection disappearing with nothing going red.
+    //
+    // The fixture sits at a NON-SENSITIVE key name deliberately. `keyNameRule`
+    // does not consult the structural exemption at all, so a nested
+    // `payload.inner.token` would be masked by key name regardless and this
+    // would pass for the wrong reason. `eventId` is not in SENSITIVE_KEY_NAMES,
+    // so the only thing that can mask it here is `creditCardRule` declining to
+    // stand down — which is the property under test.
+    const CARD = '4242424242424242';
+
+    const result = createRedactionPipeline().redact(
+      { eventId: CARD, payload: { inner: { eventId: CARD } } },
+      { surface: 'audit', path: [] },
+    ) as { eventId: string; payload: { inner: { eventId: string } } };
+
+    // Nested: NOT exempt, so the card-shaped value is masked.
+    expect(result.payload.inner.eventId).toBe('[REDACTED]');
+
+    // The paired positive, at the root where the exemption genuinely applies.
+    // Without it, an implementation that exempted nothing at all would satisfy
+    // the assertion above.
+    expect(result.eventId).toBe(CARD);
+  });
+
   it('still redacts a sensitive key that appears on an audit event', () => {
     // The exemption is for NAMED structural fields only — it is not a blanket
     // pass for the audit surface.

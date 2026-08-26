@@ -68,3 +68,5 @@
 {"ts":"2026-08-26T05:48:57Z","branch":"chore/preserve-path-restore-audit-row","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-26T05:20:14Z","branch":"fix/issue-337-supersede-prefers-unsplit","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-26T05:31:31Z","branch":"fix/issue-337-supersede-prefers-unsplit","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-26T07:56:06Z","branch":"feat/issue-387-t1c-truncated-listing-template","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-26T08:18:18Z","branch":"fix/issue-383-anchor-explorer-structural-paths","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

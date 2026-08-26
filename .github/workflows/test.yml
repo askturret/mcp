@@ -451,6 +451,24 @@ jobs:
       - name: CI path filters cover every declared dependency
         run: node .github/scripts/check-path-filters.mjs
 
+      # #280: the Actions budget is exhausted, so a job on a GitHub-hosted
+      # runner is refused at "Set up job" with an EMPTY LOG — no error, nothing
+      # naming the cause. That shape cost a full investigation cycle on #278
+      # before the answer turned out to be billing rather than code. PR #279
+      # moved all jobs to the self-hosted pool; nothing stopped the next edit
+      # putting `ubuntu-latest` back, and a NEW workflow file is the likelier
+      # route than an edit to an existing one.
+      #
+      # Self-tested first, like the path-filter guard above, and for the same
+      # reason: the YAML parser is hand-rolled, and the form it must not miss is
+      # the bare string `runs-on: ubuntu-latest` — simultaneously the likeliest
+      # reintroduction and the one a list-only parser passes in silence.
+      - name: Self-test the runner guard
+        run: node .github/scripts/check-runners.test.mjs
+
+      - name: Every workflow job runs on the self-hosted pool
+        run: node .github/scripts/check-runners.mjs
+
       # #128: merge=union protects the MERGE. Nothing protects a hand-edit, a
       # whole-file restore, or a conflict resolved by taking one side — and an
       # append-only log has no append-only assertion, so a dropped row is

@@ -140,13 +140,16 @@ type OccurrenceKind =
   | 'property-access'
   | 'object-key'
   | 'shorthand'
-  | 'binding';
+  | 'binding'
+  | 're-export';
 
 const REFUSAL_REASON: Readonly<Record<string, string>> = {
   'property-access': 'property access — the object may be the adopter\'s own',
   'object-key': 'object key — renaming it changes the emitted data shape',
   shorthand: 'object shorthand — renaming it changes the emitted key',
   binding: 'local binding — the tool does not edit adopter logic',
+  're-export':
+    're-export — rewriting it would change what YOUR module exports, which is your public surface and not ours to edit (#284)',
 };
 
 /** Innermost unclosed bracket at each index, so `{` can be told from `(`. */
@@ -244,6 +247,69 @@ function importRanges(contents: string, masked: string): ReadonlyArray<readonly 
   const gap = String.raw`(?:\s+|(?=[{*]))`;
   const re = new RegExp(
     String.raw`\bimport\b${gap}(?:type${gap})?(?:${IMPORT_CLAUSE})\s*\bfrom\b\s*['"][^'"]+['"]`,
+    'g',
+  );
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(contents)) !== null) {
+    if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
+    ranges.push([m.index, m.index + m[0].length]);
+  }
+
+  return ranges;
+}
+
+/**
+ * Byte ranges of `export … from '…'` re-export statements (#284).
+ *
+ * ## Why these are found but NEVER rewritten
+ *
+ * A re-export was invisible to the rewriter, because the entry gate and the
+ * range scan both require the word `import`. The consequence was the failure
+ * signature #230 was filed for, one shape over: `findings: []` on a file with
+ * unhandled work — a clean report that is not evidence of a clean migration.
+ *
+ * They are now FOUND and REPORTED, and deliberately not rewritten. The issue
+ * offered rewriting as the first option, and it is unsafe for a reason that
+ * only appears once you write out what the rewrite would produce:
+ *
+ *   export { oldName } from 'mod'        ->  export { newName } from 'mod'
+ *
+ * That does not merely update a reference. It changes the name YOUR module
+ * exports, so every consumer of the adopter's package breaks — the tool would
+ * have made a breaking change to a third party's public API while reporting a
+ * successful migration. The alias form is worse, because the public name is
+ * explicit and would still be silently moved:
+ *
+ *   export { other as oldName } from 'mod'  ->  export { other as newName } from 'mod'
+ *
+ * Preserving the surface (`export { newName as oldName }`) is possible, but
+ * whether the adopter WANTS to propagate the rename to their consumers is a
+ * judgement about their release, not a mechanical substitution. That is the
+ * same principle the registry already applies to `output` rules: the consumer
+ * is the adopter's code, and adopter logic is not ours to edit.
+ *
+ * So this is the issue's second option, chosen on that ground rather than as
+ * the cheaper one.
+ *
+ * ## `export *` is genuinely fine, and that is stated so the enumeration ends
+ *
+ * `export * from 'mod'` and `export * as ns from 'mod'` name no symbol, so a
+ * rename upstream flows through them untouched — the star re-exports whatever
+ * the module exports today. There is nothing to rewrite and nothing to report,
+ * and they are silent CORRECTLY rather than by omission. Verified rather than
+ * assumed: neither produces an occurrence of the renamed identifier at all.
+ */
+function reExportRanges(contents: string, masked: string): ReadonlyArray<readonly [number, number]> {
+  const ranges: [number, number][] = [];
+  const gap = String.raw`(?:\s+|(?=[{*]))`;
+  // The same clause grammar as an import, minus the default-binding forms,
+  // which `export … from` has no equivalent of. `type` may sit before the
+  // clause (`export type { x } from`) or inside it (`export { type x } from`);
+  // the inner form needs no special case, since it lives inside `{…}`.
+  const clause = [String.raw`\{[^{}]*\}`, String.raw`\*\s*as\s+${IDENT}`, String.raw`\*`].join('|');
+  const re = new RegExp(
+    String.raw`\bexport\b${gap}(?:type${gap})?(?:${clause})\s*\bfrom\b\s*['"][^'"]+['"]`,
     'g',
   );
   let m: RegExpExecArray | null;
@@ -357,11 +423,19 @@ function rewriteSource(
   rule: SourceRule,
   file: string,
 ): { contents: string; findings: readonly Finding[]; changed: boolean } {
+  const escapedModule = rule.module.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const importsIt = new RegExp(
-    `import[^;]*\\b${rule.from}\\b[^;]*from\\s*['"]${rule.module.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`,
+    `import[^;]*\\b${rule.from}\\b[^;]*from\\s*['"]${escapedModule}`,
+  ).test(contents);
+  // A file may name the symbol ONLY in a re-export (#284). The gate required
+  // the word `import`, so such a file returned `findings: []` — a clean report
+  // on unhandled work, which is the failure signature this whole family of
+  // fixes exists to remove.
+  const reExportsIt = new RegExp(
+    `export[^;]*\\b${rule.from}\\b[^;]*from\\s*['"]${escapedModule}`,
   ).test(contents);
 
-  if (!importsIt) return { contents, findings: [], changed: false };
+  if (!importsIt && !reExportsIt) return { contents, findings: [], changed: false };
 
   if (rule.to === undefined) {
     return {
@@ -395,12 +469,22 @@ function rewriteSource(
 
   const brackets = bracketContexts(masked);
   const imports = importRanges(contents, masked);
+  const reExports = reExportRanges(contents, masked);
   const lineOf = (index: number): number => contents.slice(0, index).split('\n').length;
 
   const rewritable: number[] = [];
   const refused: { line: number; kind: OccurrenceKind }[] = [];
 
   for (const index of indices) {
+    // A re-export is checked FIRST and never rewritten. Its specifiers look
+    // exactly like import specifiers to `classifyOccurrence` — same braces,
+    // same `as` — so without this the range scan would rewrite the adopter's
+    // public export names unconditionally, which is the one outcome
+    // `reExportRanges` exists to prevent.
+    if (reExports.some(([start, end]) => index >= start && index < end)) {
+      refused.push({ line: lineOf(index), kind: 're-export' });
+      continue;
+    }
     const kind = classifyOccurrence(masked, index, rule.from.length, brackets, imports);
     if (kind === 'import-specifier' || kind === 'reference') rewritable.push(index);
     else refused.push({ line: lineOf(index), kind });

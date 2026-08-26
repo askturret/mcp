@@ -210,6 +210,98 @@ describe('source rules', () => {
     ],
   };
 
+  // -------------------------------------------------------------------------
+  // Re-exports (#284).
+  //
+  // The defect was the failure signature #230 exists for, one shape over: a
+  // file whose only affected code is `export { x } from '…'` produced output
+  // byte-identical and `findings: []`. Not a rewrite, not a refusal — nothing.
+  // A clean report that is not evidence of a clean migration.
+  //
+  // OBSERVED BEFORE THE FIX, against the built engine, for every shape:
+  //
+  //   re-export, named        rewritten=false  findings=0   <- the filed bug
+  //   re-export, aliased      rewritten=false  findings=0
+  //   re-export, type-only    rewritten=false  findings=0
+  //   re-export, inline type  rewritten=false  findings=0
+  //   export * / * as ns      rewritten=false  findings=0   <- correct, see below
+  //
+  // They are now REPORTED and deliberately NOT rewritten. Writing out what the
+  // rewrite would produce is what settles it:
+  //
+  //   export { oldName } from 'mod'  ->  export { newName } from 'mod'
+  //
+  // which changes the name the ADOPTER'S module exports, breaking their
+  // consumers — the tool making a breaking change to a third party's public
+  // API while reporting a successful migration. Same principle the registry
+  // already applies to `output` rules: adopter logic is not ours to edit.
+  // -------------------------------------------------------------------------
+
+  it('reports a re-export naming a renamed symbol rather than passing it silently (#284)', () => {
+    const contents = `export { oldName } from '@askturret/mcp-core';\n`;
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    // Not rewritten — the adopter's public surface is not ours to change.
+    expect(result.files[0]?.contents).toBe(contents);
+
+    // ...and not SILENT, which is the whole defect. `findings: []` here was a
+    // clean report on unhandled work.
+    const manual = result.findings.filter((f) => f.action === 'manual');
+    expect(manual).toHaveLength(1);
+    expect(manual[0]?.file).toBe('src/api.ts');
+    // The reason must name the re-export, not a generic refusal: an adopter
+    // deciding whether to act needs to know it is their export surface.
+    expect(manual[0]?.detail).toMatch(/re-export/);
+    expect(manual[0]?.detail).toMatch(/line\(s\) 1/);
+  });
+
+  it.each([
+    ['aliased', `export { oldName as legacy } from '@askturret/mcp-core';\n`],
+    ['type-only', `export type { oldName } from '@askturret/mcp-core';\n`],
+    ['inline type', `export { type oldName } from '@askturret/mcp-core';\n`],
+  ])('...and the %s form is reported too, not just the plain one (#284)', (_label, contents) => {
+    // An enumeration that stops where someone happened to look is how the
+    // original gap survived. All three were silent before the fix.
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    expect(result.files[0]?.contents).toBe(contents);
+    expect(result.findings.filter((f) => f.action === 'manual')).toHaveLength(1);
+  });
+
+  it.each([
+    ['export *', `export * from '@askturret/mcp-core';\n`],
+    ['export * as ns', `export * as core from '@askturret/mcp-core';\n`],
+  ])('...while %s is silent CORRECTLY, naming no symbol (#284)', (_label, contents) => {
+    // Stated as an assertion rather than left out of the enumeration. A star
+    // re-export names nothing, so a rename upstream flows through it untouched
+    // — there is nothing to rewrite and nothing to report. Without this case
+    // the reader cannot tell "checked and inert" from "not considered".
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    expect(result.files[0]?.contents).toBe(contents);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it('still rewrites an import in a file that ALSO re-exports (#284)', () => {
+    // The paired positive. Without it, every assertion above is satisfied by a
+    // rewriter that refuses everything in any file containing the word
+    // `export` — which would be a regression dressed as a fix.
+    const contents =
+      `import { oldName } from '@askturret/mcp-core';\n` +
+      `export { oldName } from '@askturret/mcp-core';\n` +
+      `oldName();\n`;
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    const out = result.files[0]?.contents ?? '';
+    expect(out).toContain(`import { newName } from '@askturret/mcp-core';`);
+    expect(out).toContain(`newName();`);
+    // ...and the re-export line is untouched, on its own terms.
+    expect(out).toContain(`export { oldName } from '@askturret/mcp-core';`);
+
+    expect(result.findings.filter((f) => f.action === 'rewrite')).toHaveLength(1);
+    expect(result.findings.filter((f) => f.action === 'manual')).toHaveLength(1);
+  });
+
   it('rewrites an imported identifier at its call sites', () => {
     const result = run(
       [

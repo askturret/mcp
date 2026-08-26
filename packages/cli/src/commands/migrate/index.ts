@@ -191,7 +191,32 @@ export async function migrateCommand(args: readonly string[]): Promise<void> {
     }
     console.log('');
     if (rewrite.length === 0 && manual.length === 0) {
-      console.log('Nothing to change — this project is already on the target version.');
+      // THE REPORT HALF OF #284, and it is a separate defect from the scan.
+      //
+      // This used to read "Nothing to change — this project is already on the
+      // target version." That states a CONCLUSION drawn from an absence: it
+      // turns "I found nothing" into "there is nothing", which is exactly "I
+      // could not check" wearing "it passed" — with an adopter misled rather
+      // than an agent. A project whose only affected code was a re-export got
+      // that sentence while carrying unhandled work.
+      //
+      // Fixing the scan removes today's instance. It does not remove the
+      // shape: the NEXT construct the scanner does not understand would be
+      // silent in the same way, and the message would still have claimed the
+      // project was migrated.
+      //
+      // What it says now is the true statement — nothing MATCHED — plus the
+      // scope, so a reader with an unusual construct knows whether to look.
+      console.log('No changes needed: nothing matched these rules.');
+      console.log(
+        '  This is not a certificate that the project is migrated. It means nothing the tool',
+      );
+      console.log(
+        '  recognises matched: imports and re-exports naming a renamed symbol, and config keys',
+      );
+      console.log(
+        '  it has rules for. Code reaching the same API another way is not examined.',
+      );
     }
     for (const finding of rewrite) {
       console.log(`${options.check ? 'WOULD REWRITE' : 'REWROTE'}  ${finding.file}: ${finding.detail}`);

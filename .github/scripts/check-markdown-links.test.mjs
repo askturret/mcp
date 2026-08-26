@@ -708,6 +708,75 @@ check(
   1,
 );
 
+// --- #319: the join is PER PARAGRAPH, not whole-file.
+//
+// #244's whole-file join made two lines adjacent that a reader never sees as
+// adjacent, so the guard reported links that do not exist. Both cases below
+// were reproduced against the real guard before being fixed.
+//
+// The three negatives here are the fix; the positives immediately after are
+// what stops the fix from becoming a false NEGATIVE, which would be a worse
+// guard than the noisy one we started with.
+
+check(
+  'does NOT flag halves separated by a FENCE (#319 finding 1)',
+  // nonFencedLines correctly removes the fenced content — and removing it is
+  // exactly what made `[a](` and `docs/nope.md)` touch. A fence ends a
+  // paragraph in every dialect, so these are not two halves of one link.
+  run(
+    scratch({ 'a.md': '# T\n\nSee [a](\n```js\nconst x = 1;\n```\ndocs/nope.md)\n' }),
+  ).code,
+  0,
+);
+
+check(
+  'does NOT flag halves separated by a BLANK LINE (#319 finding 2)',
+  // No inline-link production admits a blank line in the destination.
+  run(scratch({ 'a.md': '# T\n\nSee [a](\n\ndocs/nope.md)\n' })).code,
+  0,
+);
+
+check(
+  'does NOT flag halves sitting in DIFFERENT paragraphs with prose between',
+  run(scratch({ 'a.md': '# T\n\nSee [a](\n\nsome prose\n\ndocs/nope.md)\n' })).code,
+  0,
+);
+
+// --- The other direction, which matters more: a genuinely wrapped link must
+// --- stay caught. Paragraph-scoped joining is only safe if it still joins.
+
+check(
+  'STILL flags a genuinely wrapped link (no fence, no blank line) (#319)',
+  run(scratch({ 'a.md': '# T\n\nSee [a](\n  docs/nope.md) here.\n' })).code,
+  1,
+);
+
+check(
+  'STILL flags a wrapped link in a LATER paragraph',
+  run(scratch({ 'a.md': '# T\n\nFirst para.\n\nSee [a](\n  docs/nope.md).\n' })).code,
+  1,
+);
+
+check(
+  'STILL flags a wrapped link in the paragraph AFTER a fenced block',
+  // The segment break must start a new paragraph, not swallow the rest of the
+  // file: a fence earlier in the document cannot stop later links being seen.
+  run(
+    scratch({ 'a.md': '# T\n\n```\ncode\n```\n\nSee [a](\n  docs/nope.md).\n' }),
+  ).code,
+  1,
+);
+
+check(
+  'a wrapped link after a fence is reported against its OWN line',
+  // The offset->line map is now per segment, so an off-by-one here would be
+  // invisible in the exit code and only surface as a misleading report.
+  run(
+    scratch({ 'a.md': '# T\n\n```\ncode\n```\n\nSee [a](\n  docs/nope.md).\n' }),
+  ).out.includes('a.md:7'),
+  true,
+);
+
 // --- Same-document anchors, which the file-only version skipped entirely.
 
 check(

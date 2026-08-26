@@ -222,7 +222,7 @@ hunting a confusing result will match on what they are seeing, not on a name.
 | 2 | mutation fails **nothing** | a coverage gap | the edit **never reached the code**; it landed elsewhere | assert the mutation landed **at the intended site**, not merely that the file changed |
 | 3 | **more** assertions fail than expected | poor isolation between changes | the mutation changed **two things** — usually harness residue | read **which** assertions failed, by name |
 | 4 | correct exit code, case looks pinned | the branch is asserted | the fixture left via an **already-asserted** path | assert the **message**, not just the status |
-| 5 | assertion passes under the mutation | the property holds | the assertion is satisfied by the named thing being **absent** | run every predicate against an **empty** source |
+| 5 | assertion passes under the mutation | the property holds | the assertion is satisfied by the named thing being **absent** | construct the case that *should* make it fail and confirm it goes red |
 
 ### Variants 1 and 2 are duals, and that pairing is the point
 
@@ -247,11 +247,11 @@ Cited so the claims here can be checked rather than taken on trust.
 |---|---|
 | 1 | An instrumentation shim inserted **before the shebang** broke the file; three cannot-check paths reported as asserted were a syntax artefact (#354 review) |
 | 2 | `String.replace` hit a regex quoted in a doc comment above its own declaration; two mutations edited prose and reported a clean pass (#266) |
-| 3 | Fault-injection scaffolding left in place during a second mutation reddened an unrelated assertion, so two failures looked like isolation and were not (#371) |
-| 4 | A fixture written for one refusal exited via a different, already-asserted refusal — correct exit code, nothing new tested (#354) |
+| 3 | A mutation conflated two changes and produced 18 collateral failures, which read as breadth rather than as a broken mutation (#348); and fault-injection scaffolding left in place during a second mutation reddened an unrelated assertion, so two failures looked like isolation and were not (#371, PR #373 review) |
+| 4 | A broken link masked a broken anchor: the exit code was `1` in **both** the masked and unmasked cases, so a status-only assertion could not see the bug at all (#337 item 2, PR #355) |
 | 5 | `indexOf(a) < indexOf(b)` ordering assertions passed **vacuously** when the guard was deleted, because `indexOf` returns `-1` and `-1` precedes any real position (#371); and a 17-character hex asserted to *survive* redaction, which passed under a widening mutation because no rule fires on it at all (#266) |
 
-### Two habits that pay for themselves
+### Three habits that pay for themselves
 
 **Read which assertions failed, by name — not how many.** This is the
 highest-value habit of the set: it is the only instrument that catches both
@@ -264,6 +264,22 @@ empty input. Pairing it with an assertion that the input was non-empty is what
 separates "checked and found nothing" from "did not check". This is the same
 question the Decorative Guard antipattern asks of a scan window, one level up:
 there it is the guard's input, here it is the mutation's.
+
+**Construct the failing case, rather than reaching for one recipe.** Variant 5's
+instrument is deliberately general, because the shapes it has to reach have
+nothing in common at the level of syntax:
+
+| instance | what makes it vacuous | how you would reach it |
+|---|---|---|
+| `indexOf(a) < indexOf(b)` on a deleted guard | `-1` precedes any real position | run the predicate against an **empty** source |
+| a 17-char hex asserted to *survive* redaction | no rule fires on it either way | supply a value a rule **would** redact |
+| a 16-char uppercase hex, either direction | nothing can redact it at that length | **no case exists** — record a non-assertion |
+
+Emptying the source is one specialisation, and it only fits scanners: a
+redaction assertion has no source to empty. The general question is *"what
+input would make this assertion fail?"* — and if the honest answer is **none**,
+that is variant 5 confirmed rather than avoided, and the next section is what to
+do about it.
 
 ### Sometimes the honest answer is a non-assertion
 
@@ -303,6 +319,12 @@ the class. That is variant 5's own failure mode applied to the guard meant to
 catch it — a check that passes because the thing it looks for is absent from its
 window. If it is wanted, it should be filed as its own issue and scoped
 explicitly as "this one shape", not as coverage of the class.
+
+The three instances in the table above are the evidence, and they are worth
+counting: only the FIRST is an `indexOf` comparison. The second is an assertion
+on a redacted value, the third has no failing case at all. A syntactic guard
+would have caught one of three and reported clean on the other two — which is
+worse than no guard, because it would also supply the reassurance.
 
 **These are traps in verifying a fix, not defects in the fixes.** Every instance
 above was caught **before it was acted on** — several by the person who had just

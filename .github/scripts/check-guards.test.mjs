@@ -1485,13 +1485,36 @@ check(
 // YAML parser, which this repo's guards deliberately refuse.
 // ---------------------------------------------------------------------------
 
-/** Guards that deliberately have no workflow step. Empty today — an entry is a line in a diff. */
+/**
+ * Guards that deliberately have no workflow step. An entry is a line in a diff.
+ *
+ * ## THE EXIT FOR BOTH ENTRIES BELOW IS #434, AND IT IS CONDITION 1 THERE
+ *
+ * These are not settled. The mutation audit (#428 stage 1) is deliberately an
+ * INSTRUMENT rather than a standing control, so it legitimately has no workflow
+ * step — that is what this list is for. But its SELF-TEST is exempt only as a
+ * consequence, and that is a real weakening: 48 assertions do not run anywhere
+ * automated while these entries exist.
+ *
+ * The weakening is bounded and cannot be forgotten, because the check below
+ * REJECTS A STALE EXEMPTION naming a file that does run. So #434's wiring
+ * cannot land without deleting these two lines. The gap can only be ended, not
+ * quietly inherited.
+ *
+ * If you are reading this because you are adding a third entry: check that it
+ * is a script that genuinely should never be a step, not one whose wiring is
+ * merely inconvenient. The two here have a dated exit; a third with no exit is
+ * how a list like this becomes the escape hatch it was built to avoid.
+ */
 const WIRING_EXEMPT = Object.freeze({
-  // 'shared-helper.mjs': 'imported by other guards, never invoked as a step',
+  'check-mutation-audit.mjs':
+    'stage 1 instrument, not a standing control — wired by #434, which is that issue\'s condition 1',
+  'check-mutation-audit.test.mjs':
+    'exempt only because its subject is — #434 wires both and must delete both entries',
 });
 
 function guardWiringReport({ scriptsDir, workflowsDir, exempt = {} }) {
-  const fail = (cannotCheck) => ({ cannotCheck, unwired: [], subjects: [], scanned: 0 });
+  const fail = (cannotCheck) => ({ cannotCheck, unwired: [], staleExemptions: [], subjects: [], scanned: 0 });
 
   let workflowFiles;
   try {
@@ -1524,11 +1547,36 @@ function guardWiringReport({ scriptsDir, workflowsDir, exempt = {} }) {
   }
   if (scripts.length === 0) return fail(`no guard scripts under ${scriptsDir}`);
 
-  const unwired = scripts.filter(
-    (s) =>
-      exempt[s] === undefined &&
-      !new RegExp(String.raw`\.github/scripts/${s.replace(/\./g, '\\.')}(?![\w.-])`).test(invoked),
-  );
+  const isWired = (s) =>
+    new RegExp(String.raw`\.github/scripts/${s.replace(/\./g, '\\.')}(?![\w.-])`).test(invoked);
+
+  const unwired = scripts.filter((s) => exempt[s] === undefined && !isWired(s));
+
+  // STALE EXEMPTIONS, both directions (#428).
+  //
+  // Until this existed the wiring exemption only ever SUPPRESSED. An entry
+  // naming a script that is wired, or one that no longer exists, passed in
+  // silence — verified by probe, not assumed: an entry for `check-guards.mjs`,
+  // a file that does not exist at all, left the suite at 109/0.
+  //
+  // That mattered immediately. #428 stage 1 was approved on the reasoning that
+  // its exemption is "self-clearing by construction — the guard rejects a stale
+  // exemption naming a file that does run, so #434's wiring cannot land without
+  // removing it." That property was TRUE of the per-file exemption mechanism
+  // and NOT of this one; the decision rested on it either way. Rather than
+  // accept an exemption that could be inherited forever, the property is made
+  // real here.
+  //
+  // Both directions, because they decay differently: a wired-but-exempt entry
+  // is a claim that has become false, and a nonexistent-file entry is a claim
+  // about nothing. Neither should outlive its reason by being unread.
+  const staleExemptions = Object.keys(exempt)
+    .sort()
+    .filter((s) => !scripts.includes(s) || isWired(s))
+    .map((s) => ({
+      script: s,
+      reason: scripts.includes(s) ? 'is wired by a workflow step, so the exemption is false' : 'names a script that does not exist',
+    }));
   // `subjects` is the enumerated set itself, returned rather than left internal
   // so the self-inclusion assertion can be made AGAINST THE CODE UNDER TEST
   // rather than against a second, independent `readdirSync`. A test that
@@ -1537,7 +1585,7 @@ function guardWiringReport({ scriptsDir, workflowsDir, exempt = {} }) {
   // enumerates. QA proved that blindness: excluding `.test.mjs` here left the
   // suite fully green, which is exactly the special case the comment above says
   // this file must not be.
-  return { cannotCheck: null, unwired, subjects: scripts, scanned: scripts.length };
+  return { cannotCheck: null, unwired, staleExemptions, subjects: scripts, scanned: scripts.length };
 }
 
 /** A fixture repo with the real layout: scripts on disk, workflows referencing them. */
@@ -1572,6 +1620,16 @@ const wfStep = (script) => `jobs:\n  a:\n    steps:\n      - run: node .github/s
     'none',
   );
   check('wiring: ...and the scan window was non-empty', real.scanned > 0, true);
+
+  // The exemption list must not outlive its reasons (#428). Asserted against
+  // the REAL list, so the two entries added for the stage 1 instrument fail the
+  // build the moment #434 wires them — which is the property stage 1 was
+  // approved on, and which did not exist until this assertion did.
+  check(
+    'wiring: no exemption in the real list is stale (#428)',
+    real.staleExemptions.map((s) => s.script).join(', ') || 'none',
+    'none',
+  );
 
   // The recursion. This file is a guard, so it is subject to the gap it closes,
   // and it must sit inside its own subject set rather than be exempt from it.
@@ -1693,6 +1751,67 @@ const wfStep = (script) => `jobs:\n  a:\n    steps:\n      - run: node .github/s
   });
 
   check('wiring: a written exemption is honoured (#381)', r.unwired.length, 0);
+  // ...and honouring it is not the same as never looking at it again.
+  check('wiring: ...and a LIVE exemption is not reported stale (#428)', r.staleExemptions.length, 0);
+}
+
+// ---------------------------------------------------------------------------
+// A stale wiring exemption is REJECTED, both directions (#428).
+//
+// OBSERVED FAILING BEFORE THIS EXISTED. The wiring exemption only suppressed —
+// an entry naming a wired script, or one naming a file absent from the tree,
+// passed in silence. Probed rather than assumed: an entry for a nonexistent
+// `check-guards.mjs` left the real suite at 109/0.
+//
+// It is not a hypothetical gap. #428 stage 1's exemption was approved on the
+// reasoning that it is "self-clearing by construction", which was true of the
+// per-file exemption mechanism and false of this one. These two cases are what
+// make the reasoning true.
+// ---------------------------------------------------------------------------
+{
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: { 'check-wired.mjs': '', 'check-orphan.mjs': '' },
+    workflows: {
+      'test.yml': 'jobs:\n  a:\n    steps:\n      - run: node .github/scripts/check-wired.mjs\n',
+    },
+  });
+
+  // Direction 1: the exempt script IS wired, so the claim has become false.
+  const wiredButExempt = guardWiringReport({
+    scriptsDir,
+    workflowsDir,
+    exempt: { 'check-wired.mjs': 'claims it is deliberately unwired' },
+  });
+  check('wiring: an exemption for a WIRED script is stale (#428)', wiredButExempt.staleExemptions.length, 1);
+  check(
+    '...and says WHY it is stale, not merely that it is',
+    wiredButExempt.staleExemptions[0]?.reason,
+    'is wired by a workflow step, so the exemption is false',
+  );
+
+  // Direction 2: the exempt script does not exist, so the claim is about
+  // nothing. Decays differently from direction 1 and is reported differently.
+  const ghost = guardWiringReport({
+    scriptsDir,
+    workflowsDir,
+    exempt: { 'check-deleted.mjs': 'a script that was removed' },
+  });
+  check('wiring: an exemption naming a NONEXISTENT script is stale (#428)', ghost.staleExemptions.length, 1);
+  check(
+    '...and is distinguished from the wired-but-exempt case',
+    ghost.staleExemptions[0]?.reason,
+    'names a script that does not exist',
+  );
+
+  // The paired negative, so the two above are not satisfied by a check that
+  // calls every exemption stale.
+  const live = guardWiringReport({
+    scriptsDir,
+    workflowsDir,
+    exempt: { 'check-orphan.mjs': 'genuinely unwired, genuinely present' },
+  });
+  check('...while a genuinely live exemption is NOT stale', live.staleExemptions.length, 0);
+  check('...and it still suppresses the unwired report', live.unwired.length, 0);
 }
 
 {

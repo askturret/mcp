@@ -21,6 +21,35 @@
  *   - `.skip`, which hides a test without deleting it
  *   - a body whose only assertions are toBeDefined/toBeTruthy — weak, but
  *     sometimes legitimate, so it is the founder's call (#79 scope note)
+ *
+ * ## A declaration is not a method call (#328)
+ *
+ * Every pattern below opens with `(?<![.\w$])` rather than `\b`. That is not
+ * stylistic: `\b` matches the boundary between `.` and `t`, so in
+ * `regex.test('x')` the guard saw a test declaration whose body asserts
+ * nothing, and failed the build. Three false failures on one PR's self-test —
+ * and the author worked around it by renaming their own helper, which is the
+ * worst outcome available: the guard shaped the code instead of checking it.
+ *
+ * The rule is general — **preceded by a dot means method call** — and NOT a
+ * special case for `regex.test`. Naming one method leaves the next `foo.test(`
+ * broken, and the next author with no clue why.
+ *
+ * `$` and `\w` are in the class for the same reason: `my$test(` and `submit(`
+ * are identifiers that happen to end in a declaration keyword.
+ *
+ * **This does not weaken `.only` detection**, which is the sharpest check here
+ * — `.only` silently disables every other test in the file. Its dot comes
+ * AFTER the keyword (`test.only(`), so the lookbehind never sees it; what is
+ * now excluded is `promise.test.only(`, a method chain that was never a
+ * declaration. A careless "reject anything involving a dot" fix WOULD break it,
+ * so the self-test asserts both directions explicitly.
+ *
+ * Known and accepted: `foo. test(` (whitespace between the dot and the keyword)
+ * still parses as a declaration. Fixing it needs a variable-length lookbehind,
+ * which would then suppress a REAL declaration after any line ending in a word
+ * character — `let x = 5` followed by `it('...')`. A false negative in the
+ * checker is the dangerous direction, so the fixed-length form stays.
  */
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -122,7 +151,7 @@ for (const file of testFiles(repoRoot)) {
 
   // `.only` disables every other test in the file — the loudest possible way
   // for tests to silently stop running.
-  for (const m of src.matchAll(/\b(describe|it|test)\.only\s*\(/g)) {
+  for (const m of src.matchAll(/(?<![.\w$])(describe|it|test)\.only\s*\(/g)) {
     errors.push({
       file: rel,
       line: lineOf(src, m.index),
@@ -130,7 +159,7 @@ for (const file of testFiles(repoRoot)) {
     });
   }
 
-  for (const m of src.matchAll(/\b(it|test)\.skip\s*\(/g)) {
+  for (const m of src.matchAll(/(?<![.\w$])(it|test)\.skip\s*\(/g)) {
     warnings.push({
       file: rel,
       line: lineOf(src, m.index),
@@ -139,7 +168,7 @@ for (const file of testFiles(repoRoot)) {
   }
 
   // Test declarations: it('...', fn) / test('...', fn), including .each/.failing.
-  for (const m of src.matchAll(/\b(it|test)(?:\.\w+)?\s*\(\s*['"`]/g)) {
+  for (const m of src.matchAll(/(?<![.\w$])(it|test)(?:\.\w+)?\s*\(\s*['"`]/g)) {
     if (/\.(skip|todo)\s*\($/.test(m[0])) continue;
 
     const body = extractBody(src, m.index + m[0].length);

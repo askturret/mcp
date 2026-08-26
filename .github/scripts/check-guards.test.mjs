@@ -171,6 +171,98 @@ check(
 }
 
 // ---------------------------------------------------------------------------
+// #328: a declaration is not a method call.
+//
+// `\b(it|test)(` matched the boundary between `.` and `t`, so `regex.test(...)`
+// parsed as a test declaration with an assertion-free body. Both directions are
+// asserted here: the false positive must be gone, and the guard must NOT have
+// gone blind to a genuinely empty body in the process.
+// ---------------------------------------------------------------------------
+
+// NOTE ON THIS FIXTURE: the trailing helper is load-bearing, not filler.
+// `extractBody` takes the NEXT `{` after a match, so without a following block
+// the buggy guard found no body and bailed out — the test then passed under
+// the OLD code and proved nothing. That is how it reproduced on #326: the
+// `.test(` calls were followed by another braced block, which the guard
+// adopted as their "body" and correctly found to contain no assertion.
+check(
+  'placeholder: does NOT flag regex.test() inside a real test (#328)',
+  runGuard(PLACEHOLDER, scratch(`
+    it('matches the pattern', () => {
+      const re = /^abc/;
+      expect(re.test('abcdef')).toBe(true);
+    });
+
+    function helper() {
+      return 1;
+    }
+  `)).code,
+  0,
+);
+
+check(
+  'placeholder: STILL flags an assertion-free body that calls regex.test (#328)',
+  runGuard(PLACEHOLDER, scratch(`
+    it('checks nothing', () => {
+      const re = /^abc/;
+      re.test('abcdef');
+    });
+  `)).code,
+  1,
+);
+
+check(
+  'placeholder: does NOT flag a .test.only() method chain (#328)',
+  runGuard(PLACEHOLDER, scratch(`
+    it('drives a helper', () => {
+      const matcher = buildMatcher();
+      matcher.test.only('a');
+      expect(matcher.calls).toBe(1);
+    });
+  `)).code,
+  0,
+);
+
+// The counterpart to the three above: excluding dot-prefixed forms must not
+// weaken .only detection, whose dot comes AFTER the keyword. A careless
+// "reject anything involving a dot" fix passes the tests above and breaks
+// these two — which is the whole reason they are here.
+check(
+  'placeholder: STILL flags test.only (#328 regression guard)',
+  runGuard(PLACEHOLDER, scratch(`
+    test.only('focused', () => {
+      expect(add(1, 1)).toBe(2);
+    });
+  `)).code,
+  1,
+);
+
+check(
+  'placeholder: STILL flags describe.only (#328 regression guard)',
+  runGuard(PLACEHOLDER, scratch(`
+    describe.only('focused suite', () => {
+      it('inner', () => {
+        expect(add(1, 1)).toBe(2);
+      });
+    });
+  `)).code,
+  1,
+);
+
+check(
+  'placeholder: does NOT flag an identifier ending in a declaration keyword (#328)',
+  runGuard(PLACEHOLDER, scratch(`
+    it('tolerates dollar-suffixed helpers', () => {
+      my$test('x', () => {
+        return 1;
+      });
+      expect(sent()).toBe(true);
+    });
+  `)).code,
+  0,
+);
+
+// ---------------------------------------------------------------------------
 // check-test-execution.mjs
 // ---------------------------------------------------------------------------
 

@@ -551,6 +551,120 @@ are sufficient — only that these five have been seen and are worth recognising
 
 ---
 
+## Waiting for CI
+
+**An empty pending list is not a completion signal.**
+
+The section above is about defects in the procedure that verifies a *test*.
+This one is the same shape at the next level out: a defect in the procedure that
+verifies a *pull request*. It is here rather than in an agent's instructions
+because anyone writing or reviewing a CI wait will be reading this document
+already, and because the rule it states is this document's one rule wearing
+different clothes.
+
+### The trap
+
+**Check creation is asynchronous.** A workflow's checks appear on a head over
+time, not all at once. So there is a window in which:
+
+- every check *present in the list* has completed;
+- the pending count is **zero**;
+- a check that will exist shortly **has not been created**, and is therefore not
+  visible as missing.
+
+A waiter keyed on *"nothing pending"* fires in that window and reports a
+definitive green. Nothing in the list is wrong. The list is **short**.
+
+| state | in the list | looks like |
+|---|---|---|
+| `queued` / `in_progress` | yes | correctly not-done |
+| `completed` | yes | done |
+| **not yet created** | **no** | **done** |
+
+The third row is the whole defect: absence and completion are the same
+observation to a counter.
+
+### The rule, stated positively
+
+> **Wait for NAMED checks to reach a terminal state.** A check is terminal when
+> it is `completed` and carries a conclusion. Absent is not terminal. Absent is
+> not anything.
+
+An empty pending list is evidence that every check **currently known** has run.
+Check creation is asynchronous, so *currently known* is not *required*.
+
+### The instance — caught, not suffered (#399)
+
+While waiting on CI for **PR #389**, QA observed that **`coverage-status` did
+not exist in the check list at all** while the package suites ran. There was a
+real window where every check present was complete, the pending count was zero,
+and `coverage-status` had never been created. **A stamp applied in that window
+would have covered a head whose coverage check did not exist.**
+
+Nothing was mis-stamped. They armed a waiter on `coverage-status` specifically,
+saw it appear queued, then pass, re-verified the head had not moved, and only
+then stamped. The fix generalises, which is why it is written down rather than
+left in that thread.
+
+### The aggravating factor, and it is structural (#330)
+
+`gh_pr_checks` on this repository **cannot enumerate which checks are
+required**. Branch protection and rulesets both return `403` on a free-plan
+private repo, and the tool **correctly fails closed** — reporting
+`required_known: false` with the reason, rather than reporting "nothing
+required". That refusal is right: the endpoint returns `200 []` when no rules
+apply, so a non-200 is never evidence that nothing is required.
+
+The consequence is that **there is no authoritative list to compare against**,
+which makes the waiter's own list the only source of truth — in exactly the case
+where that list is incomplete. The two failures compose: no required-set to
+check against, plus a set that grows during the run.
+
+This is a second consequence of the plan-tier constraint tracked in **#330**,
+and it strengthens the case for resolving it.
+
+### How to name the checks when nothing will name them for you
+
+Derive the expected names from `.github/workflows/` rather than from the live
+list. The workflow files are the only in-repo statement of what *should* run,
+and unlike the live list they do not grow while you watch them.
+
+**This narrows the gap; it does not close it,** and the difference matters:
+job names can be conditional, matrix-expanded, or supplied by a reusable
+workflow, so a name derived this way is a *better* source than the live list and
+still **not** an authoritative required set. Treat a check you expected and
+never saw as *"I could not check"* — which is never *"it passed"* — rather than
+as a name you got wrong.
+
+Before stamping, re-verify the head has not moved. A terminal check on a
+superseded head is a fact about a different commit.
+
+### No mechanical guard is proposed, and that is a finding
+
+A guard verifying that a waiter waited for the right set would need to know the
+required set. That is **precisely** what the `403` withholds. A guard built
+anyway would check the waiter against the same incomplete list the waiter used,
+agree with it, and report clean.
+
+That is [Unobserved Guarantee](#6-unobserved-guarantee) — reassurance without
+coverage — so building one here would be an instance of the class rather than a
+control on it. The same refusal, for the same reason, as the syntactic
+sub-shape declined in [Is *this* mechanisable?](#is-this-mechanisable).
+
+### Why this belongs beside the antipatterns
+
+The trap is an **Unobserved Guarantee, variant A**, arriving through a channel
+none of this document's other machinery watches. *"CI is green at this head"* is
+a protection asserted by the wait; nothing observes whether the set of checks it
+waited on was complete. The absent witness is **the check that was never
+created**.
+
+Every mechanism in this repository built to catch *"I could not check"* wearing
+the costume of *"it passed"* inspects **assertions**. None of them inspects the
+**waiter**.
+
+---
+
 ## Is this systematically catchable?
 
 Issue #116 asks whether Unreachable Scenario can be caught by a guard — for

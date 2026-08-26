@@ -14,7 +14,7 @@ import { join, relative, sep, resolve } from 'node:path';
 import { applyMigrations, type ProjectFile } from './engine.js';
 import { renderSnippet } from './guide.js';
 import { knownPairs, selectMigrations } from './registry.js';
-import type { Finding } from './types.js';
+import type { Finding, Migration } from './types.js';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage']);
 const CANDIDATE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json|ya?ml)$/;
@@ -102,8 +102,33 @@ function group(findings: readonly Finding[]): { rewrite: Finding[]; manual: Find
  *
  * `--check` never writes. It is the same engine call as a real run; only the
  * write is skipped, so a preview cannot disagree with what it previews.
+ *
+ * ## The `migrations` seam, and why it is not optional-for-convenience (#284 QA)
+ *
+ * `migrations` overrides what `selectMigrations` would have chosen. It exists
+ * because the no-changes branch below is **unreachable through the shipped
+ * registry**, and a test that cannot reach a branch cannot witness it.
+ *
+ * `output` rules push a finding UNCONDITIONALLY — they describe a moved
+ * machine-readable surface, which is advice every adopter needs regardless of
+ * their code. The only migration in the registry today (`0.x -> 1.0`) carries
+ * one, so `manual.length` is never 0, so `rewrite.length === 0 && manual.length
+ * === 0` is never true. The branch is correct and reachable in principle — a
+ * future migration with only source and config rules gets there — but nothing
+ * in the current registry can exercise it.
+ *
+ * Without this parameter the only honest options were to leave the branch
+ * untested (the defect QA filed) or to test the message text in isolation from
+ * the condition that prints it, which witnesses the wording and not the wiring.
+ *
+ * It can only ever NARROW what runs: the value replaces the selection and is
+ * then processed by exactly the same code path, so a wrong value produces a
+ * wrong REPORT, never a wrong WRITE. Production callers pass nothing.
  */
-export async function migrateCommand(args: readonly string[]): Promise<void> {
+export async function migrateCommand(
+  args: readonly string[],
+  migrations?: readonly Migration[],
+): Promise<void> {
   let options;
   try {
     const parsed = parseMigrateArgs(args);
@@ -123,13 +148,15 @@ export async function migrateCommand(args: readonly string[]): Promise<void> {
     process.exit(2);
   }
 
-  const migrations = selectMigrations({
-    ...(options.from === undefined ? {} : { from: options.from }),
-    ...(options.to === undefined ? {} : { to: options.to }),
-    includeProspective: options.includeProspective,
-  });
+  const selected =
+    migrations ??
+    selectMigrations({
+      ...(options.from === undefined ? {} : { from: options.from }),
+      ...(options.to === undefined ? {} : { to: options.to }),
+      includeProspective: options.includeProspective,
+    });
 
-  if (migrations.length === 0) {
+  if (selected.length === 0) {
     // Not an error. "No migration is published for this range" is the correct
     // and common answer, and exiting non-zero would make every CI run of a
     // healthy project fail.
@@ -167,14 +194,14 @@ export async function migrateCommand(args: readonly string[]): Promise<void> {
     }
   }
 
-  const result = applyMigrations({ files, migrations });
+  const result = applyMigrations({ files, migrations: selected });
   const { rewrite, manual } = group(result.findings);
 
   if (options.json) {
     console.log(
       JSON.stringify(
         {
-          migrations: migrations.map((m) => ({ from: m.from, to: m.to, status: m.status })),
+          migrations: selected.map((m) => ({ from: m.from, to: m.to, status: m.status })),
           findings: result.findings,
           changed: result.changed,
           changesNeeded: result.changesNeeded,
@@ -185,7 +212,7 @@ export async function migrateCommand(args: readonly string[]): Promise<void> {
       ),
     );
   } else {
-    for (const migration of migrations) {
+    for (const migration of selected) {
       console.log('');
       console.log(renderSnippet(migration));
     }

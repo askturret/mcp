@@ -141,15 +141,22 @@ type OccurrenceKind =
   | 'object-key'
   | 'shorthand'
   | 'binding'
-  | 're-export';
+  | 're-export-public'
+  | 're-export-both';
 
 const REFUSAL_REASON: Readonly<Record<string, string>> = {
   'property-access': 'property access — the object may be the adopter\'s own',
   'object-key': 'object key — renaming it changes the emitted data shape',
   shorthand: 'object shorthand — renaming it changes the emitted key',
   binding: 'local binding — the tool does not edit adopter logic',
-  're-export':
-    're-export — rewriting it would change what YOUR module exports, which is your public surface and not ours to edit (#284)',
+  // TWO REASONS, NOT ONE, because they are true of different code (#284 QA).
+  // A single reason was false of `export { oldName as legacy }`, where the
+  // public name is `legacy` and is untouched by the rename — that shape is now
+  // rewritten rather than refused, so it needs no reason at all.
+  're-export-public':
+    're-export alias — this is the name YOUR module exports, so renaming it would change what your consumers import (#284)',
+  're-export-both':
+    're-export — this name is both the imported symbol and the name YOUR module exports, so it cannot be updated without also changing your public surface (#284)',
 };
 
 /** Innermost unclosed bracket at each index, so `{` can be told from `(`. */
@@ -185,6 +192,31 @@ function nextNonSpace(s: string, index: number): string {
 function precedingWord(s: string, index: number): string {
   const m = /([A-Za-z_$][A-Za-z0-9_$]*)\s*$/.exec(s.slice(0, index));
   return m?.[1] ?? '';
+}
+
+/** Mirror of `precedingWord`: the identifier immediately AFTER `index`. */
+function followingWord(s: string, index: number): string {
+  const m = /^\s*([A-Za-z_$][A-Za-z0-9_$]*)/.exec(s.slice(index));
+  return m?.[1] ?? '';
+}
+
+/**
+ * Which name an occurrence inside a re-export clause actually IS (#284 QA).
+ *
+ * A re-export specifier has up to two names, and only one of them is the
+ * adopter's public surface. `as` is what tells them apart:
+ *
+ *   export { oldName as legacy } from 'mod'   SOURCE — public name is `legacy`
+ *   export { other as oldName } from 'mod'    PUBLIC — this IS the export name
+ *   export { oldName } from 'mod'             BOTH   — one name doing both jobs
+ *
+ * The distinction is the whole reason this function exists: refusing all three
+ * was safe but told two of them something untrue about their own code.
+ */
+function reExportRole(masked: string, index: number, length: number): 'source' | 'public' | 'both' {
+  if (followingWord(masked, index + length) === 'as') return 'source';
+  if (precedingWord(masked, index) === 'as') return 'public';
+  return 'both';
 }
 
 const BINDING_KEYWORDS = new Set(['const', 'let', 'var', 'function', 'class']);
@@ -262,35 +294,55 @@ function importRanges(contents: string, masked: string): ReadonlyArray<readonly 
 /**
  * Byte ranges of `export … from '…'` re-export statements (#284).
  *
- * ## Why these are found but NEVER rewritten
+ * ## Found, and then treated BY POSITION rather than wholesale
  *
  * A re-export was invisible to the rewriter, because the entry gate and the
  * range scan both require the word `import`. The consequence was the failure
  * signature #230 was filed for, one shape over: `findings: []` on a file with
  * unhandled work — a clean report that is not evidence of a clean migration.
  *
- * They are now FOUND and REPORTED, and deliberately not rewritten. The issue
- * offered rewriting as the first option, and it is unsafe for a reason that
- * only appears once you write out what the rewrite would produce:
+ * The rule is not "never rewrite a re-export". It is that a re-export
+ * specifier has up to TWO names and only one of them is the adopter's public
+ * surface, so `as` decides:
  *
- *   export { oldName } from 'mod'        ->  export { newName } from 'mod'
+ *   export { oldName as legacy } from 'mod'   SOURCE.  Rewritten.
+ *     -> export { newName as legacy } from 'mod'
+ *     The public name is `legacy` either way. The rewrite preserves the
+ *     surface EXACTLY, and is also the only way the file still compiles: after
+ *     the upstream rename `oldName` is not exported by 'mod' at all.
  *
- * That does not merely update a reference. It changes the name YOUR module
- * exports, so every consumer of the adopter's package breaks — the tool would
- * have made a breaking change to a third party's public API while reporting a
- * successful migration. The alias form is worse, because the public name is
- * explicit and would still be silently moved:
+ *   export { other as oldName } from 'mod'    PUBLIC.  Refused.
+ *     -> export { other as newName } would silently rename what the adopter's
+ *     consumers import — a breaking change to a third party's public API,
+ *     made by us, while reporting a successful migration.
  *
- *   export { other as oldName } from 'mod'  ->  export { other as newName } from 'mod'
+ *   export { oldName } from 'mod'             BOTH.    Refused.
+ *     One name doing both jobs, so there is no edit that fixes the reference
+ *     without moving the surface. Preserving it (`export { newName as oldName }`)
+ *     is possible, but whether the adopter WANTS to keep the old name exported
+ *     is a judgement about their release, not a mechanical substitution — the
+ *     same principle the registry already applies to `output` rules.
  *
- * Preserving the surface (`export { newName as oldName }`) is possible, but
- * whether the adopter WANTS to propagate the rename to their consumers is a
- * judgement about their release, not a mechanical substitution. That is the
- * same principle the registry already applies to `output` rules: the consumer
- * is the adopter's code, and adopter logic is not ours to edit.
+ * ## What the guard actually changes, stated accurately (#284 QA)
  *
- * So this is the issue's second option, chosen on that ground rather than as
- * the cheaper one.
+ * An earlier version of this comment said that without the guard the scan
+ * would rewrite the adopter's public export names UNCONDITIONALLY. That was
+ * too strong, and QA measured it. With the guard removed:
+ *
+ *   export { oldName } from 'mod'          refused anyway, as `object shorthand`
+ *   export type { oldName } from 'mod'     refused anyway, as `object shorthand`
+ *   export { oldName as legacy } from      REWRITTEN
+ *   export { other as oldName } from       REWRITTEN  <- the real hazard
+ *   export { type oldName } from 'mod'     REWRITTEN
+ *
+ * `classifyOccurrence` already refuses the bare forms, because `{ oldName }`
+ * is indistinguishable from object shorthand. So for those two the guard
+ * changes the REASON and not the outcome — which matters, since "object
+ * shorthand" is simply wrong about a re-export and would send an adopter
+ * looking for an object literal that does not exist.
+ *
+ * The hazard is real and is the `other as oldName` row: without this it is
+ * rewritten silently.
  *
  * ## `export *` is genuinely fine, and that is stated so the enumeration ends
  *
@@ -476,13 +528,17 @@ function rewriteSource(
   const refused: { line: number; kind: OccurrenceKind }[] = [];
 
   for (const index of indices) {
-    // A re-export is checked FIRST and never rewritten. Its specifiers look
-    // exactly like import specifiers to `classifyOccurrence` — same braces,
-    // same `as` — so without this the range scan would rewrite the adopter's
-    // public export names unconditionally, which is the one outcome
-    // `reExportRanges` exists to prevent.
+    // A re-export is checked FIRST, because its specifiers look exactly like
+    // import specifiers to `classifyOccurrence` — same braces, same `as` — so
+    // it would otherwise rewrite the adopter's public export name.
+    //
+    // WHICH name the occurrence is decides the outcome. Only the SOURCE
+    // position is rewritten, and rewriting it preserves the public surface
+    // exactly; the other two are refused because they ARE that surface.
     if (reExports.some(([start, end]) => index >= start && index < end)) {
-      refused.push({ line: lineOf(index), kind: 're-export' });
+      const role = reExportRole(masked, index, rule.from.length);
+      if (role === 'source') rewritable.push(index);
+      else refused.push({ line: lineOf(index), kind: role === 'public' ? 're-export-public' : 're-export-both' });
       continue;
     }
     const kind = classifyOccurrence(masked, index, rule.from.length, brackets, imports);

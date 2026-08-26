@@ -14,7 +14,7 @@ import { join, relative, sep, resolve } from 'node:path';
 import { applyMigrations, type ProjectFile } from './engine.js';
 import { renderSnippet } from './guide.js';
 import { knownPairs, selectMigrations } from './registry.js';
-import type { Finding } from './types.js';
+import type { Finding, Migration } from './types.js';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage']);
 const CANDIDATE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json|ya?ml)$/;
@@ -102,8 +102,48 @@ function group(findings: readonly Finding[]): { rewrite: Finding[]; manual: Find
  *
  * `--check` never writes. It is the same engine call as a real run; only the
  * write is skipped, so a preview cannot disagree with what it previews.
+ *
+ * ## The `migrations` seam — PROVISIONAL, and slated for removal under #432
+ *
+ * `migrations` REPLACES what `selectMigrations` would have chosen. Not narrows,
+ * not intersects — `migrations ?? selectMigrations(...)`, so a caller can pass a
+ * migration absent from the registry entirely.
+ *
+ * It exists because the no-changes branch below is unreachable through the
+ * shipped registry: `output` rules push a finding UNCONDITIONALLY, and the only
+ * migration there carries one, so `rewrite.length === 0 && manual.length === 0`
+ * is never true. #432 makes the branch reachable for real, at which point this
+ * parameter has nothing left to justify it and should be DELETED rather than
+ * re-documented. Do not build on it.
+ *
+ * ## What contains it — three things, none of them a property of the parameter
+ *
+ * An earlier version of this comment claimed the seam "can only ever NARROW
+ * what runs … a wrong value produces a wrong REPORT, never a wrong WRITE."
+ * **Both halves are false**, and QA falsified them by writing `HIJACKED` into an
+ * adopter file through this parameter with no `--check`. The injected value
+ * reaches `applyMigrations` -> `result.files` -> the `if (!options.check)` write
+ * loop below in three hops. Recorded rather than quietly replaced, because a
+ * justification stated wider than it holds is the defect this PR is about, and
+ * this was its third instance.
+ *
+ * The real containments are stronger than the one claimed, and are facts about
+ * the CALLERS rather than about this parameter:
+ *
+ *   1. `cli.ts` calls `migrateCommand(args.slice(1))` — production passes
+ *      nothing, so the default path is the only one an adopter runs.
+ *   2. `src/index.ts` does not export `migrateCommand`, and `package.json`'s
+ *      `exports` map declares only `"."`. Deep subpath imports are blocked, so
+ *      **no consumer of the published package can reach this parameter at all.**
+ *      This one survives refactoring of the other two.
+ *   3. The only in-repo caller passes `--check`, so the write path is never
+ *      exercised through the seam. **That `--check` is load-bearing — see the
+ *      note at the call site.**
  */
-export async function migrateCommand(args: readonly string[]): Promise<void> {
+export async function migrateCommand(
+  args: readonly string[],
+  migrations?: readonly Migration[],
+): Promise<void> {
   let options;
   try {
     const parsed = parseMigrateArgs(args);
@@ -123,13 +163,15 @@ export async function migrateCommand(args: readonly string[]): Promise<void> {
     process.exit(2);
   }
 
-  const migrations = selectMigrations({
-    ...(options.from === undefined ? {} : { from: options.from }),
-    ...(options.to === undefined ? {} : { to: options.to }),
-    includeProspective: options.includeProspective,
-  });
+  const selected =
+    migrations ??
+    selectMigrations({
+      ...(options.from === undefined ? {} : { from: options.from }),
+      ...(options.to === undefined ? {} : { to: options.to }),
+      includeProspective: options.includeProspective,
+    });
 
-  if (migrations.length === 0) {
+  if (selected.length === 0) {
     // Not an error. "No migration is published for this range" is the correct
     // and common answer, and exiting non-zero would make every CI run of a
     // healthy project fail.
@@ -167,14 +209,14 @@ export async function migrateCommand(args: readonly string[]): Promise<void> {
     }
   }
 
-  const result = applyMigrations({ files, migrations });
+  const result = applyMigrations({ files, migrations: selected });
   const { rewrite, manual } = group(result.findings);
 
   if (options.json) {
     console.log(
       JSON.stringify(
         {
-          migrations: migrations.map((m) => ({ from: m.from, to: m.to, status: m.status })),
+          migrations: selected.map((m) => ({ from: m.from, to: m.to, status: m.status })),
           findings: result.findings,
           changed: result.changed,
           changesNeeded: result.changesNeeded,
@@ -185,13 +227,38 @@ export async function migrateCommand(args: readonly string[]): Promise<void> {
       ),
     );
   } else {
-    for (const migration of migrations) {
+    for (const migration of selected) {
       console.log('');
       console.log(renderSnippet(migration));
     }
     console.log('');
     if (rewrite.length === 0 && manual.length === 0) {
-      console.log('Nothing to change — this project is already on the target version.');
+      // THE REPORT HALF OF #284, and it is a separate defect from the scan.
+      //
+      // This used to read "Nothing to change — this project is already on the
+      // target version." That states a CONCLUSION drawn from an absence: it
+      // turns "I found nothing" into "there is nothing", which is exactly "I
+      // could not check" wearing "it passed" — with an adopter misled rather
+      // than an agent. A project whose only affected code was a re-export got
+      // that sentence while carrying unhandled work.
+      //
+      // Fixing the scan removes today's instance. It does not remove the
+      // shape: the NEXT construct the scanner does not understand would be
+      // silent in the same way, and the message would still have claimed the
+      // project was migrated.
+      //
+      // What it says now is the true statement — nothing MATCHED — plus the
+      // scope, so a reader with an unusual construct knows whether to look.
+      console.log('No changes needed: nothing matched these rules.');
+      console.log(
+        '  This is not a certificate that the project is migrated. It means nothing the tool',
+      );
+      console.log(
+        '  recognises matched: imports and re-exports naming a renamed symbol, and config keys',
+      );
+      console.log(
+        '  it has rules for. Code reaching the same API another way is not examined.',
+      );
     }
     for (const finding of rewrite) {
       console.log(`${options.check ? 'WOULD REWRITE' : 'REWROTE'}  ${finding.file}: ${finding.detail}`);

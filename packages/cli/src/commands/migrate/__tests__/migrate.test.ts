@@ -17,15 +17,16 @@
  * the migration is already released.
  */
 
-import { describe, it, expect } from '@jest/globals';
-import { readFileSync } from 'node:fs';
+import { describe, it, expect, jest, afterEach } from '@jest/globals';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { applyMigrations, type ProjectFile } from '../engine.js';
 import { MIGRATIONS, selectMigrations, knownPairs } from '../registry.js';
 import { renderIndex, renderSnippet } from '../guide.js';
-import { parseMigrateArgs } from '../index.js';
+import { parseMigrateArgs, migrateCommand } from '../index.js';
 import type { Migration } from '../types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -209,6 +210,171 @@ describe('source rules', () => {
       },
     ],
   };
+
+  // -------------------------------------------------------------------------
+  // Re-exports (#284).
+  //
+  // The defect was the failure signature #230 exists for, one shape over: a
+  // file whose only affected code is `export { x } from '…'` produced output
+  // byte-identical and `findings: []`. Not a rewrite, not a refusal — nothing.
+  // A clean report that is not evidence of a clean migration.
+  //
+  // OBSERVED BEFORE THE FIX, against the built engine, for every shape:
+  //
+  //   re-export, named        rewritten=false  findings=0   <- the filed bug
+  //   re-export, aliased      rewritten=false  findings=0
+  //   re-export, type-only    rewritten=false  findings=0
+  //   re-export, inline type  rewritten=false  findings=0
+  //   export * / * as ns      rewritten=false  findings=0   <- correct, see below
+  //
+  // They are now REPORTED and deliberately NOT rewritten. Writing out what the
+  // rewrite would produce is what settles it:
+  //
+  //   export { oldName } from 'mod'  ->  export { newName } from 'mod'
+  //
+  // which changes the name the ADOPTER'S module exports, breaking their
+  // consumers — the tool making a breaking change to a third party's public
+  // API while reporting a successful migration. Same principle the registry
+  // already applies to `output` rules: adopter logic is not ours to edit.
+  // -------------------------------------------------------------------------
+
+  it('reports a re-export naming a renamed symbol rather than passing it silently (#284)', () => {
+    const contents = `export { oldName } from '@askturret/mcp-core';\n`;
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    // Not rewritten — the adopter's public surface is not ours to change.
+    expect(result.files[0]?.contents).toBe(contents);
+
+    // ...and not SILENT, which is the whole defect. `findings: []` here was a
+    // clean report on unhandled work.
+    const manual = result.findings.filter((f) => f.action === 'manual');
+    expect(manual).toHaveLength(1);
+    expect(manual[0]?.file).toBe('src/api.ts');
+    // The reason must name the re-export, not a generic refusal: an adopter
+    // deciding whether to act needs to know it is their export surface.
+    expect(manual[0]?.detail).toMatch(/re-export/);
+    expect(manual[0]?.detail).toMatch(/line\(s\) 1/);
+  });
+
+  it.each([
+    ['type-only', `export type { oldName } from '@askturret/mcp-core';\n`],
+    ['inline type', `export { type oldName } from '@askturret/mcp-core';\n`],
+  ])('...and the %s form is reported too, not just the plain one (#284)', (_label, contents) => {
+    // An enumeration that stops where someone happened to look is how the
+    // original gap survived. Both were silent before the fix.
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    expect(result.files[0]?.contents).toBe(contents);
+    const manual = result.findings.filter((f) => f.action === 'manual');
+    expect(manual).toHaveLength(1);
+    // THE REASON, not just the count (#284 QA). `toHaveLength(1)` alone passed
+    // while `export type { oldName } from` was being reported as `object
+    // shorthand` — a true count attached to a false explanation. These are the
+    // BOTH-names shapes, so that is the reason they must carry.
+    expect(manual[0]?.detail).toMatch(/re-export/);
+    expect(manual[0]?.detail).toMatch(/both the imported symbol and the name YOUR module exports/);
+  });
+
+  // ---------------------------------------------------------------------------
+  // The SOURCE position is rewritten, and refusing it was wrong (#284 QA).
+  //
+  // `export { oldName as legacy } from 'mod'` does not name the adopter's
+  // public surface with `oldName` — it names it with `legacy`, which the rename
+  // does not touch. So the refusal reason shipped for it ("rewriting it would
+  // change what YOUR module exports") was FALSE of this code, and refusing left
+  // a file that does not compile: after the upstream rename, `oldName` is not
+  // exported by the module at all.
+  //
+  // Rewriting the source name preserves the public surface EXACTLY and is the
+  // only edit that fixes the reference. It is the same operation already
+  // applied to `import { oldName as legacy }`, on the same grounds.
+  // ---------------------------------------------------------------------------
+  it('REWRITES the source name of an aliased re-export, preserving the public name (#284)', () => {
+    const contents = `export { oldName as legacy } from '@askturret/mcp-core';\n`;
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    expect(result.files[0]?.contents).toBe(`export { newName as legacy } from '@askturret/mcp-core';\n`);
+    // The public name is what must survive untouched.
+    expect(result.files[0]?.contents).toContain('as legacy');
+    expect(result.findings.filter((f) => f.action === 'rewrite')).toHaveLength(1);
+    expect(result.findings.filter((f) => f.action === 'manual')).toHaveLength(0);
+  });
+
+  it('...and the type-only aliased form is rewritten the same way (#284)', () => {
+    const contents = `export type { oldName as legacy } from '@askturret/mcp-core';\n`;
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    expect(result.files[0]?.contents).toBe(`export type { newName as legacy } from '@askturret/mcp-core';\n`);
+    expect(result.findings.filter((f) => f.action === 'manual')).toHaveLength(0);
+  });
+
+  it('REFUSES the public name of an aliased re-export — the hazard shape (#284)', () => {
+    // The mirror, and the one the whole guard exists for. Here `oldName` IS the
+    // adopter's export name, so rewriting would silently rename what their
+    // consumers import. Verified as the real hazard: with the re-export guard
+    // removed this line is rewritten to `other as newName`.
+    const contents = `export { other as oldName } from '@askturret/mcp-core';\n`;
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    expect(result.files[0]?.contents).toBe(contents);
+    const manual = result.findings.filter((f) => f.action === 'manual');
+    expect(manual).toHaveLength(1);
+    expect(manual[0]?.detail).toMatch(/this is the name YOUR module exports/);
+  });
+
+  it.each([
+    ['export *', `export * from '@askturret/mcp-core';\n`],
+    ['export * as ns', `export * as core from '@askturret/mcp-core';\n`],
+  ])('...while %s is silent CORRECTLY, naming no symbol (#284)', (_label, contents) => {
+    // FALSIFIABLE VERSION (#284 QA). The star is PAIRED WITH A REAL IMPORT of
+    // the symbol, and that pairing is what gives this assertion a job.
+    //
+    // Alone, a star file has no occurrence of `oldName` at all, so
+    // `rewriteSource` returns early twice — at the `importsIt || reExportsIt`
+    // gate and again on `indices.length === 0` — both BEFORE any re-export
+    // logic runs. No change to `reExportRanges` could redden it, so it read as
+    // "checked and inert" while checking nothing.
+    //
+    // With the import present the file reaches the re-export logic, and the
+    // star must still contribute nothing: exactly one rewrite (the import) and
+    // no finding attributable to the star.
+    const result = run(
+      [
+        {
+          path: 'src/api.ts',
+          contents: `import { oldName } from '@askturret/mcp-core';\n${contents}oldName();\n`,
+        },
+      ],
+      [rename],
+    );
+
+    const out = result.files[0]?.contents ?? '';
+    // The star line survives byte-for-byte...
+    expect(out).toContain(contents.trim());
+    // ...and it produced no refusal of its own.
+    expect(result.findings.filter((f) => f.action === 'manual')).toHaveLength(0);
+    expect(result.findings.filter((f) => f.action === 'rewrite')).toHaveLength(1);
+  });
+
+  it('still rewrites an import in a file that ALSO re-exports (#284)', () => {
+    // The paired positive. Without it, every assertion above is satisfied by a
+    // rewriter that refuses everything in any file containing the word
+    // `export` — which would be a regression dressed as a fix.
+    const contents =
+      `import { oldName } from '@askturret/mcp-core';\n` +
+      `export { oldName } from '@askturret/mcp-core';\n` +
+      `oldName();\n`;
+    const result = run([{ path: 'src/api.ts', contents }], [rename]);
+
+    const out = result.files[0]?.contents ?? '';
+    expect(out).toContain(`import { newName } from '@askturret/mcp-core';`);
+    expect(out).toContain(`newName();`);
+    // ...and the re-export line is untouched, on its own terms.
+    expect(out).toContain(`export { oldName } from '@askturret/mcp-core';`);
+
+    expect(result.findings.filter((f) => f.action === 'rewrite')).toHaveLength(1);
+    expect(result.findings.filter((f) => f.action === 'manual')).toHaveLength(1);
+  });
 
   it('rewrites an imported identifier at its call sites', () => {
     const result = run(
@@ -825,5 +991,142 @@ describe('argument parsing', () => {
   it('refuses a flag with no value', () => {
     expect(() => parseMigrateArgs(['--from'])).toThrow(/requires a value/);
     expect(() => parseMigrateArgs(['--from', '--check'])).toThrow(/requires a value/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The REPORT half of #284, which shipped with no coverage at all (#284 QA).
+//
+// The scan half was tested from the start. The report half — the sentence the
+// PR argues hardest about — was reachable only through `migrateCommand`, and
+// nothing in this suite referenced it: the sole import from `../index.js` was
+// `parseMigrateArgs`. QA reverted the message to the original wording VERBATIM
+// and the suite stayed 418/418.
+//
+// So the defect #284 was filed against could be reintroduced, exactly, and CI
+// would stay green. That is the same "unwitnessed assertion" shape as the rest
+// of this session, one level out: not an assertion about the wrong thing, but
+// no assertion at all behind an argued-for change.
+//
+// No infrastructure was needed. `migrateCommand` is exported and this file
+// already imports from that module; capturing console.log is the whole harness.
+// ---------------------------------------------------------------------------
+describe('the no-changes report (#284)', () => {
+  // Source rules ONLY, deliberately. An `output` rule would push a finding
+  // unconditionally and the branch would never be reached — which is exactly
+  // why the shipped registry cannot exercise it.
+  const sourceOnly: Migration = {
+    from: '1.0',
+    to: '2.0',
+    status: 'published',
+    summary: 'test',
+    reference: 'test',
+    rules: [
+      {
+        kind: 'source',
+        id: 'renamed',
+        from: 'oldName',
+        to: 'newName',
+        module: '@askturret/mcp-core',
+        reason: 'Renamed.',
+      },
+    ],
+  };
+
+  const spies: { mockRestore: () => void }[] = [];
+
+  afterEach(() => {
+    for (const s of spies.splice(0)) s.mockRestore();
+  });
+
+  /**
+   * Run `migrateCommand` over a throwaway project and return everything it
+   * printed.
+   *
+   * `process.exit` is stubbed to throw, because `migrateCommand` ends by
+   * calling it and an unstubbed exit would take the test runner with it. The
+   * throw is caught and discarded — the exit code is not what these cases are
+   * about, the printed text is.
+   */
+  async function reportFor(files: Record<string, string>): Promise<string> {
+    const dir = mkdtempSync(join(tmpdir(), 'migrate-report-'));
+    for (const [name, contents] of Object.entries(files)) {
+      writeFileSync(join(dir, name), contents);
+    }
+
+    const lines: string[] = [];
+    const log = jest.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    });
+    const exit = jest.spyOn(process, 'exit').mockImplementation((() => {
+      throw new Error('__exit__');
+    }) as never);
+    spies.push(log, exit);
+
+    try {
+      // The migration is injected rather than selected, because the branch
+      // under test is UNREACHABLE through the shipped registry — see the seam's
+      // docblock. `sourceOnly` carries a source rule and nothing else, so a
+      // project with no matching code produces no findings at all, which is the
+      // only state in which this branch runs.
+      //
+      // `--check` IS LOAD-BEARING. DO NOT REMOVE IT AS TIDYING.
+      //
+      // It is not here to make the test faster or to express intent — it is the
+      // only thing standing between the injected migration and the write loop.
+      // An injected migration REPLACES the registry selection and reaches
+      // `applyMigrations` -> `result.files` -> `if (!options.check)` in three
+      // hops; QA proved it by writing `HIJACKED` into a fixture file through
+      // this parameter with `--check` omitted.
+      //
+      // The seam's docblock previously claimed the parameter could never cause
+      // a write, which would have made this flag look redundant to anyone
+      // tidying the file. That claim was false and is gone. Removing `--check`
+      // here is removing a guard.
+      await migrateCommand(['--dir', dir, '--check'], [sourceOnly]);
+    } catch (e) {
+      if (!(e instanceof Error) || e.message !== '__exit__') throw e;
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    return lines.join('\n');
+  }
+
+  it('states that nothing MATCHED, not that the project is migrated', async () => {
+    // A project with no affected code at all — the case that used to be told
+    // it was "already on the target version".
+    const out = await reportFor({ 'app.ts': `export const x = 1;\n` });
+
+    expect(out).toContain('No changes needed: nothing matched these rules.');
+
+    // THE EXACT WORDING #284 WAS FILED AGAINST. Asserted negatively as well as
+    // positively: the positive assertion alone would still pass if the old
+    // sentence were printed alongside the new one.
+    expect(out).not.toContain('already on the target version');
+  });
+
+  it('...and states its SCOPE, which is what makes the claim honest', async () => {
+    // The scope clause carries the argument. Without it the message is just a
+    // shorter version of the same overclaim — "nothing matched" still invites
+    // "so there is nothing", and the PR's case rests on the reader being told
+    // what was and was not examined. It therefore needs its own witness rather
+    // than riding on the first line's.
+    const out = await reportFor({ 'app.ts': `export const x = 1;\n` });
+
+    expect(out).toContain('not a certificate that the project is migrated');
+    expect(out).toMatch(/imports and re-exports naming a renamed symbol/);
+    expect(out).toMatch(/Code reaching the same API another way is not examined/);
+  });
+
+  it('does NOT print the no-changes message when there is something to report', async () => {
+    // The paired positive. Without it every assertion above is satisfied by a
+    // command that prints the scope disclaimer unconditionally, including on
+    // runs that did find work — which would be its own kind of false report.
+    const out = await reportFor({
+      'app.ts': `export { other as oldName } from '@askturret/mcp-core';\n`,
+    });
+
+    expect(out).not.toContain('No changes needed: nothing matched these rules.');
   });
 });

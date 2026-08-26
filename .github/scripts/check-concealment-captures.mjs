@@ -134,6 +134,19 @@ export const REQUIRED_FIELDS = Object.freeze([
   'stated_cause_evidence',
 ]);
 
+/**
+ * Opening words of the run-level note attached to a Condition 4 mismatch (#419).
+ *
+ * Exported because the self-test asserts on the guidance the same way it
+ * asserts on the per-row message, and a second copy of this literal in the
+ * test would be the Transcribed Oracle shape `docs/TESTING.md` names — a
+ * description that agrees with the original today and drifts tomorrow.
+ *
+ * It doubles as the de-duplication key: the note is pushed once per run
+ * however many rows trip the condition, which is the whole point of the split.
+ */
+export const TEMPLATE_MISMATCH_GUIDANCE_KEY = 'NOTE WHAT WAS CHECKED:';
+
 /** A row that supersedes another is an OBSERVATION about a capture, not one. */
 const isSupersedes = (row) => typeof row.supersedes === 'string' && row.supersedes !== '';
 
@@ -192,10 +205,14 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
   const errors = [];
   const notes = [];
   const cannotCheck = [];
+  // Run-level guidance: advice about an error CLASS, emitted ONCE however many
+  // rows trip it (#419). Kept out of `errors` so it never inflates the problem
+  // count — it is not itself a problem.
+  const guidance = [];
 
   const tomlPath = join(rootDir, TEMPLATES_REL);
   if (!existsSync(tomlPath)) {
-    return { errors, notes, cannotCheck: [`${TEMPLATES_REL} does not exist, so no row's template_id can be checked`] };
+    return { errors, notes, guidance, cannotCheck: [`${TEMPLATES_REL} does not exist, so no row's template_id can be checked`] };
   }
 
   let templates;
@@ -203,10 +220,10 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     const doc = parseStrictToml(readFileSync(tomlPath, 'utf-8'));
     templates = new Map((doc.template ?? []).map((t) => [t.id, t]));
   } catch (e) {
-    return { errors, notes, cannotCheck: [`${TEMPLATES_REL} does not parse: ${e.message}`] };
+    return { errors, notes, guidance, cannotCheck: [`${TEMPLATES_REL} does not parse: ${e.message}`] };
   }
   if (templates.size === 0) {
-    return { errors, notes, cannotCheck: ['the allowlist declares no templates'] };
+    return { errors, notes, guidance, cannotCheck: ['the allowlist declares no templates'] };
   }
 
   const files = corpusFiles(rootDir);
@@ -214,7 +231,7 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     // Not an error: a checkout may legitimately have no captures yet. But say
     // so — "nothing to check" and "all clean" must not render identically.
     notes.push('no corpus files found; nothing to validate');
-    return { errors, notes, cannotCheck };
+    return { errors, notes, guidance, cannotCheck };
   }
 
   // Diff scope. Null means "could not determine", which is NOT "nothing was
@@ -234,7 +251,23 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
   //
   // What actually contains it is narrower than "stricter, not weaker" and is
   // worth naming precisely: `main()` never passes the parameter, so on every
-  // path CI takes, `added` comes from git or is null.
+  // invocation that VALIDATES THE REAL CORPUS, `added` comes from git or is
+  // null.
+  //
+  // NOT "every path CI takes", which is what this said and was false. CI also
+  // runs the self-test, which injects `addedFiles` deliberately — that is the
+  // point of the parameter. The narrower claim is also the STRONGER one: it
+  // covers exactly the invocations whose integrity matters, instead of a wider
+  // set that happens to be untrue. It survives the self-test because the
+  // self-test drives `check` over a temporary fixture corpus and never over
+  // this repository's.
+  //
+  // THIS SENTENCE HAS NOW BEEN CORRECTED TWICE FOR THE SAME SHAPE — first for
+  // stating one direction and implying both, then for claiming a scope wider
+  // than it holds. That is the shape described in the paragraph above, and
+  // this justification keeps reproducing it. Worth knowing before editing it a
+  // third time: check the claim against `main()` and the self-test rather than
+  // against how reasonable it reads.
   let added = addedFiles;
   if (added === null) {
     if (diffBase !== null) {
@@ -346,15 +379,34 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
       if (template === undefined) {
         errors.push(`${where}: claims \`template_id: ${JSON.stringify(claimed)}\`, which is not in the allowlist.`);
       } else if ((matched = corpusMatcher(template).exec(verbatim)) === null) {
+        // SPLIT PER-ROW DIAGNOSIS FROM RUN-LEVEL PROHIBITIONS (#419).
+        //
+        // The whole 610-character block used to be emitted per violating row,
+        // so N violations produced N copies of a tail that is identical every
+        // time. The tail is advice about the error CLASS — what the matcher
+        // compared, and the two repairs not to attempt — so it belongs once
+        // per run, not once per row.
+        //
+        // WHAT DELIBERATELY DID NOT CHANGE: the first sentence. The measured
+        // reason the long message worked is that the actionable diagnosis is
+        // at the FRONT, which is where the failure mode of a long warning does
+        // not bite. Shortening it to reduce repetition would have traded the
+        // property that makes the message work for the one that makes it
+        // shorter. The per-row line now carries only what differs between
+        // rows; hoisting the tail leaves the diagnosis first and alone.
         errors.push(
           `${where}: claims \`template_id: ${JSON.stringify(claimed)}\` but that template's PROSE does not match ` +
             `the row's \`verbatim\`. Either the row cites the wrong template, or a literal drifted from the captured ` +
-            `message (the em-dash-to-hyphen corruption is the observed case). ` +
-            `NOTE WHAT WAS CHECKED: for a template declaring a trailing attachment this compares the PROSE ONLY, ` +
-            `because a capture elides its listing by doctrine. Do NOT "fix" this by editing the stored \`verbatim\` ` +
-            `to force a whole-message match, and do NOT widen the matcher — whole-message matching fails 24 correct ` +
-            `rows in this corpus.`,
+            `message (the em-dash-to-hyphen corruption is the observed case).`,
         );
+        if (!guidance.some((g) => g.startsWith(TEMPLATE_MISMATCH_GUIDANCE_KEY))) {
+          guidance.push(
+            `${TEMPLATE_MISMATCH_GUIDANCE_KEY} for a template declaring a trailing attachment this compares ` +
+              `the PROSE ONLY, because a capture elides its listing by doctrine. Do NOT "fix" this by editing ` +
+              `the stored \`verbatim\` to force a whole-message match, and do NOT widen the matcher — ` +
+              `whole-message matching fails 24 correct rows in this corpus.`,
+          );
+        }
       } else {
         // CONDITION 5 — the em-dash check, scoped to the PROSE.
         //
@@ -400,19 +452,23 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
 
   notes.push(`validated ${rows.length} row(s) across ${files.length} corpus file(s)`);
   if (added !== null) notes.push(`${added.size} corpus file(s) added or modified by this change`);
-  return { errors, notes, cannotCheck };
+  return { errors, notes, guidance, cannotCheck };
 }
 
 function main(argv) {
   const root = resolve(argv[2] ?? '.');
   const diffBase = argv[3] ?? null;
-  const { errors, notes, cannotCheck } = check(root, { diffBase });
+  const { errors, notes, guidance, cannotCheck } = check(root, { diffBase });
 
   for (const n of notes) console.log(`  note: ${n}`);
 
   if (errors.length > 0) {
     console.error(`\ncheck-concealment-captures: ${errors.length} problem(s) in the capture corpus\n`);
     for (const e of errors) console.error(`  - ${e}`);
+    // Run-level advice, printed once between the rows and the closing note
+    // (#419). It sits AFTER the errors because it explains a class the reader
+    // has just seen instances of; before them it would be context for nothing.
+    for (const g of guidance) console.error(`\n  ${g}`);
     console.error('\nThese rows are the evidence base for the Factor 2 allowlist and for every');
     console.error('measurement made over the classifier. A row that is wrong in a machine-read');
     console.error('field is worse than a missing row, because it is counted.');

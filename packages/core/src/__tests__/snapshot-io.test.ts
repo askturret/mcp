@@ -130,6 +130,92 @@ describe('snapshot serialization', () => {
   });
 });
 
+describe('content hash verification (#347)', () => {
+  /** A genuine snapshot on its way to disk: real operations, real hash. */
+  function onDisk(...ids: string[]) {
+    return JSON.parse(
+      JSON.stringify(serializeSnapshot(createSnapshot(ids.map((id) => operation(id)), 3))),
+    ) as Record<string, unknown> & { hash: string; operations: Record<string, unknown>[] };
+  }
+
+  it('accepts a snapshot whose hash matches its operations', () => {
+    // The paired positive. Without it, every rejection below is satisfied by a
+    // verifier that refuses everything.
+    const file = onDisk('a', 'b');
+
+    expect(deserializeSnapshot(file).hash).toBe(file.hash);
+  });
+
+  it('rejects a hand-edited operation that the stored hash no longer covers', () => {
+    // The defect the old docblock stated plainly and accepted: "a hand-edited
+    // `snapshot.json` whose `hash` no longer matches its `operations` is
+    // accepted". This is that file — the OPERATIONS are edited and the hash is
+    // the original, which is the direction an actual tamper takes.
+    const file = onDisk('a', 'b');
+    const originalHash = file.hash;
+    file.operations[0]!['description'] = 'quietly changed after capture';
+
+    expect(() => deserializeSnapshot(file)).toThrow(SnapshotFormatError);
+    expect(() => deserializeSnapshot(file)).toThrow(/does not match its operations/);
+    // The stored hash is unchanged, so the file still LOOKS provenanced.
+    expect(file.hash).toBe(originalHash);
+  });
+
+  it('rejects a wrong hash over untouched operations, naming both values', () => {
+    // Asserting the MESSAGE, not merely the throw: a mismatch that reports
+    // neither value tells the reader nothing about which side moved, and
+    // status-only assertions are how a masked failure stays masked.
+    const file = onDisk('a');
+    const computed = file.hash;
+    file.hash = '0000000000000000';
+
+    expect(() => deserializeSnapshot(file)).toThrow(
+      new RegExp(`'0000000000000000'.*computed '${computed}'`),
+    );
+  });
+
+  it('reads a mismatched snapshot when the caller declares { verifyHash: false }', () => {
+    // The opt-out, which is what makes verify-by-default adoptable: eight
+    // golden fixtures carry mnemonic hashes on purpose. The declaration is
+    // per-call and greppable, so the residual unverified set stays countable.
+    const file = onDisk('a', 'b');
+    file.hash = 'hash-mnemonic';
+
+    const restored = deserializeSnapshot(file, { verifyHash: false });
+
+    expect(restored.hash).toBe('hash-mnemonic');
+    expect([...restored.operations.keys()].sort()).toEqual(['a', 'b']);
+  });
+
+  it('verifies by default — an omitted option is not an opt-out', () => {
+    // `{}` and `{ verifyHash: undefined }` must both mean "verify". A truthy
+    // test on the option would silently turn every caller that passes an
+    // options object into an opt-out.
+    const file = onDisk('a');
+    file.hash = 'wrong';
+
+    // `exactOptionalPropertyTypes` stops a TypeScript caller writing an
+    // explicit `undefined`, so this case is cast rather than dropped: this
+    // package ships to JavaScript consumers, for whom it is reachable.
+    const explicitUndefined = { verifyHash: undefined } as unknown as { verifyHash?: boolean };
+
+    expect(() => deserializeSnapshot(file, {})).toThrow(/does not match/);
+    expect(() => deserializeSnapshot(file, explicitUndefined)).toThrow(/does not match/);
+    expect(() => deserializeSnapshot(file, { verifyHash: true })).toThrow(/does not match/);
+  });
+
+  it('reports a structural problem rather than the hash when both are wrong', () => {
+    // Verification runs last on purpose. "operations[0].name must be a string"
+    // localises the defect; "the hash does not match" is what a half-parsed
+    // file would say instead, and it would send the reader to the wrong place.
+    const file = onDisk('a');
+    file.hash = 'wrong-too';
+    delete file.operations[0]!['name'];
+
+    expect(() => deserializeSnapshot(file)).toThrow(/\.name must be a string/);
+  });
+});
+
 function serializeOne(id: string): unknown {
   return JSON.parse(JSON.stringify(operation(id)));
 }

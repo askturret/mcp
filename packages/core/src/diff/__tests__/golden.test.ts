@@ -35,7 +35,21 @@ interface GoldenCase {
 }
 
 function load(file: string) {
-  return deserializeSnapshot(JSON.parse(readFileSync(join(FIXTURES, file), 'utf-8')));
+  // `verifyHash: false` is deliberate, and these fixtures are the reason the
+  // opt-out exists (#347). All eight carry MNEMONIC hashes — `hash-v1`,
+  // `hash-renamed` — not digests, because `hash-renamed` says far more in a
+  // golden failure message than `7e627b9b92551354` would.
+  //
+  // Regenerating them with real hashes is the obvious alternative and is worse:
+  // it would couple the fixtures to `computeHash`'s exact output, so any
+  // legitimate change to the canonicalisation would force regenerating them
+  // FROM THE CODE THEY EXIST TO POLICE. A golden fixture regenerated from its
+  // subject has stopped being a check.
+  //
+  // Nothing here depends on the hash — `diffSnapshots` compares operations.
+  return deserializeSnapshot(JSON.parse(readFileSync(join(FIXTURES, file), 'utf-8')), {
+    verifyHash: false,
+  });
 }
 
 const golden = JSON.parse(readFileSync(join(FIXTURES, 'golden.json'), 'utf-8')) as {

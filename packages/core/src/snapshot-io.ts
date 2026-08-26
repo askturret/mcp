@@ -25,6 +25,7 @@
  *    to skip it — which defeats the point of committing it at all.
  */
 
+import { computeHash } from './compiler/hash.js';
 import type {
   JSONSchema,
   OperationDefinition,
@@ -75,25 +76,62 @@ export function serializeSnapshot(snapshot: RegistrySnapshot): SerializedSnapsho
 }
 
 /**
- * Parse a snapshot from its on-disk form.
+ * Parse a snapshot from its on-disk form, verifying its content hash.
  *
- * ## What this deliberately does NOT do
+ * ## This used to accept an unverified hash (#347)
  *
- * It does not recompute the content hash and compare it to the stored one. The
- * hash function lives inside the compiler's freeze-and-hash pass and is not
- * exported, so verification here would mean either duplicating the hash
- * algorithm — two implementations that will drift, and the drift shows up as a
- * spurious "corrupt snapshot" error — or widening the compiler's public
- * surface.
+ * The previous docblock framed verification as a choice between duplicating
+ * the hash algorithm — two implementations that drift, surfacing as spurious
+ * "corrupt snapshot" errors — and widening the compiler's public surface. Both
+ * horns were real; the dilemma was not exhaustive. `compiler/index.ts`
+ * re-exports selectively, so `compiler/hash.ts` is importable from here and
+ * from the freeze-and-hash pass while staying invisible outside the package.
+ * One implementation, no drift, no new public surface.
  *
- * The consequence is stated rather than hidden: a hand-edited `snapshot.json`
- * whose `hash` no longer matches its `operations` is accepted, and diff will
- * compare the operations it actually contains. Diff's own output never depends
- * on the hash being correct; the hash is carried through to the report as
- * provenance for a human. Verification is worth adding when the hash function
- * is exported — noted for QA.
+ * ## Why an opt-out rather than an unconditional refusal
+ *
+ * This is the load-bearing decision, so it is recorded here rather than left
+ * in a review thread. Three shapes were available, and they differ in what is
+ * left unverified afterwards:
+ *
+ * | shape | floor raised | residual unverified set |
+ * |---|---|---|
+ * | unconditional refusal | most | empty |
+ * | **verify + per-call opt-out** | **nearly as much** | **enumerable by grep** |
+ * | `verified: boolean` on the returned value | least | NOT enumerable |
+ *
+ * The value-flag loses on both counts: its default path is the unsafe one, and
+ * its residual cannot be counted — every consumer's handling of the flag would
+ * have to be audited, including out-of-tree. `{ verifyHash: false }` attaches
+ * the decision to a **call site**, which shows up in a diff and can be counted
+ * at any moment with a grep, rather than to **data**, which travels everywhere
+ * and is checked nowhere.
+ *
+ * The escape hatch is also what makes verify-by-default adoptable at all. This
+ * repository holds eight legitimate snapshot fixtures whose hashes are mnemonic
+ * on purpose (`hash-v1`, `hash-renamed`) — far more useful in a golden failure
+ * message than `7e627b9b92551354`. An unconditional refusal would break the
+ * diff regression suite on its first commit, and regenerating those fixtures
+ * from `computeHash` would couple them to the code they exist to police: a
+ * golden fixture regenerated from its subject has stopped being a check.
+ *
+ * ## What is still NOT guaranteed
+ *
+ * Stated rather than left to be discovered. After this change the hash is
+ * server-authored **unless someone passed `{ verifyHash: false }`** — a
+ * materially better position than an open set of construction paths, because
+ * the residual is greppable, but still not an invariant. Code elsewhere should
+ * not reason as though it were one.
+ *
+ * @param raw     parsed JSON of a snapshot file
+ * @param options `verifyHash: false` skips the hash check. Intended for test
+ *                fixtures with deliberately non-digest hashes; it should not
+ *                appear on a production code path.
  */
-export function deserializeSnapshot(raw: unknown): RegistrySnapshot {
+export function deserializeSnapshot(
+  raw: unknown,
+  options: { readonly verifyHash?: boolean } = {},
+): RegistrySnapshot {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
     throw new SnapshotFormatError('Snapshot must be a JSON object.');
   }
@@ -150,6 +188,20 @@ export function deserializeSnapshot(raw: unknown): RegistrySnapshot {
       throw new SnapshotFormatError(`Snapshot contains duplicate operation id '${operation.id}'.`);
     }
     operations.set(operation.id, operation);
+  }
+
+  // Last, deliberately. Every structural complaint above names a specific
+  // malformed field and is more useful than "the hash does not match", which
+  // is what a half-parsed file would produce if this ran earlier.
+  if (options.verifyHash !== false) {
+    const computed = computeHash([...operations.values()]);
+    if (computed !== hash) {
+      throw new SnapshotFormatError(
+        `Snapshot hash '${hash}' does not match its operations (computed '${computed}'). ` +
+          `The file has been edited since it was written, or was not produced by this tool. ` +
+          `Pass { verifyHash: false } to read it anyway.`,
+      );
+    }
   }
 
   return { version, hash, createdAt, operations };

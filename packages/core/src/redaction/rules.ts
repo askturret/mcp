@@ -109,10 +109,17 @@ const NORMALIZED_SENSITIVE = new Set(SENSITIVE_KEY_NAMES.map(normalizeKey));
  * Everything above is sound because of where the value comes FROM. The
  * `explorer` entries below cannot be, and saying so is the point of this note
  * (#266). A snapshot hash is server-computed at `freeze-and-hash.ts`, but
- * `deserializeSnapshot` accepts a hand-edited `snapshot.json` WITHOUT
- * recomputing the hash — by documented design — and both it and
- * `buildExplorerPanels({ retained })` are public exports. So a caller-supplied
- * string can reach `snapshots[].hash`, and provenance cannot be the basis.
+ * `deserializeSnapshot` verifies it only when the caller lets it: since #347 a
+ * mismatch throws, and `{ verifyHash: false }` still reads a hand-edited
+ * `snapshot.json` unverified. Both that function and
+ * `buildExplorerPanels({ retained })` are public exports, so a caller-supplied
+ * string can still reach `snapshots[].hash`, and provenance cannot be the basis.
+ *
+ * **#347 raised the floor here; it did not remove the need for these entries.**
+ * The premise moved from "unverified by documented design" to "verified unless
+ * someone passed `{ verifyHash: false }`" — better, because that residual is
+ * greppable rather than an open set of construction paths, and still not an
+ * invariant a redaction exemption may rest on.
  *
  * Those entries therefore carry a `valuePattern`, and their soundness is local:
  * it holds whoever supplies the snapshot, and no code added elsewhere can

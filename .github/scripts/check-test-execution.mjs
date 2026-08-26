@@ -389,15 +389,33 @@ for (const { dir, pkg } of workspacePackages()) {
   // predicate is inlined rather than imported because importing a wired
   // production script executes it.
   //
+  // ...AND THE FIRST COPY OF IT ARRIVED INCOMPLETE (#443). It took #371's
+  // CONDITION and dropped #371's DEFENCE: `couldNotRun` there reads
+  // `result.error ? result.error.message : '(none reported)'`, because
+  // `status: null` does NOT imply `error` is set. Measured, all three shapes:
+  //
+  //   command not found   status null   error ENOENT       signal null
+  //   KILLED BY SIGNAL    status null   error UNDEFINED    signal SIGKILL
+  //   timeout kill        status null   error ETIMEDOUT    signal SIGTERM
+  //
+  // The middle row entered this branch and threw on `run.error.code`, and an
+  // uncaught throw here exits 1 — which is this guard's "packages do not
+  // execute any tests" code. So an npm child killed by the OOM killer, an
+  // ordinary condition when running 12 package suites, produced a FALSE
+  // TEST-COVERAGE ALARM. #429's own symptom, inside the fix for #429, through a
+  // different door.
+  //
   // `CHILD_PATH` above should make this unreachable for the PATH case, so this
-  // is the backstop for the layouts it cannot repair — npm genuinely absent, or
-  // installed somewhere other than beside node. CANNOT CHECK, never a failure,
-  // and it names the cause.
+  // is the backstop for the layouts it cannot repair — npm genuinely absent,
+  // installed somewhere other than beside node, or a child that dies. CANNOT
+  // CHECK, never a failure, and it names the cause without assuming which of
+  // the three shapes it is.
   if (run.status === null || run.error !== undefined) {
+    const cause = run.error ? (run.error.code ?? run.error.message) : `killed by ${run.signal}`;
     results.push({
       name,
       status: 'cannot-check',
-      detail: `could not run npm (${run.error.code ?? run.error.message}) — the test command never started`,
+      detail: `could not run npm (${cause}) — the test command never started, or did not finish`,
     });
     continue;
   }

@@ -40,6 +40,7 @@ import {
 } from '@askturret/mcp-core';
 
 import { buildExplorerPanels } from '../panels.js';
+import { buildExplorerViewModel } from '../view-model.js';
 
 const REDACTED = '[REDACTED]';
 
@@ -104,10 +105,28 @@ describe('the pattern still describes real compiler output (#383 item 4)', () =>
     expect(SNAPSHOT_HASH.test(realHash)).toBe(true);
   });
 
-  it('...and the production regex is the one under test, not a copy of it', () => {
-    // Imported from core rather than re-declared. A local copy would be a
-    // Transcribed Oracle: it would agree with itself after the real one drifted.
-    expect(SNAPSHOT_HASH.source).toBe('^[0-9a-f]{16}$');
+  it('...and the imported regex CORRESPONDS to the one production redacts with', () => {
+    // This assertion used to compare `SNAPSHOT_HASH.source` against the literal
+    // '^[0-9a-f]{16}$', and it was the fifth satisfied-by-absence defect found
+    // in this suite. Deleting the import entirely and re-declaring the regex
+    // locally — the exact Transcribed Oracle the export exists to prevent — left
+    // it GREEN. It compared a regex against a hardcoded copy of its own text, so
+    // it was provenance-blind by construction, and it was itself the thing it
+    // warned about: a transcribed literal that agrees with a stale copy forever.
+    //
+    // The fix is to tie the imported object to production BEHAVIOUR instead of
+    // to its own source text. CARD_SHAPED_A is both matched by SNAPSHOT_HASH and
+    // card-shaped, so the two halves below must agree: the imported regex
+    // accepts it, AND the pipeline lets it through at an exempted path — which
+    // only happens if the regex production consults accepts it too.
+    //
+    // A drifted copy breaks the correspondence rather than agreeing with itself.
+    expect(SNAPSHOT_HASH.test(CARD_SHAPED_A)).toBe(true);
+
+    const atRoot = redactExplorerModel({ snapshots: [{ hash: CARD_SHAPED_A }] }) as {
+      snapshots: { hash: string }[];
+    };
+    expect(atRoot.snapshots[0]?.hash).toBe(CARD_SHAPED_A);
   });
 
   it('the card-shaped fixtures are the same length as a real hash', () => {
@@ -220,18 +239,49 @@ describe('the exemption pins the container, not the leaf (#266 criterion 3)', ()
     expect(nested.traces.spans[0]?.attributes.snapshots[0]?.hash).toBe(REDACTED);
   });
 
-  it('...while the same value at a REAL exempted root survives, so the above is not blanket redaction', () => {
-    // The paired positive. Without it, an implementation that exempted nothing
-    // at all would satisfy the assertion above.
-    const atRoot = redactExplorerModel({ snapshots: [{ hash: CARD_SHAPED_A }] }) as {
-      snapshots: { hash: string }[];
-    };
-    const underDiff = redactExplorerModel({ diff: { snapshots: [{ hash: CARD_SHAPED_A }] } }) as {
-      diff: { snapshots: { hash: string }[] };
-    };
+  // The paired positive, over EVERY generated position (#383 rework).
+  //
+  // It used to cover `snapshots[].hash` at both roots and nothing else. That
+  // left the same defect this PR exists to fix, one field over: M3 pins the
+  // ROOTS, so dropping a root reddens five tests — but NOTHING pinned the
+  // POSITIONS. Dropping ['comparing','after','hash'], making the cross-product
+  // 2x2 instead of 2x3, left core 863/863 and explorer 87/87 fully green.
+  //
+  // Measured consequence of that survivable mutation: comparing.after.hash
+  // reads [REDACTED] at both roots, so real "after" hashes start being masked
+  // and nothing says so. `anchored: true` was a data flag nothing observed;
+  // `EXPLORER_HASH_POSITIONS` had become an input list nothing observed.
+  //
+  // Each case below is one generated entry, so a dropped position reddens the
+  // row named for it rather than reducing an aggregate count.
+  describe('...while the same value at every REAL exempted position survives', () => {
+    const positions: readonly (readonly [string, () => unknown, (m: never) => unknown])[] = [
+      [
+        'snapshots[].hash',
+        () => ({ snapshots: [{ hash: CARD_SHAPED_A }] }),
+        (m: never) => (m as { snapshots: { hash: string }[] }).snapshots[0]?.hash,
+      ],
+      [
+        'comparing.before.hash',
+        () => ({ comparing: { before: { hash: CARD_SHAPED_A } } }),
+        (m: never) => (m as { comparing: { before: { hash: string } } }).comparing.before.hash,
+      ],
+      [
+        'comparing.after.hash',
+        () => ({ comparing: { after: { hash: CARD_SHAPED_A } } }),
+        (m: never) => (m as { comparing: { after: { hash: string } } }).comparing.after.hash,
+      ],
+    ];
 
-    expect(atRoot.snapshots[0]?.hash).toBe(CARD_SHAPED_A);
-    expect(underDiff.diff.snapshots[0]?.hash).toBe(CARD_SHAPED_A);
+    it.each(positions)('%s survives at the model root', (_label, build, read) => {
+      const out = redactExplorerModel(build()) as never;
+      expect(read(out)).toBe(CARD_SHAPED_A);
+    });
+
+    it.each(positions)('%s survives under the diff root', (_label, build, read) => {
+      const out = redactExplorerModel({ diff: build() }) as { diff: never };
+      expect(read(out.diff)).toBe(CARD_SHAPED_A);
+    });
   });
 
   it('a hash-shaped value at an UNRELATED explorer path is still redacted', () => {
@@ -242,6 +292,77 @@ describe('the exemption pins the container, not the leaf (#266 criterion 3)', ()
     // one did.
     const redacted = redactExplorerModel({ hash: CARD_SHAPED_A }) as { hash: string };
     expect(redacted.hash).toBe(REDACTED);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The seventh position — the page header (#395)
+//
+// `buildExplorerViewModel` assigns the SAME `snapshot.hash` to
+// `header.registryHash` and redacts at the view-model root. Neither #266 nor
+// #383 enumerated that position, so #266's original complaint stayed true
+// there: a card-shaped hash read [REDACTED] in the header while all six diff
+// positions survived.
+//
+// Provenance is confirmed HERE, at the assignment site, rather than inherited
+// from the other six. Inheritance-by-assertion is the mistake this suite has
+// already disproved once — asserting a property of one path and assuming it of
+// a neighbour is how the position went missing in the first place.
+// ---------------------------------------------------------------------------
+
+describe('the header registry hash is the compiler\'s own, and survives (#395)', () => {
+  it('buildExplorerViewModel assigns snapshot.hash to header.registryHash', () => {
+    // THE PROVENANCE ASSERTION, and it is deliberately NOT routed through the
+    // exemption. A real compiler hash contains letters, so no default rule
+    // fires on it and it survives whether or not the position is exempt —
+    // asserting its survival would be satisfied by absence.
+    //
+    // What this DOES observe is the assignment: the value at header.registryHash
+    // is the snapshot's own hash. That is what makes exempting the position
+    // legitimate — the value is compiler-derived, never caller-influenced — and
+    // it goes red if the assignment is ever repointed at something else.
+    const snapshot = createSnapshot([], 1);
+    const model = buildExplorerViewModel(snapshot, '/mcp');
+
+    expect(model.header.registryHash).toBe(snapshot.hash);
+    expect(SNAPSHOT_HASH.test(model.header.registryHash)).toBe(true);
+  });
+
+  it('a card-shaped hash survives at header.registryHash', () => {
+    // The case that could actually fail, and the one #395 reported. Before the
+    // seventh entry existed this read [REDACTED].
+    const model = buildExplorerViewModel(
+      snapshotWithHash(1, CARD_SHAPED_A),
+      '/mcp',
+    );
+
+    expect(model.header.registryHash).toBe(CARD_SHAPED_A);
+  });
+
+  it('...but the exemption is the two-segment PATH, not the leaf name', () => {
+    // The paired negative. Without it, an entry matching `registryHash`
+    // anywhere would satisfy the assertion above — the suffix-matching bug
+    // this PR removed, reintroduced at a new position.
+    const bare = redactExplorerModel({ registryHash: CARD_SHAPED_A }) as { registryHash: string };
+    const nested = redactExplorerModel({
+      traces: { spans: [{ attributes: { header: { registryHash: CARD_SHAPED_A } } }] },
+    }) as { traces: { spans: { attributes: { header: { registryHash: string } } }[] } };
+
+    expect(bare.registryHash).toBe(REDACTED);
+    expect(nested.traces.spans[0]?.attributes.header.registryHash).toBe(REDACTED);
+  });
+
+  it('...and a NEIGHBOURING field in the same header object is still redacted', () => {
+    // The exemption is one field, not the `header` container. Asserted with
+    // both fields in ONE object so the pair is decisive: the same value, the
+    // same parent, redacted at one key and exempt at the other. That can only
+    // be the entry's segments doing the work.
+    const out = redactExplorerModel({
+      header: { registryHash: CARD_SHAPED_A, previousHash: CARD_SHAPED_A },
+    }) as { header: { registryHash: string; previousHash: string } };
+
+    expect(out.header.registryHash).toBe(CARD_SHAPED_A);
+    expect(out.header.previousHash).toBe(REDACTED);
   });
 });
 

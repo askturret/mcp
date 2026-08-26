@@ -240,14 +240,32 @@ const EXPLORER_ROOTS = [[], ['diff']] as const;
  *   - SUFFIX matching exempts, so a hash-shaped value at an unforeseen container
  *     is NOT redacted. Under-redaction, and invisible by construction: nothing
  *     displays a value that should have been masked.
- *   - ANCHORED matching does not exempt, so a real hash IS redacted. Over-
- *     redaction, which is loud — the panel-6 dropdown visibly fills with
- *     `[REDACTED]` and the derived-hash tests go red.
+ *   - ANCHORED matching does not exempt, so a hash IS redacted. Over-redaction,
+ *     which is at least *visible in principle*: the panel-6 dropdown fills with
+ *     `[REDACTED]` where a value used to be.
  *
  * For a redaction control the correct default is fail-closed, and fail-closed
- * here means REDACT. So the exemption applies at exactly six positions — two
- * roots x three positions — and NOWHERE else, including a `snapshots` container
- * nested inside caller-influenced span attributes.
+ * here means REDACT. So the exemption applies at exactly seven positions and
+ * NOWHERE else, including a `snapshots` container nested inside caller-
+ * influenced span attributes.
+ *
+ * ## How loud, honestly (#383 rework)
+ *
+ * Not as loud as the paragraph above once claimed. It said the derived-hash
+ * tests go red; they do not, and the section twenty lines up says why —
+ * NOTHING in the default pipeline redacts a hex string containing letters at
+ * any length, so losing an exemption changes nothing observable for an ordinary
+ * hash. Both statements cannot be true, and this is the one that was wrong.
+ *
+ * Over-redaction here manifests ONLY for a hash that is 16 all-decimal
+ * Luhn-valid digits — roughly 1 in 18,000 — because that is the only shape a
+ * default rule fires on. So the loud failure is real but RARE, and on any given
+ * day the likelier symptom of a wrong entry here is nothing at all.
+ *
+ * That corrects the stated cost, not the conclusion. Fail-closed remains right:
+ * the comparison is against SUFFIX matching, whose failure is under-redaction
+ * that is invisible *by construction* rather than merely infrequent. A rare
+ * visible failure still beats a silent one.
  *
  * ## The consequence for out-of-tree callers, stated rather than discovered
  *
@@ -264,13 +282,53 @@ const EXPLORER_ROOTS = [[], ['diff']] as const;
  */
 const STRUCTURAL_PATHS: Readonly<Record<RedactionSurface, readonly StructuralPathPattern[]>> = {
   audit: AUDIT_STRUCTURAL_FIELDS.map((name) => ({ segments: [name], anchored: true })),
-  explorer: EXPLORER_ROOTS.flatMap((root) =>
-    EXPLORER_HASH_POSITIONS.map((position) => ({
-      segments: [...root, ...position],
-      anchored: true,
-      valuePattern: SNAPSHOT_HASH,
-    })),
-  ),
+  explorer: [
+    ...EXPLORER_ROOTS.flatMap((root) =>
+      EXPLORER_HASH_POSITIONS.map((position) => ({
+        segments: [...root, ...position],
+        anchored: true,
+        valuePattern: SNAPSHOT_HASH,
+      })),
+    ),
+    // The seventh, and NOT part of the cross-product above (#395).
+    //
+    // `buildExplorerViewModel` assigns the SAME `snapshot.hash` to
+    // `header.registryHash` and then redacts at the view-model root, so #266's
+    // original complaint was still true at a position neither #266 nor #383
+    // enumerated: a card-shaped hash read `[REDACTED]` in the page header while
+    // all six positions above survived.
+    //
+    // Provenance is the same as theirs and was confirmed at the assignment site
+    // rather than inherited: the value is the compiler's own snapshot hash, not
+    // caller-influenced data. `valuePattern` still bounds it to the hash shape.
+    //
+    // Listed separately because it is NOT a diff-view position. Adding it to
+    // `EXPLORER_HASH_POSITIONS` would also generate `diff.header.registryHash`,
+    // which no pass produces — and exempting a path nothing writes is precisely
+    // the unjustified widening this entire entry set exists to avoid.
+    { segments: ['header', 'registryHash'], anchored: true, valuePattern: SNAPSHOT_HASH },
+  ],
+  //
+  // ## This list is a CLOSED ENUMERATION over an OPEN set of assignment sites
+  //
+  // Stated here because it is the standing risk, not a solved problem. Every
+  // entry above was found by someone reading the code and naming a position —
+  // and enumeration is precisely the method that cannot tell you what it
+  // missed. #266 enumerated three positions and shipped as fixed; #383 reviewed
+  // the anchoring and the completeness of the list and also stopped at three;
+  // #395 then found a fourth that had been there the whole time, assigned in
+  // `view-model.ts` from the same `snapshot.hash`.
+  //
+  // Two rounds of design and review both stopped at the positions someone
+  // happened to name. A FIFTH assignment site added tomorrow reopens this
+  // silently, and in the safe direction — the hash is over-redacted, not
+  // leaked — but silently.
+  //
+  // So: if you add a new place a snapshot hash is written into an Explorer
+  // model, it needs an entry here AND an assertion naming it. The tests pin
+  // every entry individually for exactly this reason; a position with no
+  // assertion is a position nothing observes, which is how the list drifted
+  // from the code twice already.
   log: [],
   span: [],
   metric: [],

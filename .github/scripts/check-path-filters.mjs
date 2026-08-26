@@ -372,6 +372,24 @@ const dirToName = new Map([...byName].map(([npmName, dir]) => [dir, npmName]));
 
 const violations = [];
 
+/**
+ * Lane violations, accumulated SEPARATELY from the filter-configuration
+ * findings above (#351).
+ *
+ * Both classes are reported together and both exit 1, so this is not about
+ * severity. It is that their remedies are OPPOSITE. A coverage gap is fixed by
+ * ADDING a path to a filter; a lane violation means the change ALREADY trips
+ * one, and adding more is the last thing its author should do.
+ *
+ * One trailer cannot advise both. The generic one used to tell a mislabelled
+ * PR to "add the missing path(s) to the filter" — directly contradicting the
+ * per-violation message printed immediately above it, which correctly said to
+ * relabel or avoid the path. That wording was written when this file had a
+ * single subject and was never specialised when the lane check added a second
+ * violation SHAPE to the same reporting path.
+ */
+const laneViolations = [];
+
 for (const [name, globs] of Object.entries(filters)) {
   // C: a filter with no matching output can never gate anything.
   if (!declaredOutputs.has(name)) {
@@ -454,7 +472,7 @@ if (labels !== null && labels.includes(CHEAP_LABEL)) {
       .map(({ name, hits }) => `filter '${name}' <- ${hits.slice(0, 4).join(', ')}${hits.length > 4 ? `, +${hits.length - 4} more` : ''}`)
       .join('; ');
 
-    violations.push(
+    laneViolations.push(
       `this PR is labelled \`${CHEAP_LABEL}\` but changes paths that trip ${tripped.length} ` +
         `path filter(s): ${detail}. Every package test job gates on \`<pkg> || workspace\`, so those ` +
         'suites are scheduled and the change is not cheap. `ci:cheap` PRs are EXEMPT from the ' +
@@ -466,14 +484,31 @@ if (labels !== null && labels.includes(CHEAP_LABEL)) {
   }
 }
 
-if (violations.length > 0) {
+const allViolations = [...violations, ...laneViolations];
+
+if (allViolations.length > 0) {
   console.error('check-path-filters: FAIL\n');
   // Report every violation: fixing them one CI run at a time is its own cost.
-  for (const v of [...new Set(violations)].sort()) console.error(`  - ${v}`);
-  console.error(
-    `\n${violations.length} problem(s). Add the missing path(s) to the filter in ` +
-      `.github/workflows/test.yml so the affected suites re-run.`,
-  );
+  for (const v of [...new Set(allViolations)].sort()) console.error(`  - ${v}`);
+
+  // Summarised per CLASS (#351), so neither class is handed the other's remedy.
+  // A MIXED run prints both lines: that is the case a single trailer could not
+  // get right, and the one most likely to be overlooked, since either class
+  // alone reads fine with a trailer written for it.
+  console.error(`\n${allViolations.length} problem(s).`);
+  if (violations.length > 0) {
+    console.error(
+      `  ${violations.length} filter-coverage problem(s). Add the missing path(s) to the filter in ` +
+        `.github/workflows/test.yml so the affected suites re-run.`,
+    );
+  }
+  if (laneViolations.length > 0) {
+    console.error(
+      `  ${laneViolations.length} lane problem(s). Either relabel this PR \`ci:full\`, or avoid the ` +
+        `tripping path. Do NOT add these paths to a filter — the change already trips one, which is ` +
+        `why this failed.`,
+    );
+  }
   process.exit(1);
 }
 

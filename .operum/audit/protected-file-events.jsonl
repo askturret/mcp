@@ -68,3 +68,4 @@
 {"ts":"2026-08-26T05:48:57Z","branch":"chore/preserve-path-restore-audit-row","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-26T05:20:14Z","branch":"fix/issue-337-supersede-prefers-unsplit","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-26T05:31:31Z","branch":"fix/issue-337-supersede-prefers-unsplit","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-26T05:57:08Z","branch":"fix/issue-349-lane-cannotcheck-and-trailer","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

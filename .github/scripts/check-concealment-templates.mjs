@@ -69,6 +69,30 @@
  * regex here that was never probed, while every slot pattern was. An input
  * that is validated everywhere except one place is validated nowhere.
  *
+ * ## Which corpus sources this guard reads (#405)
+ *
+ * Stated rather than left to be inferred, because inferring it is how the
+ * second source went unread:
+ *
+ *   1. `.operum/audit/concealment-reminders.jsonl` — the FROZEN log, holding
+ *      the earlier entries. Never written to again.
+ *   2. `.operum/audit/concealment-reminders/*.jsonl` — one file per entry,
+ *      where every new capture goes.
+ *
+ * **Both, always.** They are one corpus split across two locations, so a tally
+ * over either alone silently under-reports. Either may be absent — the frozen
+ * log is not present in this repository today — and absence is fine; it was the
+ * source going UNREAD, not missing, that was the defect.
+ *
+ * That reading used to be the directory only, which was correct **by absence
+ * alone**: nothing was being missed, and nothing would have gone red when that
+ * stopped being true. Since the `corpus_matches` comparison is fail-closed, an
+ * under-count fails a corpus that is actually fine.
+ *
+ * Evidence citations are unaffected and already reach both: a citation names a
+ * path under `.operum/audit/`, so `concealment-reminders.jsonl` was always a
+ * citable file. Only the counting loop was narrow.
+ *
  * Usage:
  *   node .github/scripts/check-concealment-templates.mjs [rootDir]
  */
@@ -80,6 +104,22 @@ import { pathToFileURL } from 'node:url';
 export const TEMPLATES_REL = '.operum/audit/concealment-templates.toml';
 export const AUDIT_REL = '.operum/audit';
 export const CORPUS_REL = '.operum/audit/concealment-reminders';
+
+/**
+ * The FROZEN corpus log — the second source (#405).
+ *
+ * The corpus lives in two places by design: this append-only log holds the
+ * earlier entries and is never written to again, while every new capture is
+ * its own file under `CORPUS_REL`. The doctrine says the two are "read
+ * alongside" each other, and until now this guard read only the directory.
+ *
+ * That was correct **by absence alone** — this repository does not currently
+ * contain the frozen log, so nothing was being missed and nothing went red to
+ * say the reading was narrower than it read. Restore the file and
+ * `corpus_matches` would have been compared against an UNDER-COUNTED live
+ * value inside a fail-closed guard, which fails on a corpus that is fine.
+ */
+export const FROZEN_CORPUS_REL = '.operum/audit/concealment-reminders.jsonl';
 
 class TomlError extends Error {}
 
@@ -416,6 +456,31 @@ function newlineRisk(pattern) {
   return null;
 }
 
+/**
+ * Every corpus file, from BOTH sources (#405).
+ *
+ * Order is frozen-log-first, then the directory sorted, so the guard's output
+ * is stable run to run. Either source may be absent — the frozen log does not
+ * exist in this repository today, and a fresh checkout has no directory — so
+ * absence is not an error here. It is the *unread* source that was the defect,
+ * not the missing one.
+ */
+function corpusFiles(rootDir) {
+  const files = [];
+
+  const frozen = join(rootDir, FROZEN_CORPUS_REL);
+  if (existsSync(frozen)) files.push(frozen);
+
+  const dir = join(rootDir, CORPUS_REL);
+  if (existsSync(dir)) {
+    for (const f of readdirSync(dir).sort()) {
+      if (f.endsWith('.jsonl')) files.push(join(dir, f));
+    }
+  }
+
+  return files;
+}
+
 /** Every `verbatim` recorded in one corpus file. */
 function verbatimsOf(file) {
   const out = [];
@@ -571,13 +636,11 @@ export function check(rootDir) {
     // guard's own output. Found by reconciling a CI count of 36 against a local
     // 35 (CI evaluates the PR MERGE commit, so it sees main's captures too).
     if (compiled !== null && typeof t.corpus_matches === 'number') {
-      const dir = join(rootDir, CORPUS_REL);
+      // BOTH sources (#405). Counting one silently under-reports, and this
+      // comparison is fail-closed, so an under-count fails a corpus that is fine.
       let live = 0;
-      if (existsSync(dir)) {
-        for (const f of readdirSync(dir)) {
-          if (!f.endsWith('.jsonl')) continue;
-          live += verbatimsOf(join(dir, f)).filter((v) => evidenceRe.test(v)).length;
-        }
+      for (const f of corpusFiles(rootDir)) {
+        live += verbatimsOf(f).filter((v) => evidenceRe.test(v)).length;
       }
       if (t.corpus_matches > live) {
         errors.push(`template ${id}: corpus_matches=${t.corpus_matches} but only ${live} corpus entr${live === 1 ? 'y' : 'ies'} actually match. The count must never claim more evidence than exists.`);

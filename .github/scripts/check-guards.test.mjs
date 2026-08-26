@@ -9,6 +9,26 @@
  * exercised here against fixtures reproducing every root cause it claims to
  * catch, plus the near-misses that would make it cry wolf.
  *
+ * ## What this file is for, stated because it has now been decided twice (#381)
+ *
+ * It holds TWO kinds of assertion, and the distinction decides what belongs:
+ *
+ *   1. Functional tests of the guards named above, which have no sibling
+ *      `*.test.mjs` of their own.
+ *   2. META-assertions about the guard SET as a collection — properties true of
+ *      every guard rather than of one. #361's "no self-test spawns a bare
+ *      `node`" is one; #381's wiring check at the end of this file is another.
+ *
+ * What does NOT belong is functional tests of some OTHER individual guard.
+ * Those go in that guard's own `*.test.mjs`, wired as its own step — hiding
+ * them here would leave nobody able to find them, which is why #324's
+ * assertions were refused a home in this file even though that was the cheaper
+ * lane.
+ *
+ * The header previously named only role 1, while role 2 had existed since #361.
+ * Both are written down so the next person reads the charter rather than
+ * inferring it from whatever happens to be here.
+ *
  * Run: node .github/scripts/check-guards.test.mjs
  */
 
@@ -1296,6 +1316,285 @@ check(
     offenders.join(', ') || 'none',
     'none',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Every guard script is NAMED BY A WORKFLOW STEP (#381)
+//
+// Guards assert things about the repository. Until now nothing asserted that a
+// guard RUNS. A contributor could add `check-something.mjs`, write its
+// self-test, watch the self-test pass, and ship a guard that never executes —
+// protection withdrawn silently, and the moment it would have mattered is
+// exactly the moment nobody is looking at it.
+//
+// #339 does not reach this. Its subject is `*.test.*` files compared against
+// what jest reports executing; a script under `.github/scripts/` is not a jest
+// test file and is not in that set at all.
+//
+// ## The subject is WORKFLOW steps, and only those
+//
+// This file invokes several guards itself, so "named by a workflow step" and
+// "invoked by a self-test" are different properties. Only the first is being
+// asserted. The scan window is workflow YAML and nothing else, so the
+// conflation is structurally impossible rather than merely avoided — and there
+// is a fixture below proving it, because "structurally impossible" is the kind
+// of claim that stops being true during a refactor.
+//
+// ## Comments do not count as wiring
+//
+// Comments are stripped, and the line must also carry the invocation verb
+// `node`. A guard named only in a comment is not wired, however reassuring the
+// comment reads. Both a loose and a strict matcher agree on this repository
+// today, so that strictness is UNOBSERVABLE here and is pinned by fixture
+// rather than claimed from the real tree.
+//
+// That is TWO mechanisms, and they need TWO fixtures — a point QA had to make
+// because the first version shipped one. Stripping `#.*$` removes the path
+// ALONG WITH the comment, so the comment fixture reddens on comment-stripping
+// alone and can say nothing about the verb. Dropping `/\bnode\b/` left the
+// whole suite green. The verb now has its own fixture, naming a guard on a
+// `- name:` line that carries no `node`, and it reddens under that mutation and
+// no other.
+//
+// The `(?![\w.-])` boundary has a fixture too, and its real job is the
+// direction the self-test fixture cannot reach: `check-b.mjs.bak` named by a
+// workflow must not count as wiring for `check-b.mjs`.
+//
+// Residual, stated rather than left to be found: a mention on a non-`run:` YAML
+// line that happens to contain `node` would still count. Closing that needs a
+// YAML parser, which this repo's guards deliberately refuse.
+// ---------------------------------------------------------------------------
+
+/** Guards that deliberately have no workflow step. Empty today — an entry is a line in a diff. */
+const WIRING_EXEMPT = Object.freeze({
+  // 'shared-helper.mjs': 'imported by other guards, never invoked as a step',
+});
+
+function guardWiringReport({ scriptsDir, workflowsDir, exempt = {} }) {
+  const fail = (cannotCheck) => ({ cannotCheck, unwired: [], subjects: [], scanned: 0 });
+
+  let workflowFiles;
+  try {
+    workflowFiles = readdirSync(workflowsDir).filter((f) => /\.ya?ml$/.test(f));
+  } catch {
+    return fail(`cannot read ${workflowsDir}`);
+  }
+  if (workflowFiles.length === 0) return fail(`no workflow files under ${workflowsDir}`);
+
+  const invocationLines = [];
+  for (const f of workflowFiles) {
+    let text;
+    try {
+      text = readFileSync(join(workflowsDir, f), 'utf-8');
+    } catch {
+      return fail(`cannot read ${f}`);
+    }
+    for (const raw of text.split('\n')) {
+      const line = raw.replace(/#.*$/, '');
+      if (/\bnode\b/.test(line)) invocationLines.push(line);
+    }
+  }
+  const invoked = invocationLines.join('\n');
+
+  let scripts;
+  try {
+    scripts = readdirSync(scriptsDir).filter((f) => f.endsWith('.mjs')).sort();
+  } catch {
+    return fail(`cannot read ${scriptsDir}`);
+  }
+  if (scripts.length === 0) return fail(`no guard scripts under ${scriptsDir}`);
+
+  const unwired = scripts.filter(
+    (s) =>
+      exempt[s] === undefined &&
+      !new RegExp(String.raw`\.github/scripts/${s.replace(/\./g, '\\.')}(?![\w.-])`).test(invoked),
+  );
+  // `subjects` is the enumerated set itself, returned rather than left internal
+  // so the self-inclusion assertion can be made AGAINST THE CODE UNDER TEST
+  // rather than against a second, independent `readdirSync`. A test that
+  // re-enumerates the directory asserts "this file exists on disk" — true
+  // whenever the test runs at all, and blind to a change in what this function
+  // enumerates. QA proved that blindness: excluding `.test.mjs` here left the
+  // suite fully green, which is exactly the special case the comment above says
+  // this file must not be.
+  return { cannotCheck: null, unwired, subjects: scripts, scanned: scripts.length };
+}
+
+/** A fixture repo with the real layout: scripts on disk, workflows referencing them. */
+function wiringFixture({ scripts = {}, workflows = {} }) {
+  const dir = mkdtempSync(join(tmpdir(), 'guard-wiring-'));
+  tmpDirs.push(dir);
+  const scriptsDir = join(dir, '.github', 'scripts');
+  const workflowsDir = join(dir, '.github', 'workflows');
+  mkdirSync(scriptsDir, { recursive: true });
+  mkdirSync(workflowsDir, { recursive: true });
+  for (const [name, body] of Object.entries(scripts)) writeFileSync(join(scriptsDir, name), body);
+  for (const [name, body] of Object.entries(workflows)) writeFileSync(join(workflowsDir, name), body);
+  return { scriptsDir, workflowsDir };
+}
+
+const wfStep = (script) => `jobs:\n  a:\n    steps:\n      - run: node .github/scripts/${script}\n`;
+
+{
+  // The real repository. Both halves matter: no unwired guard, AND the scan
+  // window is non-empty — "all clean" and "there is nothing here" render
+  // identically otherwise, which is the Decorative Guard shape.
+  const real = guardWiringReport({
+    scriptsDir: here,
+    workflowsDir: join(here, '..', 'workflows'),
+    exempt: WIRING_EXEMPT,
+  });
+
+  check('wiring: the real repository can be checked at all (#381)', real.cannotCheck, null);
+  check(
+    'wiring: every guard script is named by a workflow step (#381)',
+    real.unwired.join(', ') || 'none',
+    'none',
+  );
+  check('wiring: ...and the scan window was non-empty', real.scanned > 0, true);
+
+  // The recursion. This file is a guard, so it is subject to the gap it closes,
+  // and it must sit inside its own subject set rather than be exempt from it.
+  //
+  // The honest limit, because it cannot be asserted away: unwiring THIS file
+  // stops this check running in CI, so it cannot catch its own removal there.
+  // What it can do is refuse to be a special case — it is enumerated like every
+  // other guard, and a local run of this file after such a removal does report
+  // it. Verified by mutation, not assumed.
+  check(
+    'wiring: this check includes ITSELF in the set it enumerates (#381)',
+    real.subjects.includes('check-guards.test.mjs'),
+    true,
+  );
+}
+
+{
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: { 'check-wired.mjs': '', 'check-orphan.mjs': '' },
+    workflows: { 'test.yml': wfStep('check-wired.mjs') },
+  });
+  const r = guardWiringReport({ scriptsDir, workflowsDir });
+
+  check('wiring: a guard named by no workflow step is reported (#381)', r.unwired.length, 1);
+  check('wiring: ...and it is NAMED, not merely counted', r.unwired[0], 'check-orphan.mjs');
+  check('wiring: ...while the wired one is not reported', r.unwired.includes('check-wired.mjs'), false);
+}
+
+{
+  // The strictness that is unobservable on the real repository.
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: { 'check-mentioned.mjs': '' },
+    workflows: {
+      'test.yml':
+        'jobs:\n  a:\n    steps:\n      # node .github/scripts/check-mentioned.mjs — used to run here\n      - run: echo hi\n',
+    },
+  });
+  const r = guardWiringReport({ scriptsDir, workflowsDir });
+
+  check(
+    'wiring: a guard named ONLY in a comment is still unwired (#381)',
+    r.unwired.join(', '),
+    'check-mentioned.mjs',
+  );
+}
+
+{
+  // The other half of the strictness: the INVOCATION VERB. The comment fixture
+  // above cannot reach this — stripping `#.*$` takes the path with it, so that
+  // fixture reddens on comment-stripping alone and is blind to `/\bnode\b/`.
+  // Here the path is named on a line that survives stripping intact and simply
+  // is not an invocation.
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: { 'check-named.mjs': '' },
+    workflows: {
+      'test.yml':
+        'jobs:\n  a:\n    steps:\n      - name: runs .github/scripts/check-named.mjs eventually\n        run: echo hi\n',
+    },
+  });
+  const r = guardWiringReport({ scriptsDir, workflowsDir });
+
+  check(
+    'wiring: a guard named on a line WITHOUT the invocation verb is still unwired (#381)',
+    r.unwired.join(', '),
+    'check-named.mjs',
+  );
+}
+
+{
+  // The `(?![\w.-])` boundary, in the direction that actually bites. A leftover
+  // `check-b.mjs.bak` still named by a workflow step must not be read as wiring
+  // for the live `check-b.mjs` — that is protection withdrawn silently, which is
+  // this section's whole subject.
+  //
+  // The self-test fixture below looks like it covers this and does not:
+  // `check-orphan.mjs` is not a substring of `check-orphan.test.mjs`, so that
+  // case never depends on the lookahead at all.
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: { 'check-b.mjs': '' },
+    workflows: { 'test.yml': wfStep('check-b.mjs.bak') },
+  });
+  const r = guardWiringReport({ scriptsDir, workflowsDir });
+
+  check(
+    'wiring: a longer path that merely starts with a guard name is not wiring for it (#381)',
+    r.unwired.join(', '),
+    'check-b.mjs',
+  );
+}
+
+{
+  // The conflation guard. The orphan is invoked by ANOTHER SCRIPT, which is what
+  // a self-test does. That must not count as wiring.
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: {
+      'check-orphan.mjs': '',
+      'check-orphan.test.mjs': "spawnSync(process.execPath, ['.github/scripts/check-orphan.mjs']);\n",
+    },
+    workflows: { 'test.yml': wfStep('check-orphan.test.mjs') },
+  });
+  const r = guardWiringReport({ scriptsDir, workflowsDir });
+
+  check(
+    'wiring: invocation by a SELF-TEST does not count as being wired (#381)',
+    r.unwired.join(', '),
+    'check-orphan.mjs',
+  );
+}
+
+{
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: { 'check-orphan.mjs': '' },
+    workflows: { 'test.yml': 'jobs:\n  a:\n    steps:\n      - run: echo hi\n' },
+  });
+  const r = guardWiringReport({
+    scriptsDir,
+    workflowsDir,
+    exempt: { 'check-orphan.mjs': 'deliberately not wired, for this test' },
+  });
+
+  check('wiring: a written exemption is honoured (#381)', r.unwired.length, 0);
+}
+
+{
+  // Fail closed. "I could not tell" is not "it passed" — and note the shape of
+  // the bug this prevents: with no workflows readable, EVERY guard looks
+  // unwired, but the honest report is that nothing could be determined. The
+  // opposite error is the dangerous one and is what is asserted here: returning
+  // an empty `unwired` list, which reads exactly like success.
+  const missing = guardWiringReport({
+    scriptsDir: here,
+    workflowsDir: join(tmpdir(), 'guard-wiring-does-not-exist'),
+  });
+  check(
+    'wiring: an unreadable workflow set is CANNOT CHECK, not a pass (#381)',
+    missing.cannotCheck !== null,
+    true,
+  );
+  check('wiring: ...and it does not report a clean result alongside that', missing.unwired.length, 0);
+
+  const { scriptsDir, workflowsDir } = wiringFixture({ scripts: { 'check-a.mjs': '' }, workflows: {} });
+  const empty = guardWiringReport({ scriptsDir, workflowsDir });
+  check('wiring: a workflow directory with NO workflows is CANNOT CHECK', empty.cannotCheck !== null, true);
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });

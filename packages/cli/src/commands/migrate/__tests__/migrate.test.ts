@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -1128,5 +1128,77 @@ describe('the no-changes report (#284)', () => {
     });
 
     expect(out).not.toContain('No changes needed: nothing matched these rules.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The registry docstring's premise is RE-DERIVED, not restated (#433)
+//
+// It used to assert "every workspace is still `private: true`, so no adopter
+// has ever installed a version to migrate from". The conclusion was true; the
+// PREMISE was false and had decayed silently — most workspaces are publishable
+// today.
+//
+// That sentence was not a note about packaging. It was the standing
+// justification for treating compatibility breaks as free, and it nearly
+// settled #432's adopter-visible `--json` question that way. A false premise
+// that makes work look CHEAPER fails silently, in the direction of doing more.
+//
+// It decayed because it was PROSE stating a fact about the tree, with nothing
+// comparing the two. So this reads the tree.
+//
+// WHAT THIS DELIBERATELY DOES NOT ASSERT: a count. A hardcoded number is the
+// exact thing that drifted, and pinning "9 of 16" here would re-create the
+// defect one file over — failing the day someone adds a package, for no reason
+// anyone could act on. It pins the SHAPE the docstring depends on.
+// ---------------------------------------------------------------------------
+describe('the registry docstring rests on a checkable premise (#433)', () => {
+  const repoRoot = join(__dirname, '..', '..', '..', '..', '..', '..');
+
+  /** Every workspace package.json, read from disk rather than described. */
+  function workspacePackages(): { name: string; isPrivate: boolean }[] {
+    const root = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
+      workspaces?: string[];
+    };
+    const out: { name: string; isPrivate: boolean }[] = [];
+    for (const pattern of root.workspaces ?? []) {
+      if (!pattern.endsWith('/*')) continue;
+      const dir = join(repoRoot, pattern.slice(0, -2));
+      if (!existsSync(dir)) continue;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const pkgPath = join(dir, entry.name, 'package.json');
+        if (!existsSync(pkgPath)) continue;
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string; private?: boolean };
+        out.push({ name: pkg.name ?? entry.name, isPrivate: pkg.private === true });
+      }
+    }
+    return out;
+  }
+
+  const registrySource = readFileSync(join(__dirname, '..', 'registry.ts'), 'utf8');
+
+  it('finds workspace packages at all, so the cases below are not vacuous', () => {
+    // Without this a broken path makes every assertion here pass by examining
+    // nothing — which is the shape #433 is about, one level up.
+    expect(workspacePackages().length).toBeGreaterThan(0);
+  });
+
+  it('does NOT claim every workspace is private, because that is false', () => {
+    const publishable = workspacePackages().filter((p) => !p.isPrivate);
+
+    // The premise, re-derived from disk on every run.
+    expect(publishable.length).toBeGreaterThan(0);
+
+    expect(registrySource).not.toMatch(/every workspace is still `private: true`/i);
+    expect(registrySource).not.toMatch(/no adopter has ever installed a version to migrate from/i);
+  });
+
+  it('...and says what IS true, rather than going quiet about it', () => {
+    // Deleting the false sentence without replacing it would leave the next
+    // reader to re-derive the whole question from nothing. The docstring has to
+    // carry the corrected fact, not merely stop carrying the wrong one.
+    expect(registrySource).toMatch(/never cut a release/i);
+    expect(registrySource).toMatch(/licenses nothing/i);
   });
 });

@@ -14,8 +14,54 @@
  * Checked rather than assumed: this project is at `0.1.0`, there is no 1.0
  * release, and `git log` contains no adopter-facing rename or removal — the
  * only rename commit in the history renames an unused parameter inside
- * `via-handler`. Every workspace is still `private: true`, so no adopter has
- * ever installed a version to migrate from.
+ * `via-handler`.
+ *
+ * ## Nothing has been published — but NOT for the reason this used to give
+ *
+ * This paragraph used to argue from the privacy flag: that every workspace
+ * carried it, and therefore nobody could have installed a version to migrate
+ * from. **The conclusion is still true. The premise is false and had decayed
+ * silently** (#433): most workspaces are publishable today.
+ *
+ * The old sentence is paraphrased rather than quoted, deliberately. The test in
+ * `migrate.test.ts` matches on its literal text, so reproducing it here to
+ * explain it would trip the very check that keeps it from returning — the same
+ * shape as describing a closing keyword by spelling it beside its number.
+ *
+ * That distinction is the whole point, because `private: true` was the
+ * MECHANISM that made the conclusion safe, and it is gone. What holds now is
+ * weaker and easier to lose:
+ *
+ *   the only publish path is `npm publish --access public` in
+ *   `supply-chain.yml`, gated on `if: github.event_name == 'release'` — and
+ *   this repository has never cut a release.
+ *
+ * So the protection is "nobody has tagged a release yet", which one `git tag`
+ * push ends. It is not a property of the packages any more.
+ *
+ * ## Re-derive it; do not trust this paragraph
+ *
+ * Deliberately no counts here — a hardcoded number is exactly what drifted, and
+ * repeating the mistake in the correction would be absurd. Three commands, none
+ * of which can go stale:
+ *
+ *   which packages could be published
+ *     node -e "…read every workspace package.json, report .private…"
+ *   whether any actually is        npm view @askturret/<name> version
+ *   whether a release ever ran     git tag -l   /   gh release list
+ *
+ * `migrate.test.ts` re-derives the first from disk on every run and fails if
+ * this file claims universal privacy again, so the specific false sentence
+ * cannot come back unnoticed.
+ *
+ * ## This paragraph licenses nothing
+ *
+ * Stated because that is what it was used for. "No adopter has installed a
+ * version to migrate from" is a tempting justification for treating a
+ * compatibility break as free, and it nearly settled #432's `--json` shape
+ * question that way. Whether a break is acceptable is a decision about the
+ * change, and the answer must hold regardless of how many adopters there
+ * currently are. This says what is true; it does not make anything free.
  *
  * A `0.x → 1.0` entry written today would therefore be either a no-op or an
  * invention. #59 — merged hours ago — exists to make compatibility claims

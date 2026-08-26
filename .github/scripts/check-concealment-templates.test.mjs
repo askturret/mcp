@@ -109,6 +109,31 @@ function rejects(desc, mutate, opts) {
 }
 
 // ---------------------------------------------------------------------------
+// corpus_matches is counted in ENTRIES, not files.
+//
+// One capture file may hold several entries — the #328 capture holds three.
+// Counting files reported those three as one, so the number printed and the
+// number claimed were in different units. Harmless in the safe direction (it
+// under-counts, making the check stricter), but a guard whose own output means
+// something other than it says is the shape this guard exists to catch.
+//
+// RED on revert: under file-counting live=1 < corpus_matches=2, so the guard
+// wrongly reports an over-claim and exits 1.
+// ---------------------------------------------------------------------------
+{
+  const dir = withRepo(BASE_TOML.replace('corpus_matches = 1', 'corpus_matches = 2'));
+  writeFileSync(
+    join(dir, '.operum', 'audit', 'concealment-reminders', 'fixture.jsonl'),
+    `${JSON.stringify({ ts: '2026-08-21T16:15:30Z', agent: 'tester', verbatim: FIXTURE_VERBATIM })}\n` +
+      `${JSON.stringify({ ts: '2026-08-21T16:16:30Z', agent: 'tester', verbatim: FIXTURE_VERBATIM })}\n`,
+  );
+  const r = runGuard(dir);
+  check('two matching entries in ONE file count as two, not one', r.code, 0);
+  check('...and the note reports the entry count', r.out.includes('live matching entries=2'), true);
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
 // The control case: the guard must PASS something, or every rejection below
 // passes vacuously.
 // ---------------------------------------------------------------------------

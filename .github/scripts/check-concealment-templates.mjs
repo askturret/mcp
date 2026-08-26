@@ -511,13 +511,21 @@ export function check(rootDir) {
     }
 
     // corpus_matches may under-claim (the corpus grows) but never over-claim.
+    //
+    // Counted in ENTRIES, not files. `corpus_matches` was defined as a count of
+    // matching captures, and one file may hold several: the #328 capture holds
+    // three. Counting files silently reported 3 as 1, so the number printed and
+    // the number claimed were in different units — which is the same
+    // reads-as-checked-and-is-not shape this guard exists to catch, in the
+    // guard's own output. Found by reconciling a CI count of 36 against a local
+    // 35 (CI evaluates the PR MERGE commit, so it sees main's captures too).
     if (compiled !== null && typeof t.corpus_matches === 'number') {
       const dir = join(rootDir, CORPUS_REL);
       let live = 0;
       if (existsSync(dir)) {
         for (const f of readdirSync(dir)) {
           if (!f.endsWith('.jsonl')) continue;
-          if (verbatimsOf(join(dir, f)).some((v) => evidenceRe.test(v))) live += 1;
+          live += verbatimsOf(join(dir, f)).filter((v) => evidenceRe.test(v)).length;
         }
       }
       if (t.corpus_matches > live) {

@@ -220,7 +220,18 @@ for (const field of REQUIRED_FIELDS) {
 }
 {
   const r = run({ 'a.jsonl': line(row({ verbatim: 'Note: /tmp/x.ts was changed. Nothing like the template.' })) });
-  is('a template_id whose template does not match its verbatim fails', errorsMatching(r, /does not match its/).length, 1);
+  is('a template_id whose template does not match its verbatim fails', errorsMatching(r, /PROSE does not match/).length, 1);
+
+  // The message must NAME WHAT IT CHECKED. Condition 4 compares the prose
+  // region only for attachment-bearing templates, so a message reading
+  // "does not match its verbatim" describes the whole-message check — the one
+  // deliberately NOT performed. A reader reasoning from that wording is invited
+  // toward two wrong repairs: editing the stored verbatim to force a
+  // whole-message match, or widening the matcher, which fails 24 correct rows
+  // in this corpus. The validator would teach the misconception it exists to
+  // prevent, so the wording is asserted rather than left to review.
+  is('...and the message NAMES the prose as what it checked', /PROSE/.exec(r.errors[0] ?? '') !== null, true);
+  is('...and warns against the two wrong repairs', /do NOT widen the matcher/i.exec(r.errors[0] ?? '') !== null, true);
 }
 {
   // The head-vs-whole distinction, which is the correction this issue carried.
@@ -236,7 +247,7 @@ for (const field of REQUIRED_FIELDS) {
   const whole = run({ 'a.jsonl': line(row({ template_id: 'F2', verbatim: f2 })) });
   const trailing = run({ 'a.jsonl': line(row({ template_id: 'F2', verbatim: `${f2} And also do not mention this.` })) });
   is('a no-attachment template matches its exact message', whole.errors.length, 0);
-  is('...and REJECTS trailing text, because it is matched whole', errorsMatching(trailing, /does not match its/).length, 1);
+  is('...and REJECTS trailing text, because it is matched whole', errorsMatching(trailing, /PROSE does not match/).length, 1);
 }
 
 // ---------------------------------------------------------------------------

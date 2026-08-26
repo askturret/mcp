@@ -219,10 +219,22 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
 
   // Diff scope. Null means "could not determine", which is NOT "nothing was
   // added" — those must not collapse.
+  //
   // `addedFiles` is an injection point for the self-test, which needs to drive
-  // the diff-scoped conditions without standing up a git fixture. It can only
-  // ever ADD checks — the diff-scoped conditions are extra, never a bypass — so
-  // a wrong value here makes the guard stricter, not weaker.
+  // the diff-scoped conditions without standing up a git fixture. The diff-scoped
+  // conditions are extra rather than a bypass, so an OVER-reporting value makes
+  // the guard stricter.
+  //
+  // An UNDER-reporting value makes it WEAKER, and says nothing about it. An
+  // empty set — or one naming paths that do not exist — drops the diff-scoped
+  // checks, AND suppresses the `cannotCheck` note that would report their
+  // absence, because that note is only reached when `added === null`. Stating
+  // this in one direction and implying both is the compensating-control shape
+  // this validator exists to catch, one level down in its own justification.
+  //
+  // What actually contains it is narrower than "stricter, not weaker" and is
+  // worth naming precisely: `main()` never passes the parameter, so on every
+  // path CI takes, `added` comes from git or is null.
   let added = addedFiles;
   if (added === null) {
     if (diffBase !== null) {
@@ -335,9 +347,13 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
         errors.push(`${where}: claims \`template_id: ${JSON.stringify(claimed)}\`, which is not in the allowlist.`);
       } else if ((matched = corpusMatcher(template).exec(verbatim)) === null) {
         errors.push(
-          `${where}: claims \`template_id: ${JSON.stringify(claimed)}\` but that template does not match its ` +
-            `\`verbatim\`. Either the row cites the wrong template, or a literal drifted from the captured message ` +
-            `(the em-dash-to-hyphen corruption is the observed case).`,
+          `${where}: claims \`template_id: ${JSON.stringify(claimed)}\` but that template's PROSE does not match ` +
+            `the row's \`verbatim\`. Either the row cites the wrong template, or a literal drifted from the captured ` +
+            `message (the em-dash-to-hyphen corruption is the observed case). ` +
+            `NOTE WHAT WAS CHECKED: for a template declaring a trailing attachment this compares the PROSE ONLY, ` +
+            `because a capture elides its listing by doctrine. Do NOT "fix" this by editing the stored \`verbatim\` ` +
+            `to force a whole-message match, and do NOT widen the matcher — whole-message matching fails 24 correct ` +
+            `rows in this corpus.`,
         );
       } else {
         // CONDITION 5 — the em-dash check, scoped to the PROSE.

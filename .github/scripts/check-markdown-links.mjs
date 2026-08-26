@@ -64,6 +64,18 @@
  *     underscores kept, because GitHub keeps underscores and this repo's
  *     headings carry identifiers (`POSIX_RUN`) far more often than
  *     underscore-emphasis. Telling them apart needs a real inline parser.
+ *   - **Paragraph interrupters other than a blank line or a fence.** #319
+ *     scopes the inline join to paragraphs, breaking on those two. CommonMark
+ *     also ends a paragraph at an ATX heading, a thematic break, a list-item
+ *     start and an HTML block; none of those are modelled, so halves separated
+ *     by one still join and can be reported as a link that does not exist.
+ *
+ *     Deliberate. Modelling them all is a block-level parser, and every
+ *     hand-rolled interrupter is a fresh chance to split a REAL wrapped link —
+ *     which is the dangerous direction, since an unseen dangling link is the
+ *     silent failure this guard exists to catch, while this residual fails
+ *     LOUD and prints the contrived target. The two demonstrated classes are
+ *     fixed; the rest is left rather than guessed at.
  *
  * ## Anchors (#232)
  *
@@ -433,29 +445,68 @@ for (const file of files) {
   const strippedLines = scan.lines.map(stripCodeSpans);
 
   /**
-   * Offset within the joined text -> original 1-based file line number.
+   * PARAGRAPHS, not the whole file (#319).
+   *
+   * #244 joined lines so a wrapped inline link would be seen at all. Joining
+   * the ENTIRE file to do it made two things adjacent that a reader never sees
+   * as adjacent, and the guard reported links that do not exist:
+   *
+   *   - a fenced block between the halves. `nonFencedLines` correctly removes
+   *     the fenced content, and removing it is exactly what makes `[a](` and
+   *     `docs/nope.md)` touch — with a fence, which ends a paragraph in every
+   *     dialect, sitting between them in the source.
+   *   - a blank line between the halves, which no inline-link production admits.
+   *
+   * A paragraph starts after either signal:
+   *
+   *   - a blank line — a paragraph break in every dialect;
+   *   - a GAP in `scan.numbers`, which *means* a fence region was removed
+   *     between these two source lines.
+   *
+   * The discontinuity IS the fence signal, so no fence state has to leak out of
+   * `nonFencedLines` and its two consumers still cannot disagree about what is
+   * inside a fence — the property #244 bought deliberately.
+   */
+  const segments = [];
+  {
+    let current = null;
+    strippedLines.forEach((text, i) => {
+      const blank = text.trim() === '';
+      const afterRemovedFence = i > 0 && scan.numbers[i] !== scan.numbers[i - 1] + 1;
+      if (blank || afterRemovedFence) current = null;
+      if (blank) return; // belongs to no paragraph
+      if (current === null) {
+        current = { texts: [], numbers: [] };
+        segments.push(current);
+      }
+      current.texts.push(text);
+      current.numbers.push(scan.numbers[i]);
+    });
+  }
+
+  /**
+   * Offset within a segment's joined text -> original 1-based file line number.
    *
    * The inline pass matches across line breaks, so a finding's offset has to be
    * mapped back before it can be reported. Reporting the wrong line on a real
-   * break is its own kind of unhelpful.
+   * break is its own kind of unhelpful. Per segment since #319, because an
+   * offset is only meaningful against the text it was matched in.
    */
-  const lineStarts = [];
-  {
+  const lineAtIn = (segment, offset) => {
+    const starts = [];
     let at = 0;
-    for (const line of strippedLines) {
-      lineStarts.push(at);
+    for (const line of segment.texts) {
+      starts.push(at);
       at += line.length + 1; // +1 for the '\n' join
     }
-  }
-  const lineAt = (offset) => {
     let lo = 0;
-    let hi = lineStarts.length - 1;
+    let hi = starts.length - 1;
     while (lo < hi) {
       const mid = (lo + hi + 1) >> 1;
-      if (lineStarts[mid] <= offset) lo = mid;
+      if (starts[mid] <= offset) lo = mid;
       else hi = mid - 1;
     }
-    return scan.numbers[lo];
+    return segment.numbers[lo];
   };
 
   const record = (target, resolved, kind, lineNo) => {
@@ -536,9 +587,11 @@ for (const file of files) {
    * (it has to, for the `(path "title")` form), so a destination that arrives
    * with a newline and indentation in front of it needs no special handling.
    */
-  const joined = strippedLines.join('\n');
-  for (const m of joined.matchAll(INLINE_LINK)) {
-    checkTarget(m[1] ?? '', 'link', lineAt(m.index));
+  for (const segment of segments) {
+    const joined = segment.texts.join('\n');
+    for (const m of joined.matchAll(INLINE_LINK)) {
+      checkTarget(m[1] ?? '', 'link', lineAtIn(segment, m.index));
+    }
   }
 
   // Reference definitions stay per-line: REF_DEFINITION is anchored to the

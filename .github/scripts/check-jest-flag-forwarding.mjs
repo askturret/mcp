@@ -68,10 +68,20 @@
  * The residual, stated plainly: a separator hidden inside a construct this does
  * not model can split a command that should not be split. That produces a
  * segment which may be reported — a FALSE POSITIVE, which fails loud and prints
- * the command it objected to. The opposite choice, treating anything uncertain
- * as one command, hides a broken second command and is the FALSE NEGATIVE this
- * whole issue is about. When the two cannot both be avoided, this guard takes
- * the loud one — see the unbalanced-quote fallback in `splitCommands`.
+ * the command it objected to.
+ *
+ * An earlier version of this comment claimed that was the ONLY residual. It was
+ * wrong, and the correction is the reason `findingsFor` unions rather than
+ * merely splitting. A mis-split can also SUPPRESS: with the `--` stranded in a
+ * segment holding no `npm test`, the leading segment classifies clean and a
+ * genuinely broken command disappears. That is a false NEGATIVE, in the guard
+ * whose whole purpose is refusing them, and no rarity argument excuses it —
+ * severity here is about direction, not frequency.
+ *
+ * So suppression is now impossible BY CONSTRUCTION rather than by inspection:
+ * the unsplit line is always classified too, and splitting can only add. Do not
+ * "simplify" `findingsFor` back to the segments alone; that is the defect, and
+ * four assertions marked `#331 QA` fail when you do.
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -248,24 +258,57 @@ function classify(command) {
 
 const findings = [];
 
+/**
+ * Findings for one line: the SEGMENTS *union* the UNSPLIT line.
+ *
+ * Splitting alone was not safe. A separator INTERIOR to a single command —
+ * an ordinary command substitution is enough — strands the `--` in a segment
+ * that holds no `npm test`, while the leading segment has no `--` and so
+ * classifies clean:
+ *
+ *   npm test $(cat p|head -1) -- --testPathPattern=Z
+ *
+ * That is plain `--testPathPattern` reaching EVERY workspace — the #207 silent
+ * no-op — caught before #331 and missed after it. Found by QA on this PR, and
+ * it is the direction this guard exists to refuse, so an unmodelled construct
+ * must never be able to cost a finding.
+ *
+ * The union makes that true BY CONSTRUCTION rather than by inspection: the
+ * unsplit pass IS the pre-#331 behaviour, so every problem it used to report is
+ * still reported. Splitting can now only ADD.
+ *
+ * The one subtraction allowed is a strictly more specific report of the SAME
+ * problem: when a segment finding covers a command the unsplit finding merely
+ * starts with, the segment wins, because the segment is the actionable unit.
+ * That cannot hide anything — the problem is still reported, against a shorter
+ * command.
+ */
+function findingsFor(text, file, line) {
+  const fromSegments = [];
+  for (const segment of splitCommands(text)) {
+    for (const m of segment.matchAll(NPM_TEST)) {
+      const verdict = classify(m[0]);
+      if (verdict) fromSegments.push({ file, line, command: m[0].trim(), ...verdict });
+    }
+  }
+
+  const out = [...fromSegments];
+  for (const m of text.matchAll(NPM_TEST)) {
+    const verdict = classify(m[0]);
+    if (!verdict) continue;
+    const command = m[0].trim();
+    const supersededBySegment = fromSegments.some(
+      (f) => f.problem === verdict.problem && command.startsWith(f.command),
+    );
+    if (!supersededBySegment) out.push({ file, line, command, ...verdict });
+  }
+  return out;
+}
+
 function scan(file, text) {
   const lines = text.split('\n');
   lines.forEach((line, i) => {
-    // Per COMMAND, not per line (#331). Each segment is classified on its own,
-    // so a well-formed first command can no longer vouch for a broken second.
-    for (const segment of splitCommands(line)) {
-      for (const m of segment.matchAll(NPM_TEST)) {
-        const verdict = classify(m[0]);
-        if (verdict) {
-          findings.push({
-            file: posix(relative(repoRoot, file)),
-            line: i + 1,
-            command: m[0].trim(),
-            ...verdict,
-          });
-        }
-      }
-    }
+    findings.push(...findingsFor(line, posix(relative(repoRoot, file)), i + 1));
   });
 }
 
@@ -287,19 +330,9 @@ for (const file of collect(repoRoot, (e) => e === 'package.json')) {
   }
   for (const [name, command] of Object.entries(pkg.scripts ?? {})) {
     if (typeof command !== 'string') continue;
-    for (const segment of splitCommands(command)) {
-      for (const m of segment.matchAll(NPM_TEST)) {
-        const verdict = classify(m[0]);
-        if (verdict) {
-          findings.push({
-            file: `${posix(relative(repoRoot, file))} (scripts.${name})`,
-            line: null,
-            command: m[0].trim(),
-            ...verdict,
-          });
-        }
-      }
-    }
+    findings.push(
+      ...findingsFor(command, `${posix(relative(repoRoot, file))} (scripts.${name})`, null),
+    );
   }
 }
 

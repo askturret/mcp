@@ -331,6 +331,67 @@ check(
   1,
 );
 
+// --- #331 QA: splitting must never COST a finding.
+// ---
+// --- The first version of this fix split and nothing else, which suppressed
+// --- findings the guard used to make. A separator INTERIOR to one command — an
+// --- ordinary command substitution is enough — strands the `--` in a segment
+// --- holding no `npm test`, leaving the first segment un-forwarded and clean:
+// ---
+// ---   npm test $(cat p|head -1) -- --testPathPattern=Z    caught before, missed after
+// ---
+// --- That is plain --testPathPattern reaching EVERY workspace, i.e. the #207
+// --- silent no-op, in the guard that exists to refuse exactly it. The scan now
+// --- unions the unsplit line with the segments, so splitting can only ADD.
+
+for (const [label, command] of [
+  ['a pipe inside a command substitution', 'npm test $(cat p|head -1) -- --testPathPattern=Z'],
+  ['the same with a -w after the --', 'npm test $(a|b) -- --testPathPattern=Z -w pkg'],
+  ['an && inside a command substitution', 'npm test $(a&&b) -- --testPathPattern=Z'],
+  ['a ; inside a command substitution', 'npm test $(a;b) -- --testPathPattern=Z'],
+]) {
+  check(
+    `STILL flags a broken command with ${label} (#331 QA)`,
+    run(scratch({ '.github/workflows/t.yml': workflow(command) })).status,
+    1,
+  );
+}
+
+{
+  // The union must not report the same defect twice. A broken command followed
+  // by a separator is seen by BOTH passes; the segment is the actionable unit,
+  // so it supersedes the longer unsplit view rather than joining it.
+  const r = run(
+    scratch({ '.github/workflows/t.yml': workflow('npm test --testPathPattern=x && echo hi') }),
+  );
+  check('reports a broken command before a separator exactly ONCE', (r.stderr.match(/ {2}FAIL {2}/g) ?? []).length, 1);
+  check(
+    '...quoting the command rather than the whole line',
+    r.stderr.includes('npm test --testPathPattern=x\n'),
+    true,
+  );
+}
+
+// --- #331 QA: the unbalanced-quote fallback is CITED as evidence that the
+// --- failure direction is deliberate, so it has to be pinned. QA deleted the
+// --- line outright and the suite stayed green — a mechanism offered as proof
+// --- that nothing asserts is a claim, not a guarantee.
+
+check(
+  'FAILS on a broken command after an UNBALANCED quote (#331 QA)',
+  // With the fallback, the line is re-split ignoring quotes and the second
+  // command is judged. Without it the open quote swallows the rest of the line,
+  // the leading command reads as well-formed, and the broken one disappears.
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -w pkg -- --testPathPattern="oops && npm test --testPathPattern=Z',
+      ),
+    }),
+  ).status,
+  1,
+);
+
 // --- #332 QA: the message must name the flag that was actually written.
 // ---
 // --- `wMatch.index` points at the LEADING WHITESPACE, so slicing two characters

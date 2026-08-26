@@ -283,6 +283,29 @@ function scratchWorkspace(pkgOverrides) {
   return dir;
 }
 
+/**
+ * A workspace whose fake runner reports exactly the suites named in `reported`,
+ * while `onDisk` test files exist. That gap is the whole subject of #339.
+ *
+ * The runner is a `node -e` stand-in rather than real jest because the property
+ * under test is what the guard does with a runner's OUTPUT — using real jest
+ * would test jest's reporter instead, and could not express the fail-closed
+ * case at all (a run with no PASS lines).
+ */
+function scratchPerFile({ onDisk, reported, tests = 1, pkgOverrides = {} }) {
+  const lines = reported.map((f) => `console.error('PASS ${f}')`).join(';');
+  const dir = scratchWorkspace({
+    scripts: { test: `node -e "${lines}${lines ? ';' : ''}console.error('Tests: ${tests} passed, ${tests} total')"` },
+    ...pkgOverrides,
+  });
+  for (const rel of onDisk) {
+    const full = join(dir, 'packages', 'thing', rel);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, '// fixture\n');
+  }
+  return dir;
+}
+
 check(
   'execution: fails a "test": "exit 0" no-op script',
   runGuard(EXECUTION, scratchWorkspace({ scripts: { test: 'exit 0' } })).code,
@@ -348,6 +371,123 @@ check(
   'execution: rejects an empty testsNotRequired reason',
   runGuard(EXECUTION, scratchWorkspace({ askturret: { testsNotRequired: '' } })).code,
   1,
+);
+
+// ---------------------------------------------------------------------------
+// #339: per-FILE execution.
+//
+// The package-level checks above ask "did this package run any tests". They are
+// right, and they are silent on a file that contributes none — #216 found one
+// such file, #313 found two more, and all three were found by a human reading a
+// config rather than by CI.
+//
+// Keyed on the SHARED SYMPTOM ("this file contributed no tests to the run")
+// rather than on either known cause, because #313's files had BOTH a config
+// exclusion and a dead self-invocation block, and a check keyed on either alone
+// would have passed them.
+// ---------------------------------------------------------------------------
+
+check(
+  'per-file: PASSES when every test file on disk appears in the run',
+  runGuard(
+    EXECUTION,
+    scratchPerFile({ onDisk: ['src/a.test.ts', 'src/b.test.ts'], reported: ['src/a.test.ts', 'src/b.test.ts'] }),
+  ).code,
+  0,
+);
+
+{
+  const r = runGuard(
+    EXECUTION,
+    scratchPerFile({ onDisk: ['src/a.test.ts', 'src/b.test.ts'], reported: ['src/a.test.ts'] }),
+  );
+  check('per-file: FAILS when a test file on disk never ran (#339)', r.code, 1);
+  check('per-file: ...and names the file that did not run', r.out.includes('src/b.test.ts'), true);
+  check(
+    'per-file: ...and does not accuse the file that DID run',
+    /contributed no tests[^\n]*src\/a\.test\.ts/.test(r.out),
+    false,
+  );
+}
+
+check(
+  'per-file: FAILS CLOSED when no per-suite lines can be parsed (#339)',
+  // A runner that reports a count but no suites is indistinguishable from one
+  // that skipped every file. "I could not tell" must not become "it passed".
+  runGuard(EXECUTION, scratchPerFile({ onDisk: ['src/a.test.ts'], reported: [] })).code,
+  1,
+);
+
+check(
+  'per-file: a written exemption is honoured',
+  runGuard(
+    EXECUTION,
+    scratchPerFile({
+      onDisk: ['src/a.test.ts', 'src/b.test.ts'],
+      reported: ['src/a.test.ts'],
+      pkgOverrides: { askturret: { testFilesNotExecuted: { 'src/b.test.ts': 'fixture, not a suite' } } },
+    }),
+  ).code,
+  0,
+);
+
+check(
+  'per-file: an exemption with no reason is rejected',
+  runGuard(
+    EXECUTION,
+    scratchPerFile({
+      onDisk: ['src/a.test.ts', 'src/b.test.ts'],
+      reported: ['src/a.test.ts'],
+      pkgOverrides: { askturret: { testFilesNotExecuted: { 'src/b.test.ts': '' } } },
+    }),
+  ).code,
+  1,
+);
+
+check(
+  'per-file: a STALE exemption naming a file that does run is rejected',
+  // Otherwise an exemption outlives its reason and quietly re-opens the hole.
+  runGuard(
+    EXECUTION,
+    scratchPerFile({
+      onDisk: ['src/a.test.ts'],
+      reported: ['src/a.test.ts'],
+      pkgOverrides: { askturret: { testFilesNotExecuted: { 'src/a.test.ts': 'no longer true' } } },
+    }),
+  ).code,
+  1,
+);
+
+check(
+  'per-file: a STALE exemption naming a file that no longer exists is rejected',
+  runGuard(
+    EXECUTION,
+    scratchPerFile({
+      onDisk: ['src/a.test.ts'],
+      reported: ['src/a.test.ts'],
+      pkgOverrides: { askturret: { testFilesNotExecuted: { 'src/gone.test.ts': 'deleted long ago' } } },
+    }),
+  ).code,
+  1,
+);
+
+{
+  // "This package has nothing to test" and "this package ships test files"
+  // cannot both be true — the declaration would exempt those files from ever
+  // running, which is precisely the silence being guarded against.
+  const dir = scratchWorkspace({ askturret: { testsNotRequired: 'nothing to test here' } });
+  mkdirSync(join(dir, 'packages', 'thing', 'src'), { recursive: true });
+  writeFileSync(join(dir, 'packages', 'thing', 'src', 'orphan.test.ts'), '// fixture\n');
+  const r = runGuard(EXECUTION, dir);
+  check('per-file: FAILS a testsNotRequired package that still ships test files', r.code, 1);
+  check('per-file: ...and names the stranded file', r.out.includes('src/orphan.test.ts'), true);
+}
+
+check(
+  'per-file: a package with NO test files is unaffected by the new check',
+  // The check must not invent a requirement the package-level rules never had.
+  runGuard(EXECUTION, scratchPerFile({ onDisk: [], reported: ['src/ghost.test.ts'] })).code,
+  0,
 );
 
 // ---------------------------------------------------------------------------

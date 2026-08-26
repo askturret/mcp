@@ -78,7 +78,22 @@ export interface DiscoveryContext<TExtensions = Record<string, never>> {
 
   /**
    * Cancellation signal for long-running discovery.
-   * Sources should check this periodically and abort cleanly.
+   *
+   * Sources should check this periodically. "Abort cleanly" used to be the
+   * whole instruction, which implied a rule without stating one — and that
+   * ambiguity is what let two frames of `compositeSource` disagree about what
+   * an aborted run returns (#340). So, stated:
+   *
+   * **An aborted `discover()` RESOLVES with `[]`. It does not reject, and it
+   * does not return partial results.**
+   *
+   * Partial results are excluded on purpose: a half-discovered set flows into
+   * the compiler and the registry snapshot hash, producing a valid-looking but
+   * silently incomplete registry. `[]` is unmistakably empty.
+   *
+   * An implementation with nothing interruptible may ignore the signal
+   * entirely — `fromDefinitions` is a synchronous map and does exactly that.
+   * What it must not do is invent a third behaviour.
    */
   readonly abortSignal: AbortSignal;
 

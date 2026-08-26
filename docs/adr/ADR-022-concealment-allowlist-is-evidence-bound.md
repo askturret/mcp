@@ -64,6 +64,20 @@ never probed, while every slot pattern was: it must now reject arbitrary prose
 *and* accept a canonical example of its declared attachment kind, and an
 attachment kind with no canonical samples is refused rather than trusted.
 
+**And it must not accept a NEIGHBOURING kind (#387).** The two directions above
+are both blind to a pattern that accepts too *much*: a widened pattern still
+accepts every canonical sample of its own kind and still rejects arbitrary
+prose, so it passes both. That gap became reachable once T1C was added as a
+*sibling* of T1 rather than a widening of it — a claim that rests entirely on
+T1C's truncation marker being mandatory. Weakening that marker to optional makes
+T1C silently accept the clean listings that are T1's territory, at which point
+the templates overlap and the sibling argument is void. Measured rather than
+supposed: that mutation survived the whole guard *and* every self-test
+assertion. So each kind may also declare samples it must REJECT, holding text
+that is a valid attachment of a different kind — necessarily per-kind, since the
+shared arbitrary-prose probes can only hold text no attachment should ever
+accept.
+
 **A template's `prose` must contain its own `concealment_clause`.** This closes
 the same attack at its root. Because captures legitimately elide their trailing
 listing, evidence binding matches prose as a *prefix* of a capture — and a bare

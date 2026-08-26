@@ -295,6 +295,47 @@ const ATTACHMENT_KINDS = {
     '106\t  rationale = "Rendered from the host clock"',
     '1\tconst a = 1;\n2\t\n3\tconst b = 2;',
   ],
+  // T1C (#387). The harness truncates a long listing by appending a marker line
+  // that is NOT number-led, which is exactly why the plain listing pattern
+  // rejects the whole tail and the message routes ANOMALOUS.
+  //
+  // The first two samples are transcribed from the raw emission captured in
+  // 20260826T074248Z-engineer-387 while T1C was being written; the blank line
+  // before the marker appears there and is optional, so both forms are canonical
+  // and a pattern that accepts only one of them is rejected here.
+  'truncated-line-numbered-listing': [
+    '1\tconst a = 1;\n127\t# a comment line\n\n... [56 lines truncated] ...',
+    '1\tconst a = 1;\n... [56 lines truncated] ...',
+    '1\t#!/usr/bin/env node\n149\t/**\n... [475 lines truncated] ...',
+    '1\tconst a = 1;\n212\t\n... [676 lines truncated] ...',
+  ],
+};
+
+/**
+ * Per-kind samples an attachment_pattern must REJECT.
+ *
+ * `ARBITRARY_TAIL_PROBES` below is shared by every kind, so it can only hold
+ * text that NO attachment should ever accept. This table holds the kind-SPECIFIC
+ * exclusions: text that is a perfectly valid attachment of a DIFFERENT kind.
+ *
+ * It exists because sibling kinds silently become supersets. T1C models the
+ * truncated listing as a sibling of T1 rather than a widening of it, and that
+ * claim rests entirely on its marker being REQUIRED. Weaken the marker clause to
+ * optional and T1C quietly starts accepting the clean listings that are T1's
+ * territory — at which point the two templates overlap and the sibling argument
+ * is void. Measured on #387: that exact mutation survived every other check in
+ * this guard AND every self-test assertion, because a pattern that accepts MORE
+ * still accepts all of its canonical samples and still rejects arbitrary prose.
+ * Accepting-too-much is invisible to a table of things that must be accepted.
+ */
+const ATTACHMENT_KIND_REJECTS = {
+  'truncated-line-numbered-listing': [
+    // Newline-terminated, which is the discriminating case: the un-terminated
+    // form below is refused by the listing group regardless of the marker, so
+    // it cannot detect a weakened marker on its own.
+    '1\tconst a = 1;\n2\tconst b = 2;\n',
+    '1\tconst a = 1;\n2\t\n3\tconst b = 2;',
+  ],
 };
 
 const ARBITRARY_TAIL_PROBES = [
@@ -342,6 +383,16 @@ function attachmentRisk(pattern, kind) {
       return `does not accept a canonical ${kind} (${JSON.stringify(sample.slice(0, 44))}) — it would never match a real message`;
     }
   }
+
+  // The third direction: accepting too much of a NEIGHBOURING kind. Neither
+  // loop above can see this, because a widened pattern still accepts every
+  // canonical sample and still rejects arbitrary prose.
+  for (const sample of ATTACHMENT_KIND_REJECTS[kind] ?? []) {
+    if (re.test(sample)) {
+      return `accepts ${JSON.stringify(sample.slice(0, 44))}, which belongs to a DIFFERENT attachment kind — a '${kind}' pattern that also matches its neighbour is a widening wearing a sibling's name`;
+    }
+  }
+
   return null;
 }
 

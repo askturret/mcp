@@ -70,6 +70,41 @@ check(
   1,
 );
 
+// --- #312: the false negative. `-w` was checked for PRESENCE while `--` was
+// --- checked for POSITION, so a `-w` sitting after the separator counted as
+// --- scoping when npm hands it to jest as a plain argument. Measured during
+// --- #207 QA at 54 suites / 844 tests, exit 0 — the full core suite, not the
+// --- one file the pattern named. That is the #207 silent no-op, reintroduced
+// --- through the form this guard was written to prevent.
+// ---
+// --- The guard's OWN remediation text produced it: "add `--` before the flag,
+// --- and `-w <package>` to scope it", followed literally, appends both after
+// --- `--` in that order.
+
+{
+  const after = run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -- -w packages/core --testPathPattern="parity"',
+      ),
+    }),
+  );
+  check('FAILS on `-w` AFTER `--`, which npm forwards instead of consuming (#312)', after.status, 1);
+
+  // Exit 1 alone would also be satisfied by the guard failing for an unrelated
+  // reason, so assert it identified THIS defect and said where the fix goes.
+  check(
+    '...and reports that the `-w` is on the wrong side of the separator',
+    /sits AFTER `--`/.test(after.stderr),
+    true,
+  );
+  check(
+    '...and tells the author to MOVE it rather than add one they already typed',
+    /move `-w <package>` BEFORE the `--`/.test(after.stderr),
+    true,
+  );
+}
+
 check(
   'PASSES on the correct form, `-w <pkg>` AND `--`',
   run(

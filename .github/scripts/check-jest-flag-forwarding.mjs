@@ -31,13 +31,21 @@
  *     so a correct command breaks unrelated packages. That is why #207 could
  *     not be closed by adding `--` and nothing else.
  *
- * ## Scope: places the string would EXECUTE
+ * ## Scope: files where the string would EXECUTE
  *
- * Workflow `run:` blocks and `package.json` scripts only. Prose is deliberately
- * NOT scanned — CONTRIBUTING.md documents the broken form as the thing not to
- * do, and a guard that cannot tell an example from an instruction would either
- * fail on its own documentation or force that documentation to omit the very
- * string a reader needs to recognise.
+ * Workflow files and `package.json` scripts. Prose is deliberately NOT scanned
+ * — CONTRIBUTING.md documents the broken form as the thing not to do, and a
+ * guard that cannot tell an example from an instruction would either fail on
+ * its own documentation or force that documentation to omit the very string a
+ * reader needs to recognise.
+ *
+ * The granularity differs between the two, and this comment used to overstate
+ * it (#312). `package.json` really is read through `scripts` only, so a
+ * dependency or description mentioning the string cannot trip the guard. A
+ * workflow, by contrast, is scanned LINE BY LINE across the whole file, not
+ * `run:` blocks only — so the broken form inside a YAML **comment** fails too.
+ * That is the safe direction and not worth the YAML parser it would take to
+ * narrow, but it is not what the previous wording promised.
  *
  * Usage:
  *   node .github/scripts/check-jest-flag-forwarding.mjs [rootDir]
@@ -45,6 +53,9 @@
  * Errors (exit 1):
  *   - an `npm test`/`npm run test` command passing a jest flag with no `--`
  *   - the same with `--` but no `-w`/`--workspace`, which breaks other packages
+ *   - `-w` present but AFTER the `--`, where npm forwards it to jest instead of
+ *     scoping the run (#312) — the full suite runs and the pattern filters
+ *     nothing, which is the #207 silent no-op this guard exists to prevent
  */
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
@@ -71,6 +82,18 @@ const JEST_FLAGS = [
 ];
 
 const FLAG_ALTERNATION = JEST_FLAGS.join('|');
+
+/**
+ * The one form that works, quoted in every finding.
+ *
+ * #312's sharpest observation is that this guard's OWN advice, followed
+ * literally, produced the defect it exists to prevent: "add `--` before the
+ * flag, and `-w <package>` to scope it" appends both after `--`, in that order,
+ * which is exactly the broken command. A guard that hands out an ambiguous fix
+ * has a defect in its output, not merely in its matcher — so every branch now
+ * shows the position rather than describing it.
+ */
+const CANONICAL = 'npm test -w packages/<pkg> -- --testPathPattern="<pattern>"';
 
 /** An `npm test` / `npm run test` command, up to the end of the line. */
 const NPM_TEST = new RegExp(String.raw`\bnpm\s+(?:run\s+)?test\b[^\n]*`, 'g');
@@ -99,29 +122,40 @@ function classify(command) {
 
   const flagAt = flag.index;
 
-  // A `--` separator BEFORE the flag is what forwards it. One appearing after
-  // the flag does not help it, so position is checked rather than presence.
-  const separator = /(?:^|\s)--(?=\s)/g;
-  let forwarded = false;
-  for (let m = separator.exec(command); m; m = separator.exec(command)) {
-    if (m.index < flagAt) {
-      forwarded = true;
-      break;
-    }
-  }
+  // npm's argv boundary is the FIRST standalone `--`: everything after it is
+  // handed to the script rather than read by npm. BOTH checks below are
+  // positional against that one boundary (#312).
+  const sepMatch = /(?:^|\s)--(?=\s)/.exec(command);
+  const sepAt = sepMatch ? sepMatch.index : -1;
 
-  const scoped = /(?:^|\s)(?:-w|--workspace)(?:=|\s)/.test(command);
+  // A `--` BEFORE the flag is what forwards it; one after does not help it.
+  const forwarded = sepAt !== -1 && sepAt < flagAt;
+
+  // `-w` AFTER the separator is handed to jest as a plain argument, NOT
+  // consumed by npm as a workspace selector — so npm runs every workspace and
+  // the pattern scopes nothing. Presence alone was the #312 false negative.
+  const wMatch = /(?:^|\s)(?:-w|--workspace)(?:=|\s)/.exec(command);
+  const scoped = wMatch !== null && (sepAt === -1 || wMatch.index < sepAt);
 
   if (!forwarded) {
     return {
       problem: `npm eats --${flag[1]} as its own config and runs the FULL suite`,
-      fix: 'add `--` before the flag, and `-w <package>` to scope it',
+      fix: `put \`-w <package>\` and \`--\` BEFORE the flag: ${CANONICAL}`,
+    };
+  }
+  // Distinguished from "no -w at all" because the remedy differs: the flag is
+  // present and merely on the wrong side of `--`. Saying "add -w" to someone
+  // who already typed it is the ambiguity that produced this defect.
+  if (wMatch !== null && !scoped) {
+    return {
+      problem: `\`${command.slice(wMatch.index, wMatch.index + 2).trim()}\` sits AFTER \`--\`, so npm forwards it to jest instead of scoping the run; every workspace runs and --${flag[1]} scopes nothing`,
+      fix: `move \`-w <package>\` BEFORE the \`--\`: ${CANONICAL}`,
     };
   }
   if (!scoped) {
     return {
       problem: `--${flag[1]} is forwarded to EVERY workspace; jest exits 1 wherever it matches nothing`,
-      fix: 'add `-w <package>` so the pattern applies to one workspace',
+      fix: `add \`-w <package>\` BEFORE the \`--\`: ${CANONICAL}`,
     };
   }
   return null;

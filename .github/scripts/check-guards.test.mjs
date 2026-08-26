@@ -1286,6 +1286,18 @@ check(
 // today, so that strictness is UNOBSERVABLE here and is pinned by fixture
 // rather than claimed from the real tree.
 //
+// That is TWO mechanisms, and they need TWO fixtures — a point QA had to make
+// because the first version shipped one. Stripping `#.*$` removes the path
+// ALONG WITH the comment, so the comment fixture reddens on comment-stripping
+// alone and can say nothing about the verb. Dropping `/\bnode\b/` left the
+// whole suite green. The verb now has its own fixture, naming a guard on a
+// `- name:` line that carries no `node`, and it reddens under that mutation and
+// no other.
+//
+// The `(?![\w.-])` boundary has a fixture too, and its real job is the
+// direction the self-test fixture cannot reach: `check-b.mjs.bak` named by a
+// workflow must not count as wiring for `check-b.mjs`.
+//
 // Residual, stated rather than left to be found: a mention on a non-`run:` YAML
 // line that happens to contain `node` would still count. Closing that needs a
 // YAML parser, which this repo's guards deliberately refuse.
@@ -1297,7 +1309,7 @@ const WIRING_EXEMPT = Object.freeze({
 });
 
 function guardWiringReport({ scriptsDir, workflowsDir, exempt = {} }) {
-  const fail = (cannotCheck) => ({ cannotCheck, unwired: [], scanned: 0 });
+  const fail = (cannotCheck) => ({ cannotCheck, unwired: [], subjects: [], scanned: 0 });
 
   let workflowFiles;
   try {
@@ -1335,7 +1347,15 @@ function guardWiringReport({ scriptsDir, workflowsDir, exempt = {} }) {
       exempt[s] === undefined &&
       !new RegExp(String.raw`\.github/scripts/${s.replace(/\./g, '\\.')}(?![\w.-])`).test(invoked),
   );
-  return { cannotCheck: null, unwired, scanned: scripts.length };
+  // `subjects` is the enumerated set itself, returned rather than left internal
+  // so the self-inclusion assertion can be made AGAINST THE CODE UNDER TEST
+  // rather than against a second, independent `readdirSync`. A test that
+  // re-enumerates the directory asserts "this file exists on disk" — true
+  // whenever the test runs at all, and blind to a change in what this function
+  // enumerates. QA proved that blindness: excluding `.test.mjs` here left the
+  // suite fully green, which is exactly the special case the comment above says
+  // this file must not be.
+  return { cannotCheck: null, unwired, subjects: scripts, scanned: scripts.length };
 }
 
 /** A fixture repo with the real layout: scripts on disk, workflows referencing them. */
@@ -1381,7 +1401,7 @@ const wfStep = (script) => `jobs:\n  a:\n    steps:\n      - run: node .github/s
   // it. Verified by mutation, not assumed.
   check(
     'wiring: this check includes ITSELF in the set it enumerates (#381)',
-    readdirSync(here).includes('check-guards.test.mjs'),
+    real.subjects.includes('check-guards.test.mjs'),
     true,
   );
 }
@@ -1413,6 +1433,50 @@ const wfStep = (script) => `jobs:\n  a:\n    steps:\n      - run: node .github/s
     'wiring: a guard named ONLY in a comment is still unwired (#381)',
     r.unwired.join(', '),
     'check-mentioned.mjs',
+  );
+}
+
+{
+  // The other half of the strictness: the INVOCATION VERB. The comment fixture
+  // above cannot reach this — stripping `#.*$` takes the path with it, so that
+  // fixture reddens on comment-stripping alone and is blind to `/\bnode\b/`.
+  // Here the path is named on a line that survives stripping intact and simply
+  // is not an invocation.
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: { 'check-named.mjs': '' },
+    workflows: {
+      'test.yml':
+        'jobs:\n  a:\n    steps:\n      - name: runs .github/scripts/check-named.mjs eventually\n        run: echo hi\n',
+    },
+  });
+  const r = guardWiringReport({ scriptsDir, workflowsDir });
+
+  check(
+    'wiring: a guard named on a line WITHOUT the invocation verb is still unwired (#381)',
+    r.unwired.join(', '),
+    'check-named.mjs',
+  );
+}
+
+{
+  // The `(?![\w.-])` boundary, in the direction that actually bites. A leftover
+  // `check-b.mjs.bak` still named by a workflow step must not be read as wiring
+  // for the live `check-b.mjs` — that is protection withdrawn silently, which is
+  // this section's whole subject.
+  //
+  // The self-test fixture below looks like it covers this and does not:
+  // `check-orphan.mjs` is not a substring of `check-orphan.test.mjs`, so that
+  // case never depends on the lookahead at all.
+  const { scriptsDir, workflowsDir } = wiringFixture({
+    scripts: { 'check-b.mjs': '' },
+    workflows: { 'test.yml': wfStep('check-b.mjs.bak') },
+  });
+  const r = guardWiringReport({ scriptsDir, workflowsDir });
+
+  check(
+    'wiring: a longer path that merely starts with a guard name is not wiring for it (#381)',
+    r.unwired.join(', '),
+    'check-b.mjs',
   );
 }
 

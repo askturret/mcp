@@ -414,6 +414,23 @@ const unbalanced = [];
 let checked = 0;
 let anchorsChecked = 0;
 
+/**
+ * Which failure categories fired, so EVERY one is reported in a single run (#337).
+ *
+ * Each category used to `process.exit(1)` as soon as it printed, so only the
+ * first non-empty one was ever seen. Nothing was permanently lost — fix that
+ * category and the next run surfaces the next — but it misreads badly in exactly
+ * the situation the guard is used in.
+ *
+ * It cost a near-miss during #333's QA: a real file link and a real anchor were
+ * broken together, the anchor failure never appeared, and that LOOKED like the
+ * change under test had suppressed it. It had not; the link failure was masking
+ * it. An investigator cannot tell "this finding is absent" from "this finding is
+ * queued behind another one", and the guard was giving no way to distinguish
+ * them. Reporting all of them costs one extra pass over lists already built.
+ */
+const failingCategories = [];
+
 /** Anchors per file, computed once — a hub doc is linked to from many places. */
 const anchorCache = new Map();
 
@@ -634,7 +651,7 @@ Close the fence, or if the file is intentionally unusual, fix it here rather
 than letting the scan silently narrow.
 
 ::error::${unbalanced.length} markdown file(s) have an unbalanced code fence.`);
-  process.exit(1);
+  failingCategories.push('unbalanced code fences');
 }
 
 if (broken.length > 0) {
@@ -651,7 +668,7 @@ at the nearest thing that DOES exist — deleting the link loses the information
 that someone intended the page, and leaving it 404s a reader.
 
 ::error::${broken.length} broken markdown link(s).`);
-  process.exit(1);
+  failingCategories.push('broken links');
 }
 
 if (deadAnchors.length > 0) {
@@ -670,8 +687,25 @@ so "## Policies & Governance" is "#policies--governance" — two hyphens. If a
 heading was renamed, every link to it needs the same edit.
 
 ::error::${deadAnchors.length} markdown link(s) point at a heading that does not exist.`);
-  process.exit(1);
+  failingCategories.push('dead anchors');
 }
+
+if (failingCategories.length > 1) {
+  console.error(`
+All ${failingCategories.length} failing categories above are reported: ${failingCategories.join(', ')}.
+Fixing one will NOT reveal another on the next run, because none was withheld.`);
+
+  // Stated only when it is true. The fence failure means the scan stopped early
+  // inside those files, so the other two lists are a floor rather than a total —
+  // a reader who fixes exactly what is listed could still be left with more.
+  if (unbalanced.length > 0) {
+    console.error(
+      'Note: links after an unclosed fence were skipped, so the other categories may UNDER-report.',
+    );
+  }
+}
+
+if (failingCategories.length > 0) process.exit(1);
 
 console.log('\nNo broken markdown links or anchors.');
 process.exit(0);

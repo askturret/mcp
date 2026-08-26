@@ -61,7 +61,12 @@ function scratch(files) {
 }
 
 function run(dir) {
-  const r = spawnSync('node', [GUARD, dir], { encoding: 'utf-8' });
+  // `process.execPath` rather than a bare 'node' (#337). Resolving through PATH
+  // means that off PATH every spawn fails to start, and the suite reports
+  // 5 passed / 91 failed — an ENVIRONMENTAL failure that reads exactly like a
+  // code defect and sends the reader hunting through the guard. execPath is the
+  // interpreter already running this file, so it is exact and cannot drift.
+  const r = spawnSync(process.execPath, [GUARD, dir], { encoding: 'utf-8' });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -947,6 +952,77 @@ check(
     true,
   );
   check('...and reports what it actually scanned', /Scanned \d+ markdown file\(s\)/.test(r.out), true);
+}
+
+// ---------------------------------------------------------------------------
+// #337 item 2: every failing category is reported in ONE run.
+//
+// Each category used to exit as soon as it printed, so a broken file link
+// MASKED a broken anchor. Nothing was permanently lost — the next run would
+// surface it — but during #333's QA that was indistinguishable from the change
+// under test having suppressed the anchor finding, and cost a near-miss.
+//
+// These assert on the REPORT, not the exit code: the exit code was already 1 in
+// both the masked and unmasked cases, so a status-only test cannot see this bug
+// at all.
+
+{
+  const dir = scratch({
+    'a.md': '# Title\n\n[gone](./nope.md)\n\n[bad anchor](./b.md#no-such-heading)\n',
+    'b.md': '# Real Heading\n',
+  });
+  const r = run(dir);
+
+  check('a broken link and a dead anchor together still fail', r.code, 1);
+  check(
+    'the broken LINK is reported',
+    /Markdown links pointing at files that do not exist/.test(r.out),
+    true,
+  );
+  check(
+    'the dead ANCHOR is reported in the SAME run, rather than masked by the link',
+    /whose FILE exists but whose anchor does not/.test(r.out),
+    true,
+  );
+  check('...naming the anchor that is missing', /#no-such-heading/.test(r.out), true);
+  check(
+    '...and saying plainly that nothing was withheld',
+    /Fixing one will NOT reveal another on the next run/.test(r.out),
+    true,
+  );
+}
+
+{
+  // With only ONE category failing there is nothing to reconcile, so the
+  // multi-category summary must stay quiet rather than becoming boilerplate.
+  const r = run(scratch({ 'a.md': '# Title\n\n[gone](./nope.md)\n' }));
+  check('a single failing category still fails', r.code, 1);
+  check(
+    '...without the multi-category summary',
+    /Fixing one will NOT reveal another/.test(r.out),
+    false,
+  );
+}
+
+{
+  // An unclosed fence narrows the scan, so the other categories are a floor
+  // rather than a total. Said only when the fence category actually fired.
+  const r = run(
+    scratch({
+      'a.md': '# Title\n\n[gone](./nope.md)\n\n```\nunclosed\n',
+    }),
+  );
+  check('an unbalanced fence alongside a broken link fails', r.code, 1);
+  check(
+    'both categories are reported',
+    /unclosed fenced block/.test(r.out) && /files that do not exist/.test(r.out),
+    true,
+  );
+  check(
+    '...with the caveat that the other categories may under-report',
+    /may UNDER-report/.test(r.out),
+    true,
+  );
 }
 
 // ---------------------------------------------------------------------------

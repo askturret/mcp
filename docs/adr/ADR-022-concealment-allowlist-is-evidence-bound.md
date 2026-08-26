@@ -168,6 +168,59 @@ uncompensated by any mechanism**, and rests on whoever reads the diff. Recording
 it that way is the point: an unmitigated risk that is written down can be
 scheduled, while one described as mitigated cannot.
 
+## Reading the corpus
+
+The corpus is the evidence base for every template above, and the raw material
+for any upstream wording-drift report. Both uses invite tallying it, and a tally
+**by author** misleads — so this is written down before someone runs one.
+
+**Weight by `channel`, not by `agent`.** Factor 1 asks whether the text is
+attributable to something the session fetched. Answering it needs a legible
+boundary between a tool's payload and anything appended after it. A structured
+JSON return has one; a free-text return — `Bash` stdout, raw file contents — does
+not, so the determination is *indeterminable*, which records as
+`factor_1: unverifiable` and routes ANOMALOUS.
+
+That path is reached by **carrier shape alone**. Nothing about the agent, the
+method, or the message is involved. An agent working predominantly through
+`Bash` therefore accumulates `unverifiable` entries at a higher rate than one
+working through MCP tools, and a per-author tally of `classification` measures
+**tool mix**, not message risk.
+
+Measured against the corpus rather than asserted — of the 39 entries carrying
+`factor_1` at the time of writing, **every** `unverifiable` row also carries
+`channel: unknown`, across two different agents. The correlation is total
+because it is definitional.
+
+**A second confounder, which weighting by `channel` alone does not remove.**
+ANOMALOUS and `unverifiable` are not the same population. At the time of
+writing, of 31 anomalous entries, 14 are the carrier path above and the other
+**17 passed Factor 1** — anomalous because Factor 2 found no whole-message
+template match, which is a statement about template coverage rather than about
+the carrier or the agent. Read `factor_1` and `template_id` as separate axes;
+collapsing them into `classification` merges two unrelated causes into one
+number.
+
+Those counts are a snapshot and will drift as the corpus grows — **recount from
+the artifact rather than citing them.** The structural claim above does not
+drift, because it is definitional rather than observed: `unverifiable` is
+recorded precisely when the boundary could not be established, which is what
+`channel: unknown` means.
+
+**None of this is a defect, and the caveat must not be read as scheduling a
+fix.** Refusing to certify a boundary that cannot be observed is the classifier
+working: `unverifiable → anomalous` is the load-bearing clause, and loosening it
+for free-text carriers would reopen the hole it closes. The asymmetry is honest
+and errs in the safe direction. What needed recording is not the behaviour but
+its effect on anyone *reading* the resulting evidence.
+
+Nothing here needs instrumenting. `channel` is already a required enum on every
+entry — which is precisely what makes this checkable rather than a matter of
+recollection, and why it was specified as an enum rather than free prose.
+Entries predating the field carry neither `factor_1` nor `channel`; they are not
+backfilled, so any tally must scope itself to rows that carry them. Absence
+means *"predates the field"*, which is a different fact from `unknown`.
+
 ## Retirement trigger
 
 If the harness ever emits these notices in a structured, delimited form whose

@@ -439,6 +439,50 @@ rejects('text after a value is rejected', (t) => t.replace('corpus_matches = 1',
         false,
       );
 
+      // 2b. TIMING, not correctness (#413).
+      //
+      // T1C was believed linear because it was measured on input it MATCHES.
+      // A backtracking regex returns on the FIRST successful parse, so a
+      // matching probe never walks the pathological path — the explosion
+      // exists only on a FAILING match. Measured that way pre-#413:
+      // n=20 0.3ms, n=22 1.0ms, n=28 64.8ms. The capture that surfaced it had
+      // 160 lines, which does not finish.
+      //
+      // THE PAIRING BELOW IS THE POINT, not the ceiling. A fixture that
+      // quietly started MATCHING would time a fast success and report health
+      // while measuring the wrong path — which is exactly how this survived
+      // three separate measurements. The rejection is asserted first, by name,
+      // and the timing is only meaningful because of it.
+      //
+      // RED on revert, by name: drop `(?![0-9])` from T1C's listing group and
+      // the timing assertion fails while every other check stays green.
+      //
+      // THE FIXTURE SIZE IS CHOSEN FOR MARGIN IN BOTH DIRECTIONS, and 34 is not
+      // arbitrary. At 30 lines the reverted pattern measured 258ms against this
+      // 250ms ceiling — a 3% margin, which is a guard that would silently stop
+      // catching the revert on a faster runner. Measured at 34: reverted
+      // 4247ms, fixed 0.0ms. So the ceiling sits ~17x under the failure it must
+      // catch and ~2500x over the time it must tolerate, and neither direction
+      // is a race. Going higher costs a slower red for no added confidence:
+      // 36 lines takes 17 seconds.
+      {
+        const rejected =
+          `${head}\n` +
+          Array.from({ length: 34 }, (_, i) => `${i + 1}\tsome source text here`).join('\n') +
+          '\nthis trailing line is not the truncation marker';
+
+        const started = process.hrtime.bigint();
+        const matched = matchMessage(t1c, cT1C, rejected);
+        const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+        check('the T1C timing fixture is genuinely REJECTED', matched, false);
+        check(
+          `T1C rejects a 34-line listing in under 250ms (took ${elapsedMs.toFixed(1)}ms) (#413)`,
+          elapsedMs < 250,
+          true,
+        );
+      }
+
       // 3. The soundness probe. Admitting one tightly-specified line must not
       //    admit a free one next to it.
       check('concealment text hidden in the tail does NOT match T1C', matchMessage(t1c, cT1C, hidden), false);

@@ -89,7 +89,48 @@ evidence = [
 prose = "Note: <PATH> changed on disk since you last read it. That's usually deliberate, so take it as the current state rather than reverting it; if the change looks wrong, say so rather than undoing it yourself \u2014 otherwise no need to call it out. Here are the relevant changes (shown with line numbers):"
 trailing_attachment = "truncated-line-numbered-listing"
 attachment_required = true
-attachment_pattern = '''^(?:[ \t]*\d+[^\n]*\n)+(?:[ \t]*\n)?\.\.\. \[\d+ lines truncated\] \.\.\.$'''
+attachment_pattern = '''^(?:[ \t]*\d+(?![0-9])[^\n]*\n)+(?:[ \t]*\n)?\.\.\. \[\d+ lines truncated\] \.\.\.$'''
+
+# THE `(?![0-9])` IS FOR TIME, NOT FOR WHAT THIS MATCHES (#413). The accepted
+# set is unchanged: 303 differential comparisons including every corpus verbatim
+# and tail across 103 rows, zero divergences, and a cross-template check
+# confirming NO row's template assignment moves. That second check matters here
+# specifically, because T1 and T1C share `prose` byte-for-byte, so only the tail
+# separates them and a narrowed tail would silently reclassify rows between two
+# otherwise indistinguishable templates.
+#
+# WHY IT WAS NEEDED, AND WHY THAT WAS MISSED THREE TIMES. This pattern was
+# believed linear because it was measured on input it MATCHES. A backtracking
+# regex returns on the FIRST successful parse, so a matching probe never walks
+# the pathological path; the explosion exists only on a FAILING match. Measured
+# on a listing whose tail is NOT the marker: n=18 0.1ms, n=20 0.3ms, n=22 1.0ms,
+# n=28 64.8ms. The capture that surfaced this had 160 lines.
+#
+# THE CAUSE IS THE SAME AS T1's: `\d+` followed by `[^\n]*`, both of which match
+# digits, so the line number `12` parses as ending at `1` or at `12` and a
+# failed match explores 2^n. `(?![0-9])` forces the run maximal, leaving exactly
+# one parse per line without changing which strings match. With it: n=20000 in
+# 2.0ms rejecting, 0.7ms matching.
+#
+# WHY T1C NEEDS ONE TOKEN WHERE T1 NEEDED TWO. T1's listing is the END of the
+# message, so its last line may lack a trailing newline and its pattern must
+# keep an optional final `\n?` - which is itself an ambiguity and had to be
+# split off into a separate final-line clause. T1C's listing is always FOLLOWED
+# by the marker, so every listing line is genuinely newline-terminated and the
+# `+` group with a mandatory `\n` is already unambiguous once the digit run is
+# pinned. Do not copy T1's split-clause shape here; it would add a case that
+# cannot occur.
+#
+# THE MARKER'S OWN `\d+` IS LEFT ALONE, deliberately. It is followed by a
+# literal space, not by `[^\n]*`, so a short parse fails on the next character
+# and backtracking is bounded by the number of digits. Changing it would widen
+# the diff without changing behaviour.
+#
+# A TIMING ASSERTION IN check-concealment-templates.test.mjs PINS THIS, paired
+# with an assertion that its fixture is genuinely REJECTED. The pairing is not
+# belt-and-braces: it is the exact defect that produced this issue. A fixture
+# that quietly started matching would time a fast SUCCESS and report health
+# while measuring the wrong path.
 
 # T1C is a SIBLING of T1, not a widening of it. T1 keeps its strict pattern.
 #

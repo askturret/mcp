@@ -1247,7 +1247,13 @@ describe('the registry docstring rests on a checkable premise (#433)', () => {
       if (existsSync(p)) out.push({ path: p, text: normalise(readFileSync(p, 'utf8')) });
     };
     add(join(repoRoot, 'README.md'));
-    add(join(repoRoot, '.github', 'CONTRIBUTING.md'));
+    // AT THE ROOT, not under `.github/` (#433 QA). The first version added
+    // `.github/CONTRIBUTING.md`, which does not exist — and because `add` is
+    // `existsSync`-guarded, that line contributed NOTHING, silently, while
+    // reading as though CONTRIBUTING were covered. The real file is 14.5 KB at
+    // the root and was never scanned. `claimSites().length > 3` could not catch
+    // it: plenty of other files are found.
+    add(join(repoRoot, 'CONTRIBUTING.md'));
     for (const dir of ['packages', 'examples']) {
       const base = join(repoRoot, dir);
       if (!existsSync(base)) continue;
@@ -1255,10 +1261,19 @@ describe('the registry docstring rests on a checkable premise (#433)', () => {
         if (entry.isDirectory()) add(join(base, entry.name, 'README.md'));
       }
     }
-    const docs = join(repoRoot, 'docs');
-    if (existsSync(docs)) {
-      for (const f of readdirSync(docs)) if (f.endsWith('.md')) add(join(docs, f));
-    }
+    // RECURSIVELY (#433 QA). Top-level-only reached 21 of 39 markdown files
+    // under `docs/`, leaving the 17 ADRs and `docs/migrations/` unscanned — and
+    // an ADR is exactly where a publishing-or-privacy claim gets argued at
+    // length.
+    const walk = (dir: string): void => {
+      if (!existsSync(dir)) return;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.md')) add(full);
+      }
+    };
+    walk(join(repoRoot, 'docs'));
     out.push({ path: 'registry.ts', text: normalise(registrySource) });
     return out;
   }
@@ -1275,13 +1290,67 @@ describe('the registry docstring rests on a checkable premise (#433)', () => {
    * So the copula is matched explicitly rather than the words merely
    * co-occurring. A claim about what IS the case is the thing that can rot; a
    * record of what WAS is not.
+   *
+   * ## WHAT THIS DOES AND DOES NOT CATCH — stated narrowly on purpose
+   *
+   * It catches a recurrence of the CLAIM in this shape — quantifier, the noun
+   * `workspace`, a present-tense copula, `private` — in any file scanned above,
+   * including a new one. That is the property worth having, and it is real: a
+   * fourth instance in a new README is caught where a sentence-shaped check
+   * could never manage it.
+   *
+   * IT IS NOT A SEMANTIC CHECK, and it does not scan for every way the thought
+   * could be phrased. QA stress-tested 21 phrasings and 9 slip through by
+   * changing the NOUN, the QUANTIFIER or the word order rather than the copula:
+   * "All packages in this repository are private" (and the directories really
+   * are called `packages/`), "Each workspace is private", "None of the
+   * workspaces are public".
+   *
+   * CHASING THAT IS DELIBERATELY NOT DONE. Completeness over prose is
+   * unattainable, and precision matters more for a guard reading every document
+   * in the tree: a noisy guard gets deleted, and this one currently
+   * over-flags NOTHING — zero false positives across both past-tense records,
+   * both scoped lists, the partial claim and the TypeScript-private field.
+   *
+   * An earlier version of this comment said it scanned "across every place
+   * documentation lives", which overstated its reach. A guard whose comment
+   * claims more coverage than it has is this PR's own subject, one level down.
    */
   const UNIVERSAL_PRIVACY_CLAIM =
-    /\b(?:every|all)\b[^.\n]{0,60}\bworkspaces?\b[^.\n]{0,30}\b(?:is|are|remains?|stays?)\b[^.\n]{0,30}`?private/i;
+    /\b(?:every|all)\b[^.\n]{0,60}\bworkspaces?\b[^.\n]{0,30}\b(?:is|are|remains?|stays?|continues?)\b[^.\n]{0,30}`?private/i;
 
   it('scans more than one file, so the claim-wide check is not vacuous', () => {
     // The #433 defect in miniature: a scan that examines nothing reports clean.
     expect(claimSites().length).toBeGreaterThan(3);
+  });
+
+  // THE ASSERTION THAT WOULD HAVE CAUGHT THE DEAD PATH (#433 QA).
+  //
+  // The scan added `.github/CONTRIBUTING.md`, which does not exist. `add()` is
+  // `existsSync`-guarded, so the line contributed nothing — SILENTLY — while
+  // reading as though CONTRIBUTING were covered. The count-based non-vacuity
+  // check above could not see it, because plenty of other files were found.
+  //
+  // A count proves the scan found SOMETHING. It cannot prove it found the
+  // things it was aimed at. So the set is pinned by NAME: pin it, do not assume
+  // it — the same lesson this PR applies to the claim it is fixing.
+  //
+  // Named individually rather than as a total, because a total is the thing
+  // that just failed to notice. `docs/adr/` is listed to pin RECURSION
+  // specifically: a top-level-only walk reached 21 of 39 markdown files, and an
+  // ADR is exactly where a publishing claim gets argued at length.
+  it('...and it scans the files it is AIMED at, by name (#433)', () => {
+    const scanned = claimSites().map((s) => s.path);
+    const hasSuffix = (suffix: string) => scanned.some((p) => p.endsWith(suffix));
+
+    expect(hasSuffix('/README.md')).toBe(true);
+    expect(hasSuffix('/CONTRIBUTING.md')).toBe(true);
+    expect(hasSuffix('/packages/gateway/README.md')).toBe(true);
+    expect(hasSuffix('/docs/releasing.md')).toBe(true);
+    // Recursion, pinned: these are two directory levels down.
+    expect(scanned.some((p) => p.includes('/docs/adr/'))).toBe(true);
+    expect(scanned.some((p) => p.includes('/docs/migrations/'))).toBe(true);
+    expect(scanned).toContain('registry.ts');
   });
 
   it('NO documentation claims every workspace is private (#433)', () => {

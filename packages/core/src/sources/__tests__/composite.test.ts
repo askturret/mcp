@@ -292,18 +292,19 @@ export async function testSequentialAbortMidFlight(): Promise<void> {
     throw new Error(`Expected early return (~50-100ms), but took ${elapsed}ms`);
   }
 
-  // Should only have the fast operation (slow source was interrupted)
-  if (discovered.length !== 1) {
-    throw new Error(`Expected 1 operation (fast only), got ${discovered.length}`);
+  // An aborted discover() resolves with [] — never a partial set (#340). The
+  // fast source HAD completed before the abort landed, so this is precisely the
+  // case where partial results would be tempting, and precisely the case the
+  // decided contract rules out: a half-discovered set reaches the compiler and
+  // the registry hash, minting a valid-looking but incomplete registry.
+  if (discovered.length !== 0) {
+    throw new Error(
+      `Expected [] on abort, got ${discovered.length} operation(s): ` +
+        `${discovered.map((o) => o.candidateId).join(', ')}`,
+    );
   }
 
-  const op = discovered[0];
-  if (!op) throw new Error('No operation discovered');
-  if (op.candidateId !== 'fast-op') {
-    throw new Error(`Expected fast-op, got ${op.candidateId}`);
-  }
-
-  console.log(`✓ Sequential mode aborts mid-flight (${elapsed}ms, expected < 150ms)`);
+  console.log(`✓ Sequential mode aborts mid-flight and returns [] (${elapsed}ms, expected < 150ms)`);
 }
 
 /**
@@ -316,46 +317,71 @@ export async function testSequentialAbortMidFlight(): Promise<void> {
  * name promised seven tests. #216 was the first instance of this shape; this is
  * the second, and #313 the third.
  *
- * The bodies above are deliberately unchanged — they carry their own
- * `throw new Error(...)` assertions, and rewriting them in the same commit that
- * makes them run would make it impossible to tell a pre-existing failure from
- * one introduced by the conversion.
+ * #313 left the bodies deliberately unchanged, so that a pre-existing failure
+ * could not be confused with one introduced by the conversion. That restraint
+ * is what surfaced #340: one body failed honestly, and its failure was a real
+ * defect rather than a conversion artifact.
+ *
+ * #340 then changed exactly one of them — `testSequentialAbortMidFlight`'s
+ * length assertion — because the contract it encoded was the thing under
+ * decision. Every other body is still as it was written.
  */
 describe('compositeSource', () => {
   it('de-duplicates overlapping candidate ids across sources', testCompositeWithOverlappingIds);
-  it('rejects when the abort signal is already aborted', testCompositeAbortSignal);
+  it('resolves with [] when the abort signal is already aborted', testCompositeAbortSignal);
   it('stops mid-flight when the signal aborts during discovery', testCompositeAbortMidFlight);
   it('discovers from sources in parallel by default', testCompositeParallelDiscovery);
   it('discovers sequentially when asked to', testCompositeSequentialDiscovery);
   it('honours a custom source id', testCompositeCustomSourceId);
 
   /**
-   * KNOWN DEFECT, surfaced by making this file run for the first time (#313).
+   * The decided contract (#340): an aborted `discover()` resolves with `[]` —
+   * not a partial set, and not a rejection.
    *
-   * `it.failing` asserts the test FAILS today. It is not a skip: the body
-   * executes, and if someone fixes `composite.ts` this goes RED with "Failing
-   * test passed", which is the prompt to delete this comment and flip it back
-   * to `it`. A `.skip` would assert nothing and rot silently — the exact shape
-   * #313 exists to remove.
+   * This was `it.failing` while the question was open, because the body asserted
+   * the partial-results reading that `discoverSequential`'s dead accumulator
+   * implied. #340 settled it the other way and the assertion now pins `[]`.
    *
-   * What it catches: `discoverSequential` deliberately breaks out of its loop on
-   * abort and returns the operations gathered so far, but `discover()` then does
-   *
-   *     if (abortSignal.aborted) return [];
-   *
-   * unconditionally, so those partial results are discarded and the
-   * accumulation is unreachable. Two code paths in one module disagree, and
-   * nothing noticed because this file had never executed.
-   *
-   * The test asserts the fast source's operation survives an abort that lands
-   * mid-flight in a later source. It gets 0. Both the test and
-   * `discoverSequential` are independent artifacts of the author's intent, and
-   * they agree with each other against the outer discard.
-   *
-   * NOT fixed here on purpose: what `discover()` returns when aborted is a
-   * public-API behaviour decision for `packages/core`, and this change set is
-   * "make these files execute". `compositeSource` has no production callers
-   * today, so the fix is cheap whenever it is approved.
+   * The test is not vacuous in either half. The length assertion pins the
+   * contract, so a later drift to partial results goes red — and the
+   * `elapsed > 150` assertion is the part with teeth: it proves sequential abort
+   * interrupts a 300ms child MID-FLIGHT rather than waiting it out, which is a
+   * property `[]` alone cannot distinguish from doing nothing at all.
    */
-  it.failing('aborts mid-flight in sequential mode too', testSequentialAbortMidFlight);
+  it('aborts mid-flight in sequential mode and resolves with []', testSequentialAbortMidFlight);
+
+  /**
+   * The abort exit is keyed on the error TYPE, never on its message (#340).
+   *
+   * The catch used to read `error.message === 'Aborted'`, so a child source
+   * throwing `new Error('Aborted')` for any unrelated reason was swallowed and
+   * returned as a SUCCESSFUL EMPTY DISCOVERY — a real failure becoming a clean
+   * result, on a public API, reachable through any child.
+   *
+   * Both directions are asserted, because either alone is satisfiable by a
+   * wrong implementation: one that never catches aborts would pass the first,
+   * and one that catches everything would pass the second.
+   */
+  describe('distinguishes a real error from an abort', () => {
+    const failing = (error: Error): OperationSource => ({
+      id: 'exploding-source',
+      discover(): Promise<DiscoveredOperation[]> {
+        return Promise.reject(error);
+      },
+    });
+
+    for (const [label, mode] of [['parallel', true], ['sequential', false]] as const) {
+      it(`propagates a child's Error('Aborted') rather than returning [] (${label})`, async () => {
+        const composite = compositeSource([failing(new Error('Aborted'))], { parallel: mode });
+        await expect(composite.discover(createTestContext())).rejects.toThrow('Aborted');
+      });
+
+      it(`still resolves with [] on a genuine abort (${label})`, async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const composite = compositeSource([failing(new Error('unused'))], { parallel: mode });
+        await expect(composite.discover(createTestContext(controller.signal))).resolves.toEqual([]);
+      });
+    }
+  });
 });

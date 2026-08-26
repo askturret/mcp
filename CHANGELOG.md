@@ -165,6 +165,35 @@ when `1.0.0` ships.
   Not a covered surface — `details` is optional and this is additive.
 
 ### Fixed
+- `compositeSource().discover()` no longer swallows a child source's
+  `Error('Aborted')` and returns it as a successful empty discovery (#340). The
+  abort exit keyed on the error **message text**, so any child throwing that
+  wording — for any unrelated reason — became a clean `[]` result. It now keys
+  on the error **type** (`DOMException` named `AbortError`), which both paths
+  raise.
+  **Changed — core public types** (compatibility-policy §1), thrown value, for
+  one pathological case: such an error now propagates instead of being hidden.
+  Pre-1.0, so no guarantee is in force, and the direction is a real failure
+  surfacing rather than being converted into a plausible success.
+  The policy's rule against parsing our own error messages is the reason this
+  was reachable at all — wording is explicitly not a covered surface, so
+  branching on it was never safe.
+- The abort contract of `discover()` is now **stated** rather than implied
+  (#340), on both `compositeSource` and `DiscoveryContext.abortSignal`: an
+  aborted `discover()` **resolves with `[]`** — it does not reject, and it does
+  not return partial results. All three abort paths now converge on a single
+  exit instead of returning `[]` independently, and `discoverSequential`'s
+  partial-result accumulator — which `discover()` discarded one frame up, so it
+  was unreachable — is gone.
+  **Not a covered-surface change**: observable behaviour is identical before and
+  after. What changed is that the contract is written down, and that the code no
+  longer implies a behaviour it never had. Recorded because the decision is the
+  artifact worth keeping — `[]` over partial results keeps a half-discovered set
+  out of the registry snapshot hash, and `[]` over throwing keeps
+  `compositeSource` consistent with `fromOpenApi`, which already resolves `[]`
+  on abort. The `OperationSource`-wide question of whether `[]` should instead
+  be an `AbortError` is deliberately left open, with its revisit condition
+  recorded on #340.
 - The `diagnostics` bundle no longer leaks the deepest directory from a path
   ending in a **separator**, nor a directory from a `/`-rooted path that uses
   **backslash separators** (#301). Both were found by enumerating a path

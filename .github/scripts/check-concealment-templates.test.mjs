@@ -121,11 +121,51 @@ function runGuard(dir) {
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
-/** Assert a mutation of the base fixture is REJECTED. */
-function rejects(desc, mutate, opts) {
+/**
+ * Assert a mutation of the base fixture is REJECTED, and rejected BY THE CHECK
+ * THE CASE IS ABOUT.
+ *
+ * `expect` is REQUIRED, and that requirement is the point (#397 QA).
+ *
+ * ## Why `exit != 0` is not an assertion about anything
+ *
+ * It cannot tell *"the intended check fired"* from *"a DIFFERENT check fired
+ * and the intended one is dead"*. Both defects QA found in this file were
+ * exactly that, and neither was visible to CI, because in both cases the
+ * assertion still PASSED — it had only changed what it was about:
+ *
+ *   1. The new template-level field `attachment_attacker_influenceable`
+ *      CONTAINS the slot-level field `attacker_influenceable` as a SUBSTRING,
+ *      and its line precedes the slot's. An unanchored first-occurrence
+ *      `String.replace` therefore mutated the NEW field and left the slot line
+ *      intact — silently repointing this case at a different check. Disabling
+ *      the slot-level boolean check reddened ONE assertion before that field
+ *      existed and ZERO after: completely unwitnessed, with nothing failing.
+ *
+ *   2. The `trailing_attachment = "none"` fixture tripped TWO errors at once —
+ *      the older orphan-`attachment_pattern` check and the new
+ *      field-set-with-none check. The older one alone satisfied `exit != 0`,
+ *      so the newer one never had a witness at any point in its life.
+ *
+ * A required expectation makes both fail loudly. It converts every case here
+ * from *"something was rejected"* into *"this was rejected, for this reason"*,
+ * which is the only form that notices when a mutation stops meaning what it
+ * used to.
+ *
+ * ## What it does NOT assert
+ *
+ * Several mutations legitimately cascade — dropping a slot's `pattern` also
+ * breaks evidence matching, because the prose can no longer be compiled against
+ * its capture. `expect` names the error the case exists for. The cascade is not
+ * asserted either way, deliberately: pinning it would make these cases fail on
+ * unrelated, correct changes elsewhere in the guard.
+ */
+function rejects(desc, mutate, expect, opts) {
   const dir = withRepo(mutate === null ? null : mutate(BASE_TOML), opts);
   try {
-    check(desc, runGuard(dir).code, 1);
+    const r = runGuard(dir);
+    check(desc, r.code, 1);
+    check(`...and it is the intended check that rejects it — ${desc}`, reHits(expect, r.out), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -218,16 +258,36 @@ function rejects(desc, mutate, opts) {
 // ---------------------------------------------------------------------------
 // Encoding
 // ---------------------------------------------------------------------------
-rejects('a raw em dash (byte > 0x7F) is rejected', (t) => t.replace('\\u2014', EM));
+rejects('a raw em dash (byte > 0x7F) is rejected', (t) => t.replace('\\u2014', EM), /non-ASCII byte 0xe2/);
 
 // ---------------------------------------------------------------------------
 // Evidence binding — the structural control
 // ---------------------------------------------------------------------------
-rejects('em dash silently corrupted to a hyphen is rejected', (t) => t.replace('\\u2014', '-'));
-rejects('prose matching none of its cited evidence is rejected', (t) => t.replace('Note: <PATH> changed', 'Note: <PATH> was changed'));
-rejects('a citation naming a file that does not exist is rejected', (t) => t.replace('fixture.jsonl', 'no-such-entry.jsonl'));
-rejects('an empty evidence list is rejected', (t) => t.replace(/evidence = \[[^\]]*\]/, 'evidence = []'));
-rejects('a template with no corpus at all is rejected', (t) => t, { corpus: false });
+rejects('em dash silently corrupted to a hyphen is rejected', (t) => t.replace('\\u2014', '-'), /prose matches NONE of its cited evidence/);
+rejects(
+  'prose matching none of its cited evidence is rejected',
+  (t) => t.replace('Note: <PATH> changed', 'Note: <PATH> was changed'),
+  /prose matches NONE of its cited evidence/,
+);
+// The two "evidence does not exist" cases are distinguished BY FILENAME. Both
+// produce the same sentence, so a shared expectation would let either satisfy
+// the other — the shadowing shape this parameter exists to stop.
+rejects(
+  'a citation naming a file that does not exist is rejected',
+  (t) => t.replace('fixture.jsonl', 'no-such-entry.jsonl'),
+  /cited evidence `concealment-reminders\/no-such-entry\.jsonl` does not exist/,
+);
+rejects(
+  'an empty evidence list is rejected',
+  (t) => t.replace(/evidence = \[[^\]]*\]/, 'evidence = []'),
+  /no cited evidence/,
+);
+rejects(
+  'a template with no corpus at all is rejected',
+  (t) => t,
+  /cited evidence `concealment-reminders\/fixture\.jsonl` does not exist/,
+  { corpus: false },
+);
 
 // ---------------------------------------------------------------------------
 // The attachment's attacker-influence declaration (#397).
@@ -246,18 +306,22 @@ rejects('a template with no corpus at all is rejected', (t) => t, { corpus: fals
 rejects(
   'an attachment-bearing template with NO influence declaration is rejected (#397)',
   (t) => t.replace(/attachment_attacker_influenceable = true\n/, ''),
+  /declared without a boolean attachment_attacker_influenceable/,
 );
 rejects(
   '...and one whose declaration is not a boolean is rejected',
   (t) => t.replace('attachment_attacker_influenceable = true', 'attachment_attacker_influenceable = "yes"'),
+  /declared without a boolean attachment_attacker_influenceable/,
 );
 rejects(
   '...and TRUE without a rationale is rejected — the boolean is not the control',
   (t) => t.replace(/attachment_attacker_influenceable_rationale = "[^"]*"\n/, ''),
+  /attachment_attacker_influenceable=true declared without a non-empty/,
 );
 rejects(
   '...and an EMPTY rationale is rejected, which a required-key check alone would pass',
   (t) => t.replace(/attachment_attacker_influenceable_rationale = "[^"]*"/, 'attachment_attacker_influenceable_rationale = "   "'),
+  /attachment_attacker_influenceable=true declared without a non-empty/,
 );
 
 // FALSE needs its rationale MORE, not less: "this attachment contains nothing
@@ -268,6 +332,9 @@ rejects(
     t
       .replace('attachment_attacker_influenceable = true', 'attachment_attacker_influenceable = false')
       .replace(/attachment_attacker_influenceable_rationale = "[^"]*"\n/, ''),
+  // Pinned to `=false` specifically. Sharing the TRUE expectation would let a
+  // guard that only ever reports `true` satisfy this case.
+  /attachment_attacker_influenceable=false declared without a non-empty/,
 );
 
 // ...but FALSE WITH a rationale is accepted. Without this the rejections above
@@ -292,9 +359,11 @@ rejects(
 // partition, so asserting one would fail correct data.
 //
 // What was missing is the unit at the point of use. On the real allowlist the
-// mislead is at its most convincing — T1 claims 33, T1C claims 31, and the
-// shared denominator is 64, so the sum matches EXACTLY and reads as a
-// validated partition while the same entries are counted twice.
+// sum of the siblings' claims reads as a validated partition while the same
+// entries are counted twice. When #397 was written the sum landed EXACTLY on
+// the denominator, which is what made it convincing; that equality has since
+// decayed as the corpus grew, and no live figure is repeated here for that
+// reason. The guard prints the current ones. See `denominatorNotes`.
 //
 // This fixture is that shape, deliberately double-counting: two templates with
 // byte-identical prose, each claiming the one corpus entry.
@@ -364,7 +433,11 @@ trailing_attachment = "none"
 }
 
 
-rejects('corpus_matches claiming more evidence than exists is rejected', (t) => t.replace('corpus_matches = 1', 'corpus_matches = 99'));
+rejects(
+  'corpus_matches claiming more evidence than exists is rejected',
+  (t) => t.replace('corpus_matches = 1', 'corpus_matches = 99'),
+  /corpus_matches=99 but only 1 corpus entry actually match/,
+);
 
 // ---------------------------------------------------------------------------
 // The two templates QA got past this guard on #326. Both cited genuine,
@@ -376,59 +449,167 @@ rejects('corpus_matches claiming more evidence than exists is rejected', (t) => 
 rejects(
   "QA (b): a catch-all attachment_pattern is rejected",
   (t) => t.replace("attachment_pattern = '''^(?:[ \\t]*\\d+[^\\n]*\\n?)+$'''", "attachment_pattern = '''[\\s\\S]*'''"),
+  /attachment_pattern accepts arbitrary text/,
 );
 rejects(
   'QA (a): an attachment_pattern that cannot match a real listing is rejected',
   (t) => t.replace("attachment_pattern = '''^(?:[ \\t]*\\d+[^\\n]*\\n?)+$'''", "attachment_pattern = '''\\d'''"),
+  /attachment_pattern does not accept a canonical line-numbered-listing/,
 );
 rejects(
   "QA (b'): prose truncated below its own concealment_clause is rejected",
   (t) => t.replace(/prose = "Note: <PATH> changed[^"]*"/, 'prose = "Note: <PATH> changed"'),
+  /prose does not contain its declared concealment_clause/,
 );
 rejects(
   'an unknown trailing_attachment kind is rejected rather than trusted',
   (t) => t.replace('"line-numbered-listing"', '"some-new-shape"'),
+  /declares an unknown trailing_attachment kind 'some-new-shape'/,
 );
 
 // ---------------------------------------------------------------------------
 // Slot declarations — the mis-declared-slot hole, both directions
 // ---------------------------------------------------------------------------
-rejects('a <NAME> in prose with no slot is rejected', (t) => t.replace('<PATH>', '<OTHER>'));
-rejects('a declared slot that never appears in prose is rejected', (t) =>
-  `${t}\n  [[template.slot]]\n  name = "UNUSED"\n  description = "d"\n  pattern = '''x'''\n  attacker_influenceable = false\n  rationale = "r"\n`);
-rejects('a slot missing attacker_influenceable is rejected', (t) => t.replace('  attacker_influenceable = true\n', ''));
-rejects('a slot missing pattern is rejected', (t) => t.replace(/  pattern = '''\/\[\^\\n\]\+'''\n/, ''));
-rejects('a non-boolean attacker_influenceable is rejected', (t) => t.replace('attacker_influenceable = true', 'attacker_influenceable = "yes"'));
+rejects(
+  'a <NAME> in prose with no slot is rejected',
+  (t) => t.replace('<PATH>', '<OTHER>'),
+  /prose names <OTHER> with no matching \[\[template\.slot\]\]/,
+);
+rejects(
+  'a declared slot that never appears in prose is rejected',
+  (t) =>
+    `${t}\n  [[template.slot]]\n  name = "UNUSED"\n  description = "d"\n  pattern = '''x'''\n  attacker_influenceable = false\n  rationale = "r"\n`,
+  /slot `UNUSED` is declared but never appears in prose/,
+);
+rejects(
+  'a slot missing attacker_influenceable is rejected',
+  (t) => t.replace('  attacker_influenceable = true\n', ''),
+  /slot PATH: missing required key `attacker_influenceable`/,
+);
+rejects(
+  'a slot missing pattern is rejected',
+  (t) => t.replace(/  pattern = '''\/\[\^\\n\]\+'''\n/, ''),
+  /slot PATH: missing required key `pattern`/,
+);
+// THE TWO-SPACE ANCHOR IS LOAD-BEARING, and its absence is QA's blocker 1.
+//
+// `attachment_attacker_influenceable` CONTAINS `attacker_influenceable`, and
+// since #397 its line comes FIRST in BASE_TOML. Unanchored, this replace hit
+// that line instead and produced `attachment_attacker_influenceable = "yes"`,
+// leaving the slot line untouched — so this case silently became a duplicate
+// of the template-level boolean case above, and the slot-level check at
+// `check-concealment-templates.mjs` had NO witness at all.
+//
+// Line 399's mutation was already anchored and was unaffected, which is why
+// only this one drifted. The expectation below is what makes a future
+// recurrence fail rather than pass quietly: it names `slot PATH`, which the
+// template-level error never says.
+rejects(
+  'a SLOT-level non-boolean attacker_influenceable is rejected',
+  (t) => t.replace('  attacker_influenceable = true', '  attacker_influenceable = "yes"'),
+  /slot PATH: attacker_influenceable must be a boolean/,
+);
 
 // ---------------------------------------------------------------------------
 // Newline containment
 // ---------------------------------------------------------------------------
-rejects('a slot pattern using `.` is rejected', (t) => t.replace("'''/[^\\n]+'''", "'''/.+'''"));
-rejects('a slot pattern using \\s is rejected', (t) => t.replace("'''/[^\\n]+'''", "'''/[a-z]\\s+'''"));
-rejects('a negated class that does not exclude a newline is rejected', (t) => t.replace("'''/[^\\n]+'''", "'''/[^/]+'''"));
+// Each names its OWN newline-risk reason. A shared `/pattern can cross a
+// newline/` would let any one of the three satisfy all three.
+rejects(
+  'a slot pattern using `.` is rejected',
+  (t) => t.replace("'''/[^\\n]+'''", "'''/.+'''"),
+  /pattern can cross a newline \(contains an unescaped `\.`\)/,
+);
+rejects(
+  'a slot pattern using \\s is rejected',
+  (t) => t.replace("'''/[^\\n]+'''", "'''/[a-z]\\s+'''"),
+  /pattern can cross a newline \(contains \\s, which matches a newline\)/,
+);
+rejects(
+  'a negated class that does not exclude a newline is rejected',
+  (t) => t.replace("'''/[^\\n]+'''", "'''/[^/]+'''"),
+  /pattern can cross a newline \(negated class \[\^\/\] does not exclude a newline\)/,
+);
 
 // ---------------------------------------------------------------------------
 // Attachment declaration
 // ---------------------------------------------------------------------------
-rejects('trailing_attachment without attachment_pattern is rejected', (t) => t.replace(/attachment_pattern = '''.*'''\n/, ''));
-rejects('attachment_pattern with trailing_attachment=none is rejected', (t) => t.replace('"line-numbered-listing"', '"none"'));
+rejects(
+  'trailing_attachment without attachment_pattern is rejected',
+  (t) => t.replace(/attachment_pattern = '''.*'''\n/, ''),
+  /declared without an attachment_pattern/,
+);
+
+// THE NONE-BRANCH, SPLIT INTO TWO FIXTURES — QA's blocker 2.
+//
+// One fixture used to cover both: flipping `trailing_attachment` to `"none"`
+// while leaving BOTH `attachment_pattern` and
+// `attachment_attacker_influenceable` set trips BOTH none-branch errors at
+// once. With only `exit != 0` asserted, the OLDER orphan-pattern check
+// satisfied the case on its own, and the check #397 added never had a witness
+// at any point in its life — disabling it reddened nothing.
+//
+// Shadowing is not fixed by asserting the error identity alone: a single
+// fixture that trips both would still pass both expectations while either
+// check was dead. The fixture has to isolate the condition, and the
+// expectation then proves the isolation worked. Both halves are required, so
+// both are here.
+rejects(
+  'an orphan attachment_pattern with trailing_attachment=none is rejected',
+  // ONLY the pattern is left set — the influence field is removed, so the
+  // #397 check cannot fire and this witnesses the orphan check alone.
+  (t) =>
+    t
+      .replace('"line-numbered-listing"', '"none"')
+      .replace(/attachment_attacker_influenceable = true\n/, '')
+      .replace(/attachment_attacker_influenceable_rationale = "[^"]*"\n/, ''),
+  /attachment_pattern is set but trailing_attachment is 'none'/,
+);
+rejects(
+  'an orphan attachment_attacker_influenceable with trailing_attachment=none is rejected (#397)',
+  // ...and the mirror: ONLY the influence field is left set, so the orphan
+  // check cannot fire. This is the assertion that was missing entirely.
+  (t) => t.replace('"line-numbered-listing"', '"none"').replace(/attachment_pattern = '''.*'''\n/, ''),
+  /attachment_attacker_influenceable is set but trailing_attachment is 'none'/,
+);
 
 // ---------------------------------------------------------------------------
 // Identity and schema
 // ---------------------------------------------------------------------------
-rejects('a duplicate template id is rejected', (t) => `${t}\n${t.slice(t.indexOf('[[template]]'))}`);
-rejects('an unknown schema_version is rejected', (t) => t.replace('schema_version = 1', 'schema_version = 2'));
-rejects('a missing allowlist file is rejected', null);
+rejects(
+  'a duplicate template id is rejected',
+  (t) => `${t}\n${t.slice(t.indexOf('[[template]]'))}`,
+  /duplicate template id `F1`/,
+);
+rejects(
+  'an unknown schema_version is rejected',
+  (t) => t.replace('schema_version = 1', 'schema_version = 2'),
+  /schema_version must be 1, got 2/,
+);
+// Pinned to the ALLOWLIST's own absence. `does not exist` alone would also be
+// satisfied by the unrelated "cited evidence ... does not exist" error.
+rejects('a missing allowlist file is rejected', null, /concealment-templates\.toml does not exist/);
 
 // ---------------------------------------------------------------------------
 // Parser strictness — a general TOML library would accept several of these
 // ---------------------------------------------------------------------------
-rejects('an unsupported table header is rejected', (t) => `${t}\n[extra]\nkey = "v"\n`);
-rejects('an unquoted (bare) value is rejected', (t) => t.replace('id = "F1"', 'id = F1'));
-rejects('an unknown string escape is rejected', (t) => t.replace('\\u2014', '\\q'));
-rejects('an inline table is rejected', (t) => `${t}\nextra = { a = 1 }\n`);
-rejects('a duplicate key within one table is rejected', (t) => t.replace('id = "F1"', 'id = "F1"\nid = "F2"'));
-rejects('text after a value is rejected', (t) => t.replace('corpus_matches = 1', 'corpus_matches = 1 oops'));
+rejects('an unsupported table header is rejected', (t) => `${t}\n[extra]\nkey = "v"\n`, /unsupported table header/i);
+// These three all surface as `unsupported value:`, so each names the VALUE it
+// rejected. Sharing `/unsupported value/` would let any one satisfy all three
+// — the same shadowing as the none-branch, in the parser instead of the guard.
+rejects('an unquoted (bare) value is rejected', (t) => t.replace('id = "F1"', 'id = F1'), /unsupported value: F1/);
+rejects('an inline table is rejected', (t) => `${t}\nextra = { a = 1 }\n`, /unsupported value: \{ a = 1 \}/);
+rejects(
+  'text after a value is rejected',
+  (t) => t.replace('corpus_matches = 1', 'corpus_matches = 1 oops'),
+  /unsupported value: 1 oops/,
+);
+rejects('an unknown string escape is rejected', (t) => t.replace('\\u2014', '\\q'), /unsupported escape \\q/);
+rejects(
+  'a duplicate key within one table is rejected',
+  (t) => t.replace('id = "F1"', 'id = "F1"\nid = "F2"'),
+  /duplicate key: id/,
+);
 
 // ---------------------------------------------------------------------------
 // Matcher semantics

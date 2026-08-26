@@ -108,11 +108,29 @@
  * hundred lines below, because captures elide their listing. What is new is
  * saying it where the number is read.
  *
- * **The arithmetic settles it rather than the code alone.** If the unit were
- * whole-message matches, T1 and T1C would be DISJOINT — an attachment is either
- * clean or truncated, never both — and their counts could not exceed the
- * family's size. They sum to more than one denominator's worth, so the unit is
- * not that.
+ * **The corpus settles it rather than the code alone.** Suppose the unit were
+ * whole-message matches. T1 and T1C's prose both end at `line numbers):`, and
+ * every real capture of either continues into a listing — so under whole-message
+ * matching NEITHER MATCHES ANYTHING. Measured, not argued: flipping `evidenceRe`
+ * to `compiled.whole` makes the guard report `corpus_matches=33 but only 0
+ * corpus entries actually match` for T1 and the same with 31 for T1C, and exit
+ * non-zero. Counts of 33 and 31 are unreachable in that unit, so the unit is not
+ * that.
+ *
+ * THE ARGUMENT THIS REPLACES WAS UNSOUND, and is recorded because the shape
+ * recurs. It ran: if the unit were whole-message the templates would be
+ * DISJOINT, so their counts could not exceed the family's size — "they sum to
+ * more than one denominator's worth, so the unit is not that." The premise is
+ * fine and the disjointness is real. The INFERENCE is not: at the merge base
+ * 33+31=64 against a denominator of 64, which SATISFIES `sum <= family size`
+ * rather than violating it — so there was never a contradiction to run, at that
+ * moment or any other. It also compared a numerator in the hypothetical unit
+ * against a denominator in the actual one, mixing the very units this section
+ * exists to separate, one level down in its own proof.
+ *
+ * Note the two failures are independent: the bound was never violated, AND the
+ * quantities were not comparable. Fixing either alone would have left an
+ * argument that still did not run.
  *
  * **Therefore the field is inherently NON-ADDITIVE across prose-sharing
  * siblings, the per-template totals are correct, and the NAME is what misleads.**
@@ -747,10 +765,21 @@ export function check(rootDir) {
  *
  * Templates that share `prose` byte-for-byte share a denominator, because an
  * attachment-bearing template is counted on its HEAD. Printing one line each
- * invites a reader to add the columns up, and today that reading is at its most
- * convincing: T1 claims 33, T1C claims 31, and the shared denominator is 64.
- * The sum matches EXACTLY, so it looks like a validated partition and is not
- * one — the same entry is counted by both templates.
+ * invites a reader to add the columns up, and the sum is meaningless: the same
+ * entry is counted by both templates, so the total is not a partition of
+ * anything.
+ *
+ * NO LIVE FIGURE IS QUOTED HERE, DELIBERATELY. When this was written T1's 33
+ * and T1C's 31 summed to exactly the then-denominator of 64, which made the
+ * false reading maximally convincing — a sum that lands precisely on the
+ * denominator reads as arithmetic that has been checked. That coincidence was
+ * real and is what motivated the work, but it is a fact about one moment: two
+ * captures merged days later and the denominator moved to 66 while the claims
+ * did not, so a docblock asserting the match as CURRENT became false without
+ * anything being wrong. The mislead never depended on the exact equality —
+ * adding unrelated columns is unsound at any two values — so the argument is
+ * stated without the numbers and the live figures are left to the guard's own
+ * output, which is generated and cannot decay.
  *
  * The numbers are correct. What was missing is the unit at the point of use.
  */

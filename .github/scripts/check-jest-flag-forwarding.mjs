@@ -282,7 +282,58 @@ const findings = [];
  * starts with, the segment wins, because the segment is the actionable unit.
  * That cannot hide anything — the problem is still reported, against a shorter
  * command.
+ *
+ * ## Which of the pair is the FAITHFUL rendering (#337)
+ *
+ * "The segment wins" is right only when the segment is a real command. When the
+ * split was WRONG — a separator interior to a construct `splitCommands` does not
+ * model — the segment is a truncated fragment, and preferring it quotes back a
+ * command the file does not contain:
+ *
+ *   npm test --testPathPattern=$(a|b)   ->  echoed:  npm test --testPathPattern=$(a
+ *
+ * Exit code, file, line, diagnosis and fix were all correct there; only the
+ * echoed command was mangled. Same class as the `-w`-prints-as-`-` nit (#331/#332
+ * QA): a guard whose output means something slightly other than what it says.
+ *
+ * The discriminator is BALANCE, deliberately not length. Length looks like the
+ * obvious proxy and is wrong in the common direction: `NPM_TEST` runs to the end
+ * of the line, so for `npm test --testPathPattern=x && echo hi` the unsplit match
+ * is the WHOLE LINE and is always the longer of the pair. Preferring length there
+ * would quote the entire chain instead of the one broken command — undoing the
+ * "segment is the actionable unit" rule that this same function exists to
+ * provide, and which is pinned in the self-test.
+ *
+ * An unbalanced segment, by contrast, is positive evidence that OUR split cut a
+ * construct in half, which is exactly the condition under which the unsplit
+ * rendering is the faithful one. Exactly one of the pair survives either way, so
+ * this still cannot hide a finding — it only decides which text is quoted back.
  */
+
+/**
+ * Did our own splitting truncate this segment mid-construct?
+ *
+ * Unbalanced parentheses or an unclosed quote mean the segment cannot be a
+ * complete command, so a separator inside `$( )`, `( )` or a quoted string was
+ * treated as a command boundary when it was not.
+ */
+function isTruncatedBySplit(command) {
+  let depth = 0;
+  let quote = null;
+
+  for (const ch of command) {
+    if (quote !== null) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === "'" || ch === '"') quote = ch;
+    else if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+  }
+
+  return depth !== 0 || quote !== null;
+}
+
 function findingsFor(text, file, line) {
   const fromSegments = [];
   for (const segment of splitCommands(text)) {
@@ -292,16 +343,35 @@ function findingsFor(text, file, line) {
     }
   }
 
-  const out = [...fromSegments];
+  const fromUnsplit = [];
   for (const m of text.matchAll(NPM_TEST)) {
     const verdict = classify(m[0]);
-    if (!verdict) continue;
-    const command = m[0].trim();
-    const supersededBySegment = fromSegments.some(
-      (f) => f.problem === verdict.problem && command.startsWith(f.command),
-    );
-    if (!supersededBySegment) out.push({ file, line, command, ...verdict });
+    if (verdict) fromUnsplit.push({ file, line, command: m[0].trim(), ...verdict });
   }
+
+  // The two passes are reconciled symmetrically: where the same problem is
+  // reported against a command and a prefix of it, exactly ONE survives, and
+  // balance decides which. Neither direction can drop a problem the other pass
+  // did not also report.
+  const out = [];
+
+  for (const seg of fromSegments) {
+    const supersededByUnsplit =
+      isTruncatedBySplit(seg.command) &&
+      fromUnsplit.some((u) => u.problem === seg.problem && u.command.startsWith(seg.command));
+    if (!supersededByUnsplit) out.push(seg);
+  }
+
+  for (const whole of fromUnsplit) {
+    const supersededBySegment = fromSegments.some(
+      (f) =>
+        f.problem === whole.problem &&
+        whole.command.startsWith(f.command) &&
+        !isTruncatedBySplit(f.command),
+    );
+    if (!supersededBySegment) out.push(whole);
+  }
+
   return out;
 }
 

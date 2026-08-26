@@ -372,6 +372,55 @@ for (const [label, command] of [
   );
 }
 
+// --- #337 item 1: when the split is WRONG, the segment is a truncated fragment
+// --- and preferring it quotes back a command the file does not contain. The
+// --- exit code, file, line, diagnosis and fix were always correct here; only
+// --- the echoed command was mangled — the #331/#332 class of a guard whose
+// --- output means something slightly other than what it says.
+{
+  const r = run(
+    scratch({ '.github/workflows/t.yml': workflow('npm test --testPathPattern=$(a|b)') }),
+  );
+
+  check('a pipe inside $( ) in the flag value is still a finding', r.status, 1);
+
+  // The bug: the pipe is treated as a command boundary, so the segment is
+  // `npm test --testPathPattern=$(a` — a string that appears nowhere in the file.
+  check(
+    'does NOT echo the segment truncated at the interior pipe',
+    r.stderr.includes('npm test --testPathPattern=$(a\n'),
+    false,
+  );
+
+  check(
+    '...it echoes the faithful unsplit command instead',
+    r.stderr.includes('npm test --testPathPattern=$(a|b)\n'),
+    true,
+  );
+
+  // Exactly one of the pair survives. Preferring the unsplit rendering must not
+  // turn one defect into two reports.
+  check(
+    '...and still reports the defect exactly ONCE',
+    (r.stderr.match(/ {2}FAIL {2}/g) ?? []).length,
+    1,
+  );
+}
+
+// --- The same, with an unclosed quote rather than a paren, so the balance test
+// --- is pinned on both constructs it claims to cover.
+{
+  const r = run(
+    scratch({ '.github/workflows/t.yml': workflow("npm test --testPathPattern='a|b'") }),
+  );
+  check('a pipe inside a quoted value is still a finding', r.status, 1);
+  check(
+    "...echoing the faithful unsplit command, not the fragment",
+    r.stderr.includes("npm test --testPathPattern='a|b'\n"),
+    true,
+  );
+}
+
 // --- #331 QA: the unbalanced-quote fallback is CITED as evidence that the
 // --- failure direction is deliberate, so it has to be pinned. QA deleted the
 // --- line outright and the suite stayed green — a mechanism offered as proof

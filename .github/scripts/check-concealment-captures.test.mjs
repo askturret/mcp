@@ -17,7 +17,13 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-import { check, CHANNELS, REQUIRED_FIELDS, corpusMatcher } from './check-concealment-captures.mjs';
+import {
+  check,
+  CHANNELS,
+  REQUIRED_FIELDS,
+  corpusMatcher,
+  TEMPLATE_MISMATCH_GUIDANCE_KEY,
+} from './check-concealment-captures.mjs';
 import { parseStrictToml } from './check-concealment-templates.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -230,8 +236,67 @@ for (const field of REQUIRED_FIELDS) {
   // whole-message match, or widening the matcher, which fails 24 correct rows
   // in this corpus. The validator would teach the misconception it exists to
   // prevent, so the wording is asserted rather than left to review.
+  //
+  // These two pin DIFFERENT properties in DIFFERENT places since #419 split
+  // them — the per-row line names what was compared, the run-level note warns
+  // off the repairs. They still fail independently; the split moved one of
+  // them rather than merging it into the other.
   is('...and the message NAMES the prose as what it checked', /PROSE/.exec(r.errors[0] ?? '') !== null, true);
-  is('...and warns against the two wrong repairs', /do NOT widen the matcher/i.exec(r.errors[0] ?? '') !== null, true);
+  is(
+    '...and the run-level note warns against the two wrong repairs (#419)',
+    /do NOT widen the matcher/i.exec(r.guidance[0] ?? '') !== null,
+    true,
+  );
+
+  // ...and the note is keyed on the guard's own exported literal rather than a
+  // second copy of it here, which would drift (docs/TESTING.md, Transcribed
+  // Oracle).
+  is(
+    '...and it is the run-level note, not a second per-row sentence',
+    (r.guidance[0] ?? '').startsWith(TEMPLATE_MISMATCH_GUIDANCE_KEY),
+    true,
+  );
+}
+{
+  // THE #419 BEHAVIOUR.
+  //
+  // Two violating rows previously produced two copies of a 610-character block
+  // whose last two sentences were identical. The prohibitions now read ONCE
+  // per run while the diagnosis stays per-row.
+  //
+  // WHICH OF THESE GO RED ON A REVERT, because it is not all of them and the
+  // difference is the point. Restoring the single per-row message fails four
+  // assertions across this block and the one above: the run-level note is
+  // absent (two above), `guidance` is empty, and the per-row lines carry the
+  // tail again. The remaining two here — one diagnosis per row, each leading
+  // with its own row — pass EITHER WAY, deliberately. They do not pin the
+  // #419 change; they pin the front-loading the change had to preserve, so
+  // that a later edit reducing repetition by shortening the first sentence
+  // goes red instead of passing quietly.
+  const two = run({
+    'a.jsonl': line(row({ verbatim: 'Note: /tmp/x.ts was changed. Nothing like the template.' })),
+    'b.jsonl': line(row({ verbatim: 'Note: /tmp/y.ts was changed. Also nothing like it.' })),
+  });
+
+  is('two mismatching rows each get their own diagnosis (#419)', errorsMatching(two, /PROSE does not match/).length, 2);
+  is('...while the prohibitions are emitted ONCE for the run', two.guidance.length, 1);
+
+  // The repetition is gone rather than merely relocated: no per-row line may
+  // still carry the hoisted tail. Without this, moving the text while ALSO
+  // leaving it in place would pass every assertion above.
+  is(
+    '...and no per-row line repeats them',
+    two.errors.filter((e) => /do NOT widen the matcher/i.test(e)).length,
+    0,
+  );
+
+  // The property that made the long message work, asserted so a later
+  // "shorten it" edit cannot quietly take it: the diagnosis is at the FRONT.
+  is(
+    '...and each diagnosis still leads with the row it is about',
+    two.errors.every((e) => /^\.operum\/audit\/concealment-reminders\/[ab]\.jsonl row 1: claims /.test(e)),
+    true,
+  );
 }
 {
   // The head-vs-whole distinction, which is the correction this issue carried.

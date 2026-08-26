@@ -283,7 +283,7 @@ const findings = [];
  * That cannot hide anything — the problem is still reported, against a shorter
  * command.
  *
- * ## Which of the pair is the FAITHFUL rendering (#337)
+ * ## Which of the pair is the FAITHFUL rendering (#362)
  *
  * "The segment wins" is right only when the segment is a real command. When the
  * split was WRONG — a separator interior to a construct `splitCommands` does not

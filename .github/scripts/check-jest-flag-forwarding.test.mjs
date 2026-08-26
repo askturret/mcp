@@ -372,7 +372,8 @@ for (const [label, command] of [
   );
 }
 
-// --- #337 item 1: when the split is WRONG, the segment is a truncated fragment
+// --- #362 (split from #337 item 1): when the split is WRONG, the segment is a
+// --- truncated fragment
 // --- and preferring it quotes back a command the file does not contain. The
 // --- exit code, file, line, diagnosis and fix were always correct here; only
 // --- the echoed command was mangled — the #331/#332 class of a guard whose

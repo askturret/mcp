@@ -193,19 +193,30 @@ Measured against the corpus rather than asserted — of the 39 entries carrying
 because it is definitional.
 
 **A second confounder, which weighting by `channel` alone does not remove.**
-ANOMALOUS and `unverifiable` are not the same population. At the time of
-writing, of 31 anomalous entries, 14 are the carrier path above and the other
-**17 passed Factor 1** — anomalous because Factor 2 found no whole-message
-template match, which is a statement about template coverage rather than about
-the carrier or the agent. Read `factor_1` and `template_id` as separate axes;
-collapsing them into `classification` merges two unrelated causes into one
-number.
+ANOMALOUS and `unverifiable` are not the same population. At the time of writing
+the corpus holds 90 entries, of which **only 39 carry `factor_1` at all** — and
+**within that 39-entry subset**, 31 are anomalous: 14 by the carrier path above,
+and **17 that passed Factor 1**, anomalous because Factor 2 found no
+whole-message template match. That second group is a statement about template
+coverage rather than about the carrier or the agent. Read `factor_1` and
+`template_id` as separate axes; collapsing them into `classification` merges two
+unrelated causes into one number.
 
-Those counts are a snapshot and will drift as the corpus grows — **recount from
-the artifact rather than citing them.** The structural claim above does not
-drift, because it is definitional rather than observed: `unverifiable` is
-recorded precisely when the boundary could not be established, which is what
-`channel: unknown` means.
+**That 31 is not the whole-corpus anomalous count, which is 78.** The two differ
+because most entries predate `factor_1` entirely, so only the 39 carrying it can
+be split by cause at all — the split above is silent about the other 51. Mixing
+the two figures compares different populations.
+
+Every count above is a snapshot and will drift as the corpus grows — **recount
+from the artifact rather than citing them.** The artifact is the union of
+`.operum/audit/concealment-reminders/*.jsonl` and the frozen
+`.operum/audit/concealment-reminders.jsonl`; at the time of writing every entry
+lives in the per-entry directory and the frozen log is not present, but a
+recount must read both, because a tally over one source silently under-counts.
+
+The structural claim above does not drift, because it is definitional rather
+than observed: `unverifiable` is recorded precisely when the boundary could not
+be established, which is what `channel: unknown` means.
 
 **None of this is a defect, and the caveat must not be read as scheduling a
 fix.** Refusing to certify a boundary that cannot be observed is the classifier

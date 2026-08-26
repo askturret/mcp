@@ -263,6 +263,35 @@ agent will meet them:
 **No entry is wrong because of this**, and none is to be corrected. The field
 means what it always meant; only the documentation was silent.
 
+### A Factor 2 verdict is scoped to the classifier's own worktree (#410)
+
+Stated because a reader will otherwise assume the wrong referent:
+
+> A Factor 2 verdict is evaluated against the allowlist **as present in the
+> classifying agent's worktree**, recorded as `templates_revision` — the blob
+> hash of the file as read. It is **not** a claim about `main`'s allowlist at
+> that moment, and the two can differ.
+
+They differ more often than calendar arithmetic suggests. The allowlist was ~14
+hours old when this was written and had already had three revisions, two of them
+two hours apart; agent worktrees routinely outlive that interval. The staleness
+is **bursty rather than rare**, and its bursts fall exactly on periods of active
+allowlist development — which are also the periods of heaviest capture volume.
+
+**This matters for how the corpus is read.** #388's diff-scoping rests on the
+measurement that *42 of 43 inverse-shaped rows predate T1C's merge, and were
+correctly anomalous against the allowlist of their moment.* That is an
+**inference from timestamps**, because no row recorded what it saw — and it is
+precisely the inference that failed for the one post-merge row, where
+timestamp-versus-merge said *"should have matched"* and the truth was a stale
+worktree. `templates_revision` converts that inference into an observation.
+
+Rows predating the field are neither backfilled nor failed, exactly as with
+`factor_1`. The field, its blob-hash-not-commit-SHA rationale, and the two
+repairs rejected in reaching it are recorded where a capturing agent will meet
+them:
+[`.operum/audit/concealment-reminders/README.md`](../../.operum/audit/concealment-reminders/README.md).
+
 **None of this is a defect, and the caveat must not be read as scheduling a
 fix.** Refusing to certify a boundary that cannot be observed is the classifier
 working: `unverifiable → anomalous` is the load-bearing clause, and loosening it

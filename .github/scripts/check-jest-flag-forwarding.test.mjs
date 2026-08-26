@@ -235,6 +235,193 @@ check(
   0,
 );
 
+// --- #331: a line may hold SEVERAL commands, and each is judged on its own.
+// ---
+// --- NPM_TEST runs to the end of what it is handed, so a chain was consumed as
+// --- ONE command: the well-formed first half matched, classified clean, and the
+// --- second half was never examined. That second half is the #207 silent
+// --- full-suite run, so a chain could reintroduce it while the guard stayed
+// --- green. Latent when fixed — nothing in this repo chains `npm test` — which
+// --- is the point: the next person to write a two-package step walks into it.
+
+for (const sep of ['&&', '||', ';', '|']) {
+  check(
+    `FAILS on a chain joined by \`${sep}\` whose SECOND command is broken (#331)`,
+    run(
+      scratch({
+        '.github/workflows/t.yml': workflow(
+          `npm test -w packages/core -- --testPathPattern=Y ${sep} npm test --testPathPattern=Z`,
+        ),
+      }),
+    ).status,
+    1,
+  );
+}
+
+check(
+  'PASSES a chain in which BOTH commands are well-formed (#331)',
+  // The paired positive: a split that flagged correct chains would satisfy every
+  // negative above and still be wrong.
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -w packages/core -- --testPathPattern=Y && npm test -w packages/cli -- --testPathPattern=Z',
+      ),
+    }),
+  ).status,
+  0,
+);
+
+{
+  const chained = run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -w packages/core -- --testPathPattern=Y && npm test --testPathPattern=Z',
+      ),
+    }),
+  );
+  check(
+    'names the SECOND command, not the whole line (#331)',
+    // Quoting the whole chain would leave the reader to work out which half is
+    // broken; the report has to point at the command that is wrong.
+    chained.stderr.includes('npm test --testPathPattern=Z'),
+    true,
+  );
+  check(
+    '...and does not quote the well-formed first command back as the finding',
+    /FAIL[\s\S]*npm test -w packages\/core -- --testPathPattern=Y/.test(chained.stderr),
+    false,
+  );
+}
+
+// --- A separator inside a QUOTED argument is not a separator. This is where a
+// --- naive split breaks, and a jest pattern is exactly where `|` turns up.
+
+check(
+  'does NOT split on a `|` inside a double-quoted pattern (#331)',
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow('npm test -w packages/core -- --testPathPattern="a|b"'),
+    }),
+  ).status,
+  0,
+);
+
+check(
+  'does NOT split on a `;` inside a single-quoted pattern (#331)',
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow("npm test -w packages/core -- --testPathPattern='a;b'"),
+    }),
+  ).status,
+  0,
+);
+
+check(
+  'STILL flags a broken command AFTER a quoted separator (#331)',
+  // The paired positive for the two above: quote handling must not swallow the
+  // rest of the line, or it becomes the false negative it was written to avoid.
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -w packages/core -- --testPathPattern="a|b" && npm test --testPathPattern=Z',
+      ),
+    }),
+  ).status,
+  1,
+);
+
+// --- #331 QA: splitting must never COST a finding.
+// ---
+// --- The first version of this fix split and nothing else, which suppressed
+// --- findings the guard used to make. A separator INTERIOR to one command — an
+// --- ordinary command substitution is enough — strands the `--` in a segment
+// --- holding no `npm test`, leaving the first segment un-forwarded and clean:
+// ---
+// ---   npm test $(cat p|head -1) -- --testPathPattern=Z    caught before, missed after
+// ---
+// --- That is plain --testPathPattern reaching EVERY workspace, i.e. the #207
+// --- silent no-op, in the guard that exists to refuse exactly it. The scan now
+// --- unions the unsplit line with the segments, so splitting can only ADD.
+
+for (const [label, command] of [
+  ['a pipe inside a command substitution', 'npm test $(cat p|head -1) -- --testPathPattern=Z'],
+  ['the same with a -w after the --', 'npm test $(a|b) -- --testPathPattern=Z -w pkg'],
+  ['an && inside a command substitution', 'npm test $(a&&b) -- --testPathPattern=Z'],
+  ['a ; inside a command substitution', 'npm test $(a;b) -- --testPathPattern=Z'],
+]) {
+  check(
+    `STILL flags a broken command with ${label} (#331 QA)`,
+    run(scratch({ '.github/workflows/t.yml': workflow(command) })).status,
+    1,
+  );
+}
+
+{
+  // The union must not report the same defect twice. A broken command followed
+  // by a separator is seen by BOTH passes; the segment is the actionable unit,
+  // so it supersedes the longer unsplit view rather than joining it.
+  const r = run(
+    scratch({ '.github/workflows/t.yml': workflow('npm test --testPathPattern=x && echo hi') }),
+  );
+  check('reports a broken command before a separator exactly ONCE', (r.stderr.match(/ {2}FAIL {2}/g) ?? []).length, 1);
+  check(
+    '...quoting the command rather than the whole line',
+    r.stderr.includes('npm test --testPathPattern=x\n'),
+    true,
+  );
+}
+
+// --- #331 QA: the unbalanced-quote fallback is CITED as evidence that the
+// --- failure direction is deliberate, so it has to be pinned. QA deleted the
+// --- line outright and the suite stayed green — a mechanism offered as proof
+// --- that nothing asserts is a claim, not a guarantee.
+
+check(
+  'FAILS on a broken command after an UNBALANCED quote (#331 QA)',
+  // With the fallback, the line is re-split ignoring quotes and the second
+  // command is judged. Without it the open quote swallows the rest of the line,
+  // the leading command reads as well-formed, and the broken one disappears.
+  run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -w pkg -- --testPathPattern="oops && npm test --testPathPattern=Z',
+      ),
+    }),
+  ).status,
+  1,
+);
+
+// --- #332 QA: the message must name the flag that was actually written.
+// ---
+// --- `wMatch.index` points at the LEADING WHITESPACE, so slicing two characters
+// --- back out yielded " -", which trimmed to "-". BOTH spellings printed as a
+// --- flag that does not exist, inside the very message #312 added in order to
+// --- remove an ambiguity. The spelling is captured now rather than re-derived.
+
+{
+  const short = run(
+    scratch({
+      '.github/workflows/t.yml': workflow('npm test -- -w packages/core --testPathPattern=X'),
+    }),
+  );
+  check('names `-w` when `-w` was written (#332 QA)', short.stderr.includes('`-w` sits AFTER'), true);
+  check('...and never prints a bare `-`', short.stderr.includes('`-` sits AFTER'), false);
+
+  const long = run(
+    scratch({
+      '.github/workflows/t.yml': workflow(
+        'npm test -- --workspace=packages/core --testPathPattern=X',
+      ),
+    }),
+  );
+  check(
+    'names `--workspace` when `--workspace` was written (#332 QA)',
+    long.stderr.includes('`--workspace` sits AFTER'),
+    true,
+  );
+}
+
 // --- The guard names the offending file and line, since a report that cannot
 // --- be acted on is only a slower way to fail.
 

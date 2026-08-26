@@ -418,6 +418,46 @@ check(
   1,
 );
 
+{
+  // The OTHER way the reporter coupling can break, and the likelier one (#344).
+  //
+  // A jest upgrade is far more likely to change how a path is RENDERED than to
+  // stop emitting the line at all. That mode was already loud, but only
+  // INCIDENTALLY — every file reads as never-run, via the generic path — so
+  // nothing pinned it. Both modes being loud is what turned "reporter-coupled"
+  // from a soundness objection into a maintenance cost, and that argument is
+  // why the extend-over-sibling design was endorsed. It deserves an assertion
+  // holding it up rather than a paragraph.
+  const r = runGuard(
+    EXECUTION,
+    scratchPerFile({
+      onDisk: ['src/a.test.ts'],
+      reported: ['/abs/build/packages/thing/src/a.test.ts'],
+    }),
+  );
+  check('per-file: FAILS CLOSED when the reported path FORMAT changes (#344)', r.code, 1);
+  check(
+    'per-file: ...and names the file rather than failing silently',
+    r.out.includes('src/a.test.ts'),
+    true,
+  );
+}
+
+check(
+  'per-file: catches a file whose tests are ALL skipped (#344)',
+  // #339 documented this class as NOT covered. It is — verified against this
+  // repo's real jest: a fully-skipped file emits NO per-suite line, so it lands
+  // in the same bucket as an excluded one, while a partly-skipped file still
+  // emits its line and correctly passes. Nothing special-cases `.skip`; the
+  // keyed symptom ("contributed no tests") covers it. Pinned here so the
+  // corrected docstring cannot drift back into being wrong.
+  runGuard(
+    EXECUTION,
+    scratchPerFile({ onDisk: ['src/a.test.ts', 'src/quiet.test.ts'], reported: ['src/a.test.ts'] }),
+  ).code,
+  1,
+);
+
 check(
   'per-file: a written exemption is honoured',
   runGuard(

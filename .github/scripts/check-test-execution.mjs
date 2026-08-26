@@ -165,6 +165,35 @@ function parseExecutedFiles(output) {
  *
  * #313's two files had BOTH independently. A check keyed on either cause alone
  * would have passed them.
+ *
+ * ## A THIRD cause it also covers: a fully-skipped file (#344)
+ *
+ * #339 shipped claiming this class was NOT covered — "an all-`.skip` file still
+ * appears in the executed set and passes". **That was wrong**, and QA found it
+ * by testing rather than reading. Measured on this repository's jest:
+ *
+ *   - every test in a file skipped -> jest emits **no per-suite line at all**
+ *     for it, so it lands in the same bucket as an excluded file and IS caught;
+ *   - one test in a file skipped -> the `PASS` line is still emitted and the
+ *     file passes, which is correct: it contributed tests.
+ *
+ * The keyed symptom did the work again. Nothing here special-cases `.skip`; a
+ * fully-skipped file contributes nothing to the run, which is the only question
+ * being asked.
+ *
+ * `check-placeholder-tests` still warns on `.skip` and is still the right place
+ * for "ran but asserted nothing" — it is simply no longer the only thing
+ * covering a whole file going quiet.
+ *
+ * If a deliberate full-file skip is ever wanted, the escape hatch is the one
+ * every other exemption uses: `askturret.testFilesNotExecuted` with a written
+ * reason, reviewable in a diff.
+ *
+ * Worth stating why a wrong-but-reassuring note mattered enough to fix: a
+ * reader trusting the old paragraph would have believed the class UNCOVERED
+ * when it is covered — documentation promising something other than what the
+ * code does, which is this guard's own subject. It promised LESS, which is the
+ * safe direction and the same defect.
  */
 function checkPerFileExecution(dir, pkg, output) {
   const onDisk = testFilesOnDisk(dir);

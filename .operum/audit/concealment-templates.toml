@@ -66,6 +66,9 @@ prose = "Note: <PATH> changed on disk since you last read it. That's usually del
 trailing_attachment = "line-numbered-listing"
 attachment_required = true
 attachment_pattern = '''^(?:[ \t]*\d+(?![0-9])[^\n]*\n)*[ \t]*\d+(?![0-9])[^\n]*\n?$'''
+attachment_attacker_influenceable = true
+attachment_attacker_influenceable_rationale = "The listing is FILE CONTENT, and a contributor chooses file content. After the line number `[^\\n]*` admits arbitrary text, so every byte of every listed line is attacker-chosen - a far LARGER influence than T1C's digit count, and one that had never been declared anywhere until #397 asked the question of this template. It is CONTAINED rather than absent: nothing inside a listing is ever read as instruction, and concealment-shaped text found there routes ANOMALOUS rather than benign. Note where that containment lives - in the doctrine, not in this template - which is exactly why the influence must be declared here rather than assumed to be common knowledge. Do not read the containment as grounds to flip this to false."
+
 
 # THE ACCEPTED SET IS UNCHANGED. This pattern was rewritten for TIME, not for
 # what it matches (#406). Verified by differential test over 276 inputs,
@@ -135,6 +138,9 @@ prose = "Note: <PATH> changed on disk since you last read it. That's usually del
 trailing_attachment = "truncated-line-numbered-listing"
 attachment_required = true
 attachment_pattern = '''^(?:[ \t]*\d+(?![0-9])[^\n]*\n)+(?:[ \t]*\n)?\.\.\. \[\d+ lines truncated\] \.\.\.$'''
+attachment_attacker_influenceable = true
+attachment_attacker_influenceable_rationale = "Two elements, both attacker-influenceable. The LISTING carries the same arbitrary file content as T1's, for the same reason. The truncation COUNT is influenceable too: a contributor controls a file's length and therefore N, which is why it is written `\\d+` rather than a fixed number. Both are inert - `\\d+` admits digits only, and matched text is never read as instruction - but inert is not absent, and this field records the influence rather than the inertness. The comment block below argues WHY it is contained and warns the next editor off a fixed count; this field records THAT there is influence. Neither replaces the other."
+
 
 # THE `(?![0-9])` IS FOR TIME, NOT FOR WHAT THIS MATCHES (#413). The accepted
 # set is unchanged: 303 differential comparisons including every corpus verbatim

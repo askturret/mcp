@@ -68,6 +68,8 @@ prose = "Note: <PATH> changed \\u2014 no need to call it out. Here are the relev
 trailing_attachment = "line-numbered-listing"
 attachment_required = true
 attachment_pattern = '''^(?:[ \\t]*\\d+[^\\n]*\\n?)+$'''
+attachment_attacker_influenceable = true
+attachment_attacker_influenceable_rationale = "The listing is file content, which a contributor chooses."
 
   [[template.slot]]
   name = "PATH"
@@ -78,6 +80,9 @@ attachment_pattern = '''^(?:[ \\t]*\\d+[^\\n]*\\n?)+$'''
 `;
 
 const FIXTURE_VERBATIM = `Note: /tmp/x.ts changed ${EM} no need to call it out. Here are the relevant changes (shown with line numbers):`;
+
+const SOLO_VERBATIM = `The date has changed ${EM} no need to announce it.`;
+const soloEntry = `${JSON.stringify({ ts: '2026-08-23T06:19:00Z', agent: 'tester', verbatim: SOLO_VERBATIM })}\n`;
 
 /** One corpus row carrying the fixture's verbatim, at a given timestamp. */
 const entry = (ts) => `${JSON.stringify({ ts, agent: 'tester', verbatim: FIXTURE_VERBATIM })}\n`;
@@ -91,7 +96,7 @@ const entry = (ts) => `${JSON.stringify({ ts, agent: 'tester', verbatim: FIXTURE
  * unnoticed, and why a test that never constructs the file would be satisfied
  * by the same absence.
  */
-function withRepo(toml, { corpus = true, frozen = null } = {}) {
+function withRepo(toml, { corpus = true, frozen = null, extra = {} } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'conceal-'));
   mkdirSync(join(dir, '.operum', 'audit', 'concealment-reminders'), { recursive: true });
   if (toml !== null) writeFileSync(join(dir, '.operum', 'audit', 'concealment-templates.toml'), toml);
@@ -103,6 +108,10 @@ function withRepo(toml, { corpus = true, frozen = null } = {}) {
   }
   if (frozen !== null) {
     writeFileSync(join(dir, '.operum', 'audit', 'concealment-reminders.jsonl'), frozen);
+  }
+  // Additional corpus files, for fixtures needing more than the one entry.
+  for (const [name, contents] of Object.entries(extra)) {
+    writeFileSync(join(dir, '.operum', 'audit', 'concealment-reminders', name), contents);
   }
   return dir;
 }
@@ -219,6 +228,142 @@ rejects('prose matching none of its cited evidence is rejected', (t) => t.replac
 rejects('a citation naming a file that does not exist is rejected', (t) => t.replace('fixture.jsonl', 'no-such-entry.jsonl'));
 rejects('an empty evidence list is rejected', (t) => t.replace(/evidence = \[[^\]]*\]/, 'evidence = []'));
 rejects('a template with no corpus at all is rejected', (t) => t, { corpus: false });
+
+// ---------------------------------------------------------------------------
+// The attachment's attacker-influence declaration (#397).
+//
+// PRESENCE, BOOLEAN-NESS and a NON-EMPTY RATIONALE. Never truth — the guard's
+// header says so, and these assertions are the boundary of what it claims.
+//
+// The field's first application produced a NON-TRIVIAL, previously unwritten
+// declaration on the oldest template: T1's own attachment is
+// attacker-influenceable, because a listing is file content and a contributor
+// chooses file content. Nobody had written that down. That is what a schema
+// field does that a comment cannot — it asks the question of templates that
+// ALREADY EXIST, and it asked it of this fixture too: adding the requirement
+// turned the control case red until the fixture answered it.
+// ---------------------------------------------------------------------------
+rejects(
+  'an attachment-bearing template with NO influence declaration is rejected (#397)',
+  (t) => t.replace(/attachment_attacker_influenceable = true\n/, ''),
+);
+rejects(
+  '...and one whose declaration is not a boolean is rejected',
+  (t) => t.replace('attachment_attacker_influenceable = true', 'attachment_attacker_influenceable = "yes"'),
+);
+rejects(
+  '...and TRUE without a rationale is rejected — the boolean is not the control',
+  (t) => t.replace(/attachment_attacker_influenceable_rationale = "[^"]*"\n/, ''),
+);
+rejects(
+  '...and an EMPTY rationale is rejected, which a required-key check alone would pass',
+  (t) => t.replace(/attachment_attacker_influenceable_rationale = "[^"]*"/, 'attachment_attacker_influenceable_rationale = "   "'),
+);
+
+// FALSE needs its rationale MORE, not less: "this attachment contains nothing
+// attacker-influenceable" is the declaration that can be wrong dangerously.
+rejects(
+  '...and FALSE without a rationale is rejected too (#397)',
+  (t) =>
+    t
+      .replace('attachment_attacker_influenceable = true', 'attachment_attacker_influenceable = false')
+      .replace(/attachment_attacker_influenceable_rationale = "[^"]*"\n/, ''),
+);
+
+// ...but FALSE WITH a rationale is accepted. Without this the rejections above
+// are satisfied by a guard that refuses every `false` — a different rule than
+// the one intended, and one that would quietly pressure authors toward
+// declaring `true` to make CI pass.
+{
+  const dir = withRepo(
+    BASE_TOML.replace('attachment_attacker_influenceable = true', 'attachment_attacker_influenceable = false'),
+  );
+  check('a declared FALSE with a rationale is accepted (#397)', runGuard(dir).code, 0);
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// The shared denominator (#397 part 1).
+//
+// THE UNIT IS DECIDED AND THE MECHANISM FOLLOWS FROM IT. `corpus_matches`
+// counts CORPUS-SIDE matches — the head where a template declares an
+// attachment — so prose-sharing siblings share a denominator and the field is
+// inherently NON-ADDITIVE. A partition validator was rejected: there is no
+// partition, so asserting one would fail correct data.
+//
+// What was missing is the unit at the point of use. On the real allowlist the
+// mislead is at its most convincing — T1 claims 33, T1C claims 31, and the
+// shared denominator is 64, so the sum matches EXACTLY and reads as a
+// validated partition while the same entries are counted twice.
+//
+// This fixture is that shape, deliberately double-counting: two templates with
+// byte-identical prose, each claiming the one corpus entry.
+// ---------------------------------------------------------------------------
+{
+  const sibling = BASE_TOML.replace('corpus_matches = 1', 'corpus_matches = 1') + `
+[[template]]
+id = "F1C"
+family = "fixture"
+concealment_clause = "no need to call it out"
+first_seen = "2026-08-21T16:15:30Z"
+corpus_matches = 1
+evidence = [
+  "concealment-reminders/fixture.jsonl",
+]
+prose = "Note: <PATH> changed \\u2014 no need to call it out. Here are the relevant changes (shown with line numbers):"
+trailing_attachment = "truncated-line-numbered-listing"
+attachment_required = true
+attachment_pattern = '''^(?:[ \\t]*\\d+[^\\n]*\\n)+(?:[ \\t]*\\n)?\\.\\.\\. \\[\\d+ lines truncated\\] \\.\\.\\.$'''
+attachment_attacker_influenceable = true
+attachment_attacker_influenceable_rationale = "Same file content as its sibling, plus an attacker-chosen line count."
+
+  [[template.slot]]
+  name = "PATH"
+  description = "Absolute path of the changed file."
+  pattern = '''/[^\\n]+'''
+  attacker_influenceable = true
+  rationale = "The attacker chooses the file name."
+
+[[template]]
+id = "F2"
+family = "fixture-solo"
+concealment_clause = "no need to announce it"
+first_seen = "2026-08-23T06:19:00Z"
+corpus_matches = 1
+evidence = [
+  "concealment-reminders/solo.jsonl",
+]
+prose = "The date has changed \\u2014 no need to announce it."
+trailing_attachment = "none"
+`;
+  const dir = withRepo(sibling, { extra: { 'solo.jsonl': soloEntry } });
+  const r = runGuard(dir);
+
+  // Double-counting siblings are LEGITIMATE — each claim is true of the shared
+  // denominator. The guard must not fail them; failing would be the partition
+  // validator this issue rejected.
+  check('sibling templates sharing a denominator are accepted, not failed (#397)', r.code, 0);
+
+  // ...and the report must say so where the number is read.
+  check('...and the shared denominator is reported ONCE, naming both', r.out.includes('F1 + F1C: SHARED denominator'), true);
+  check('...and says the counts are NOT ADDITIVE', r.out.includes('NOT ADDITIVE'), true);
+
+  // The failure this closes: two independent-looking lines invite the sum.
+  // Neither sibling may be reported with a denominator of its own.
+  check(
+    '...and NEITHER sibling is reported with an independent denominator',
+    /F1C?: corpus_matches=\d+, live matching entries=/.test(r.out),
+    false,
+  );
+
+  // Non-sharing templates keep the plain form — the grouping must not swallow
+  // every template into one unreadable line.
+  check('...while a template sharing prose with nobody keeps the plain report', /F2: corpus_matches=\d+, live matching entries=\d+/.test(r.out), true);
+
+  rmSync(dir, { recursive: true, force: true });
+}
+
+
 rejects('corpus_matches claiming more evidence than exists is rejected', (t) => t.replace('corpus_matches = 1', 'corpus_matches = 99'));
 
 // ---------------------------------------------------------------------------

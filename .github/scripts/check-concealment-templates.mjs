@@ -93,6 +93,45 @@
  * path under `.operum/audit/`, so `concealment-reminders.jsonl` was always a
  * citable file. Only the counting loop was narrow.
  *
+ * ## What `corpus_matches` counts — the UNIT, decided (#397)
+ *
+ * Stated first because the mechanism follows from it, and because deciding it
+ * implicitly inside an implementation is how this subsystem produced its third
+ * same-number-different-units confusion.
+ *
+ *   > `corpus_matches` counts entries matched by the CORPUS-SIDE relation:
+ *   > the template's HEAD where it declares a `trailing_attachment`, and its
+ *   > WHOLE message where it declares `"none"`. It is NOT a count of
+ *   > whole-message matches.
+ *
+ * That is not a new decision; it is the one `evidenceRe` has always made, two
+ * hundred lines below, because captures elide their listing. What is new is
+ * saying it where the number is read.
+ *
+ * **The arithmetic settles it rather than the code alone.** If the unit were
+ * whole-message matches, T1 and T1C would be DISJOINT — an attachment is either
+ * clean or truncated, never both — and their counts could not exceed the
+ * family's size. They sum to more than one denominator's worth, so the unit is
+ * not that.
+ *
+ * **Therefore the field is inherently NON-ADDITIVE across prose-sharing
+ * siblings, the per-template totals are correct, and the NAME is what misleads.**
+ * A partition validator was considered and REJECTED: there is no partition, so
+ * asserting one would fail correct data. The denominator is reported per prose
+ * GROUP instead — see `denominatorNotes`.
+ *
+ * ## What this guard does NOT check — stated so it cannot be mistaken for more
+ *
+ * `attachment_attacker_influenceable` is checked for PRESENCE, BOOLEAN-NESS and
+ * a NON-EMPTY RATIONALE. **Its TRUTH is not checked and cannot be**, any more
+ * than a slot's `attacker_influenceable` is. CI cannot decide whether a
+ * contributor can influence what lands in an attachment; it can only ensure the
+ * question was asked, answered, and argued where a reviewer meets it.
+ *
+ * A `false` that is wrong will pass this guard. That is the declaration most
+ * worth reading closely in review, and the reason its rationale is required
+ * too — a bare `false` gives a reviewer nothing to disagree with.
+ *
  * Usage:
  *   node .github/scripts/check-concealment-templates.mjs [rootDir]
  */
@@ -499,6 +538,8 @@ function verbatimsOf(file) {
 export function check(rootDir) {
   const errors = [];
   const notes = [];
+  /** Per-template denominator rows, grouped and reported together (#397). */
+  const denominators = [];
   const file = join(rootDir, TEMPLATES_REL);
 
   if (!existsSync(file)) {
@@ -545,8 +586,50 @@ export function check(rootDir) {
         const risk = attachmentRisk(t.attachment_pattern, attachment);
         if (risk !== null) errors.push(`template ${id}: attachment_pattern ${risk}`);
       }
-    } else if (t.attachment_pattern !== undefined) {
-      errors.push(`template ${id}: attachment_pattern is set but trailing_attachment is 'none' — one of the two is wrong`);
+
+      // The attachment's attacker-influence declaration (#397).
+      //
+      // PRESENCE, BOOLEAN-NESS AND A NON-EMPTY RATIONALE. NEVER TRUTH — see
+      // "What this guard does NOT check" in the header. Required only where
+      // there IS an attachment: a field that must be filled with a meaningless
+      // value on templates it cannot apply to teaches people to fill fields
+      // meaninglessly.
+      if (typeof t.attachment_attacker_influenceable !== 'boolean') {
+        errors.push(
+          `template ${id}: trailing_attachment='${attachment}' declared without a boolean ` +
+            `attachment_attacker_influenceable. An attachment is matched text; whether a contributor ` +
+            `can influence what lands in it is a question the author must answer, not one a reader ` +
+            `should have to reconstruct from the pattern.`,
+        );
+      }
+      // The rationale is required for FALSE as much as for TRUE, and arguably
+      // more: "this attachment contains nothing attacker-influenceable" is the
+      // declaration that can be wrong dangerously. A bare boolean would be the
+      // ceremony this field is accused of being — everything a reviewer learns
+      // from T1's PATH slot is in the prose beside its `true`, not in the `true`.
+      if (
+        typeof t.attachment_attacker_influenceable === 'boolean' &&
+        (typeof t.attachment_attacker_influenceable_rationale !== 'string' ||
+          t.attachment_attacker_influenceable_rationale.trim() === '')
+      ) {
+        errors.push(
+          `template ${id}: attachment_attacker_influenceable=${t.attachment_attacker_influenceable} ` +
+            `declared without a non-empty attachment_attacker_influenceable_rationale. The boolean is ` +
+            `not the control — the reasoning beside it is, and a reviewer cannot disagree with a bare ` +
+            `${t.attachment_attacker_influenceable}.`,
+        );
+      }
+    } else {
+      if (t.attachment_pattern !== undefined) {
+        errors.push(`template ${id}: attachment_pattern is set but trailing_attachment is 'none' — one of the two is wrong`);
+      }
+      if (t.attachment_attacker_influenceable !== undefined) {
+        errors.push(
+          `template ${id}: attachment_attacker_influenceable is set but trailing_attachment is 'none'. ` +
+            `There is no attachment to influence, and a field answered where it does not apply is how a ` +
+            `schema teaches that its answers are decoration.`,
+        );
+      }
     }
 
     // The prose must actually be the concealment message it claims to be.
@@ -645,12 +728,56 @@ export function check(rootDir) {
       if (t.corpus_matches > live) {
         errors.push(`template ${id}: corpus_matches=${t.corpus_matches} but only ${live} corpus entr${live === 1 ? 'y' : 'ies'} actually match. The count must never claim more evidence than exists.`);
       } else {
-        notes.push(`${id}: corpus_matches=${t.corpus_matches}, live matching entries=${live}`);
+        // The denominator is keyed on PROSE for an attachment-bearing template,
+        // so prose-sharing siblings share it. Recorded per template here and
+        // reported as a group below — a bare per-template line is what invites
+        // the sum. See "What `corpus_matches` counts" in this file's header.
+        denominators.push({ id, prose: t.prose ?? '', claimed: t.corpus_matches, live, wholeRequired });
       }
     }
   }
 
+  notes.push(...denominatorNotes(denominators));
+
   return { errors, notes };
+}
+
+/**
+ * Report `corpus_matches` so it cannot be read as a partition (#397).
+ *
+ * Templates that share `prose` byte-for-byte share a denominator, because an
+ * attachment-bearing template is counted on its HEAD. Printing one line each
+ * invites a reader to add the columns up, and today that reading is at its most
+ * convincing: T1 claims 33, T1C claims 31, and the shared denominator is 64.
+ * The sum matches EXACTLY, so it looks like a validated partition and is not
+ * one — the same entry is counted by both templates.
+ *
+ * The numbers are correct. What was missing is the unit at the point of use.
+ */
+function denominatorNotes(rows) {
+  const byProse = new Map();
+  for (const r of rows) {
+    if (!byProse.has(r.prose)) byProse.set(r.prose, []);
+    byProse.get(r.prose).push(r);
+  }
+
+  const out = [];
+  for (const group of byProse.values()) {
+    if (group.length === 1) {
+      const r = group[0];
+      out.push(`${r.id}: corpus_matches=${r.claimed}, live matching entries=${r.live}`);
+      continue;
+    }
+    const ids = group.map((r) => r.id).join(' + ');
+    const claims = group.map((r) => `${r.id}=${r.claimed}`).join(', ');
+    const sum = group.reduce((n, r) => n + r.claimed, 0);
+    out.push(
+      `${ids}: SHARED denominator of ${group[0].live} — these templates match the same corpus ` +
+        `entries on prose, so their counts are NOT ADDITIVE. Claims: ${claims} (sum ${sum}, which ` +
+        `is a meaningless figure and may exceed ${group[0].live} without anything being wrong).`,
+    );
+  }
+  return out;
 }
 
 function main(argv) {

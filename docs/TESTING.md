@@ -265,6 +265,34 @@ classifier whose inconsistent application concealed a large false-positive rate 
 consistency would have made it visible; and **#392**, a finding recorded where
 nobody searching for it would look.
 
+**A seventh, recorded after this section was written, because it is not in code
+at all.** Deliberately kept outside the six above so the measurements in this
+document continue to refer to the same corpus.
+
+PR #389 co-linked two issues with closing keywords, which deadlocks the merge
+gate — one PR can record exactly one QA approval row, so the second stamp is
+refused as a duplicate by construction. The handoff instructing the fix said to
+replace the second keyword with *"a bare reference such as **Also fixes #395**"*,
+and asserted the protection outright: **"a bare reference is deliberately not
+close-intent"**. `fixes` is a GitHub closing keyword. The claim was true of the
+concept and false of the example supplied with it, and **nothing observed which**
+— so the fix re-created the defect it was fixing, and the merge gate was the only
+thing that caught it.
+
+It is variant A, in a **handoff** rather than in a comment, which is why it is
+worth keeping: the artifact a reader trusts need not be in the repository. It
+also demonstrates the corollary below twice over, because the correction went
+wrong the same way twice more — the replacement wording was verified against the
+real keyword list only after the second refusal, and a history note describing
+the mistake **quoted the offending phrase in full**, re-arming it a third time.
+Markdown emphasis does not stop GitHub parsing a reference: quoting a closing
+keyword is applying one.
+
+The remedy is the operational test applied to prose, and it costs seconds: name
+the mutation that falsifies *"this wording is not close-intent"* — the wording
+itself — and check it against the actual keyword list rather than against the
+intent behind it.
+
 **Why the guards miss it:** `check-test-execution.mjs` and
 `check-placeholder-tests.mjs` both pass, and in four of the six there is no test
 file for them to inspect. Mutation testing — the systematic form of the

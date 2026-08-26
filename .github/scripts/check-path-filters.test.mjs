@@ -136,8 +136,14 @@ const git = (dir, ...args) =>
 /**
  * A fixture whose base commit is clean and whose HEAD changes `changedPaths`,
  * built as a PR labelled `labels`.
+ *
+ * `baseRef` defaults to the branch this fixture actually creates, so every
+ * existing case keeps diffing against something resolvable. Overriding it with
+ * a ref that does NOT exist is how the lane check's fail-closed branch is
+ * reached (#349) — before that override there was no way to exercise it, since
+ * the fixture could only ever pass a valid ref.
  */
-function laneFixture({ labels, changedPaths, filtersBlock, packages = { core: [] } }) {
+function laneFixture({ labels, changedPaths, filtersBlock, packages = { core: [] }, baseRef = 'main' }) {
   // `workspace` must be a declared output or the pre-existing check C fires and
   // masks what these cases are actually asserting.
   const dir = fixture(packages, filtersBlock, { outputs: [...Object.keys(packages), 'workspace'] });
@@ -161,7 +167,7 @@ function laneFixture({ labels, changedPaths, filtersBlock, packages = { core: []
   const eventPath = join(dir, 'event.json');
   writeFileSync(eventPath, JSON.stringify({ pull_request: { labels: labels.map((name) => ({ name })) } }));
 
-  const r = spawnSync(process.execPath, [GUARD, dir, 'main'], {
+  const r = spawnSync(process.execPath, [GUARD, dir, baseRef], {
     encoding: 'utf-8',
     env: { ...process.env, GITHUB_EVENT_PATH: eventPath },
   });
@@ -645,6 +651,162 @@ check(
     else process.env['GITHUB_EVENT_PATH'] = previous;
     rmSync(evDir, { recursive: true, force: true });
   }
+}
+
+// ---------------------------------------------------------------------------
+// The lane check's own CANNOT-CHECK branch (#349)
+//
+// #348 added a fail-closed branch: if the base ref cannot be diffed, the lane
+// claim is unverifiable and the guard exits 2 rather than passing. It works —
+// but nothing exercised it, because laneFixture could only ever pass a
+// resolvable ref.
+//
+// The contrast is the argument for pinning it. The PARSER's cannot-check paths
+// in this same file carry five assertions (missing filters block, unrecognised
+// line, list item before a name, missing workflow file, no declared outputs).
+// This file's convention is unmistakably to pin them; the lane check was the
+// one branch resting on prose.
+//
+// A fail-closed branch with no test is precisely what gets "simplified" into
+// fail-open by someone who cannot see what it protects.
+// ---------------------------------------------------------------------------
+
+{
+  const r = laneFixture({
+    labels: ['ci:cheap'],
+    changedPaths: ['docs/thing.md'],
+    filtersBlock: LANE_FILTERS,
+    baseRef: 'origin/no-such-base-ref',
+  });
+
+  check('lane: an unresolvable base ref is CANNOT CHECK, not a silent pass (#349)', r.code, 2);
+  check(
+    'lane: ...and names the ref it could not diff against',
+    /could not diff against 'origin\/no-such-base-ref'/.test(r.out),
+    true,
+  );
+  check(
+    'lane: ...and names the shallow checkout as the likely cause',
+    r.out.includes('fetch-depth: 0'),
+    true,
+  );
+}
+
+// The paired positive is load-bearing here, and it already exists above: the
+// SAME cheap `docs/` change with a resolvable ref exits 0 ("a genuinely cheap
+// PR (docs + .operum/audit) still passes"). Without it, a guard that returned 2
+// for everything would satisfy the three assertions above.
+
+// ---------------------------------------------------------------------------
+// The summary trailer knows which class it is summarising (#351)
+//
+// Every case below asserts report TEXT. Both defects are output defects with a
+// CORRECT exit code — the guard exited 1 exactly when it should — so a
+// status-only assertion passes against the bug unfixed and proves nothing.
+// ---------------------------------------------------------------------------
+
+// A filter that omits a dependency: coverage gap only, no lane violation.
+const GAP_FILTERS = `            core:
+              - 'packages/core/**'
+            cli:
+              - 'packages/cli/**'
+            workspace:
+              - 'package.json'`;
+
+{
+  // Lane violation ONLY: cheap-labelled, but the change trips a filter. The
+  // trailer used to tell this author to ADD the tripping path to a filter,
+  // contradicting the per-violation line directly above it.
+  const r = laneFixture({
+    labels: ['ci:cheap'],
+    changedPaths: ['.github/workflows/release.yml'],
+    filtersBlock: LANE_FILTERS,
+  });
+
+  check('trailer: a lane violation alone still exits 1 (#351)', r.code, 1);
+  check(
+    'trailer: ...and does NOT tell the author to add the tripping path to a filter',
+    r.out.includes('Add the missing path(s) to the filter'),
+    false,
+  );
+  check(
+    'trailer: ...and gives the lane remedy instead',
+    /Either relabel this PR `ci:full`, or avoid the tripping path/.test(r.out),
+    true,
+  );
+  check(
+    'trailer: ...and says plainly that adding paths is the wrong move here',
+    r.out.includes('Do NOT add these paths to a filter'),
+    true,
+  );
+}
+
+{
+  // Coverage gap ONLY: no ci:cheap label, so the lane check never runs. The
+  // original advice is correct for this class and must survive unchanged.
+  const r = laneFixture({
+    labels: [],
+    changedPaths: ['docs/thing.md'],
+    filtersBlock: GAP_FILTERS,
+    packages: { core: [], cli: [CORE] },
+  });
+
+  check('trailer: a coverage gap alone still exits 1 (#351)', r.code, 1);
+  check(
+    'trailer: ...and KEEPS the add-the-path remedy, which is right for this class',
+    r.out.includes('Add the missing path(s) to the filter'),
+    true,
+  );
+  check(
+    'trailer: ...and does not offer the lane remedy, which would be wrong here',
+    r.out.includes('Either relabel this PR'),
+    false,
+  );
+}
+
+{
+  // MIXED: a coverage gap AND a lane violation in one run. This is the case a
+  // single trailer cannot serve, and the one most likely to be missed — either
+  // class alone reads fine with a trailer written for it.
+  const r = laneFixture({
+    labels: ['ci:cheap'],
+    changedPaths: ['packages/core/src/thing.ts'],
+    filtersBlock: GAP_FILTERS,
+    packages: { core: [], cli: [CORE] },
+  });
+
+  check('trailer: a mixed run still exits 1 (#351)', r.code, 1);
+  check(
+    'trailer: ...summarises the coverage class',
+    /\d+ filter-coverage problem\(s\)\./.test(r.out),
+    true,
+  );
+  check(
+    'trailer: ...AND the lane class, in the same run',
+    /\d+ lane problem\(s\)\./.test(r.out),
+    true,
+  );
+  check(
+    'trailer: ...so neither class is handed the other class remedy',
+    r.out.includes('Add the missing path(s) to the filter') &&
+      r.out.includes('Either relabel this PR `ci:full`'),
+    true,
+  );
+  // The fixture yields exactly one of each: `cli` depends on core without
+  // including 'packages/core/**' (coverage), and the changed path trips the
+  // `core` filter under a ci:cheap label (lane). Pinning the total AND the two
+  // per-class counts is what stops a regression that drops one class from the
+  // total while still printing both lines.
+  check(
+    'trailer: ...and the total counts BOTH classes, not just one',
+    /\n2 problem\(s\)\./.test(r.out),
+    true,
+  );
+  check(
+    'trailer: ...with one problem attributed to each class',
+    /1 filter-coverage problem\(s\)\./.test(r.out) && /1 lane problem\(s\)\./.test(r.out),
+    true,
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

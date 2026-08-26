@@ -126,15 +126,30 @@ check(
   true,
 );
 
+// Both ordering assertions require PRESENCE explicitly. Without it they pass
+// VACUOUSLY when the guard is deleted: `indexOf` returns -1, and -1 is less than
+// any real position, so a removed check satisfies "comes before".
+//
+// Found by running the routing revert and noticing that ONE assertion reddened
+// where two should have. The presence assertions above already catch deletion,
+// so this was never the only line of defence — but an assertion that cannot fail
+// on the thing it names is decorative, which is the antipattern docs/TESTING.md
+// names and this file exists to avoid.
+const orderedBefore = (first, second) => {
+  const a = source.indexOf(first);
+  const b = source.indexOf(second);
+  return a !== -1 && b !== -1 && a < b;
+};
+
 check(
   'the post-break null check comes BEFORE the `status === 0` test it would fall through',
-  source.indexOf('didNotStart(after)') < source.indexOf('after.status === 0'),
+  orderedBefore('didNotStart(after)', 'after.status === 0'),
   true,
 );
 
 check(
   'the baseline null check comes BEFORE the branch that reads its stdout',
-  source.indexOf('didNotStart(before)') < source.indexOf('before.status !== 0'),
+  orderedBefore('didNotStart(before)', 'before.status !== 0'),
   true,
 );
 

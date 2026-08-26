@@ -494,6 +494,30 @@ jobs:
       - name: Concealment allowlist is valid and evidence-bound
         run: node .github/scripts/check-concealment-templates.mjs .
 
+      # #388: the doctrine states an invariant over capture rows —
+      # factor_1 "unverifiable" implies classification "anomalous" — and named
+      # a checker enforcing it that did not exist in this repository. The
+      # invariant held by discipline alone, which is the shape the corpus
+      # exists to catch, one level up.
+      #
+      # Self-tested first, like every guard above, and here the reason is
+      # sharper than usual: the real corpus is currently CLEAN, so a validator
+      # that only ever ran against it would pass for the same reason an empty
+      # scan passes. The self-test is what shows each condition can fail.
+      #
+      # The base ref is passed so the diff-scoped conditions can run. A few
+      # checks apply only to rows this change ADDS, because a row is judged
+      # against the allowlist of its own moment — of 43 inverse-shaped rows in
+      # the corpus, 42 predate T1C's merge and were correctly anomalous when
+      # written. This job already checks out with fetch-depth: 0 for the
+      # append-only guard, so the base is present. Without it the guard exits
+      # 2 — CANNOT CHECK — never 0.
+      - name: Self-test the capture-schema validator
+        run: node .github/scripts/check-concealment-captures.test.mjs
+
+      - name: Concealment captures satisfy their schema and stated invariant
+        run: node .github/scripts/check-concealment-captures.mjs . "origin/${{ github.base_ref || github.event.repository.default_branch }}"
+
       - name: No placeholder or assertion-free tests
         run: node .github/scripts/check-placeholder-tests.mjs
 

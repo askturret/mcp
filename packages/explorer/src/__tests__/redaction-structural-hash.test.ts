@@ -31,6 +31,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   BUILTIN_RULES,
+  SNAPSHOT_HASH,
   createRedactionPipeline,
   createSnapshot,
   highEntropyRule,
@@ -71,25 +72,45 @@ function diffPanel(retained: readonly RegistrySnapshot[], report?: unknown) {
 }
 
 // ---------------------------------------------------------------------------
-// Criterion 6 — the length coupling, asserted FIRST because everything else
-// depends on the regex still describing real compiler output.
+// The truncation length, asserted DIRECTLY (#383 item 4)
+//
+// This block used to route the question through redaction: take a real compiler
+// hash, redact it, assert it survived. That could not fail. Under the DEFAULT
+// pipeline nothing redacts a hex string containing letters at ANY length —
+// `highEntropyRule` is the only length-sensitive rule and is excluded from
+// `BUILTIN_RULES` — so a hash survives whether or not it is exempted, and the
+// assertion passes at every truncation length including none at all.
+//
+// The two jobs are split because ONE assertion cannot do both, and no better
+// fixture exists: the truncation job needs a compiler-produced hash, while the
+// exemption job needs a value a rule would actually redact — 16 digits, Luhn-
+// valid — which the compiler yields roughly 1 in 18,000 times. Searching for
+// one would couple the fixture to hash-INPUT stability and redden for reasons
+// unrelated to what it tests.
+//
+// So: this block asserts the regex against a derived hash and nothing else.
+// The exemption is asserted separately, with a constructed card-shaped value.
+// Each fails for exactly one reason.
 // ---------------------------------------------------------------------------
 
-describe('the exemption is tied to the compiler truncation length (#266 criterion 6)', () => {
-  // DERIVED from the compiler's own hash path, never a hard-coded literal. A
-  // literal keeps passing after `freeze-and-hash.ts` changes its truncation and
-  // the guard silently stops guarding.
+describe('the pattern still describes real compiler output (#383 item 4)', () => {
+  // DERIVED from the compiler's own hash path, never a hard-coded literal.
   const realHash = createSnapshot([], 1).hash;
 
-  it('a real compiler-produced hash survives redaction on the Explorer surface', () => {
-    const panel = diffPanel([snapshotWithHash(1, realHash), snapshotWithHash(2, realHash)]);
-    expect(panel?.snapshots?.[0]?.hash).toBe(realHash);
+  it('SNAPSHOT_HASH matches a hash the compiler actually produced', () => {
+    // Unmediated: if `freeze-and-hash.ts` changes its `substring(0, 16)`, this
+    // fails immediately. That is the whole of the truncation guard, and it lives
+    // here rather than in the regex's own comment, which used to claim it.
+    expect(SNAPSHOT_HASH.test(realHash)).toBe(true);
   });
 
-  it('the card-shaped fixtures are the same length as a real hash, or they prove nothing', () => {
-    // This is the coupling. If the compiler's truncation length changes, the
-    // fixtures below stop describing a hash, and this goes red rather than the
-    // suite quietly testing a shape the product no longer produces.
+  it('...and the production regex is the one under test, not a copy of it', () => {
+    // Imported from core rather than re-declared. A local copy would be a
+    // Transcribed Oracle: it would agree with itself after the real one drifted.
+    expect(SNAPSHOT_HASH.source).toBe('^[0-9a-f]{16}$');
+  });
+
+  it('the card-shaped fixtures are the same length as a real hash', () => {
     expect(CARD_SHAPED_A).toHaveLength(realHash.length);
     expect(CARD_SHAPED_B).toHaveLength(realHash.length);
   });
@@ -182,6 +203,35 @@ describe('the exemption pins the container, not the leaf (#266 criterion 3)', ()
     }) as { traces?: { spans?: { attributes?: Record<string, unknown> }[] } };
 
     expect(panels.traces?.spans?.[0]?.attributes?.hash).toBe(REDACTED);
+  });
+
+  it('a card-shaped value at a NESTED snapshots container is still redacted (#383 item 1)', () => {
+    // THE ANCHORING ASSERTION. `anchored: true` is a data flag, and a flag no
+    // test observes is one the next author flips while the suite stays green.
+    //
+    // This path — snapshots[].hash nested inside caller-influenced span
+    // attributes — is exempt under SUFFIX matching and NOT exempt under
+    // anchored. So flipping the explorer entries back to `anchored: false`
+    // turns this red, which is the only thing keeping the ruling in force.
+    const nested = redactExplorerModel({
+      traces: { spans: [{ attributes: { snapshots: [{ hash: CARD_SHAPED_A }] } }] },
+    }) as { traces: { spans: { attributes: { snapshots: { hash: string }[] } }[] } };
+
+    expect(nested.traces.spans[0]?.attributes.snapshots[0]?.hash).toBe(REDACTED);
+  });
+
+  it('...while the same value at a REAL exempted root survives, so the above is not blanket redaction', () => {
+    // The paired positive. Without it, an implementation that exempted nothing
+    // at all would satisfy the assertion above.
+    const atRoot = redactExplorerModel({ snapshots: [{ hash: CARD_SHAPED_A }] }) as {
+      snapshots: { hash: string }[];
+    };
+    const underDiff = redactExplorerModel({ diff: { snapshots: [{ hash: CARD_SHAPED_A }] } }) as {
+      diff: { snapshots: { hash: string }[] };
+    };
+
+    expect(atRoot.snapshots[0]?.hash).toBe(CARD_SHAPED_A);
+    expect(underDiff.diff.snapshots[0]?.hash).toBe(CARD_SHAPED_A);
   });
 
   it('a hash-shaped value at an UNRELATED explorer path is still redacted', () => {

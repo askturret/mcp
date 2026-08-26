@@ -173,39 +173,104 @@ export interface StructuralPathPattern {
  * A snapshot hash: SHA-256 truncated to 16 hex characters by
  * `compiler/passes/freeze-and-hash.ts`.
  *
- * This regex IS the truncation-length guard (#266 criterion 6). If that
- * `substring(0, 16)` ever changes, real hashes stop matching, stop being
- * exempted, and the tests that derive their fixture from the compiler's own
- * hash path go red. The failure direction is safe and loud: hashes become MORE
- * redacted and the panel-6 dropdown visibly fills with `[REDACTED]`.
+ * ## What this does NOT do, corrected (#383 item 4)
  *
- * The guard is only real because those tests derive the hash rather than
- * hard-coding a 16-character literal. A hard-coded fixture would keep passing
- * after the length changed, and this comment would be decorative.
+ * This comment used to claim the regex "IS the truncation-length guard", on the
+ * reasoning that a changed `substring(0, 16)` would stop hashes matching, stop
+ * them being exempted, and turn the derived-fixture tests red.
+ *
+ * **They would not go red.** Under the DEFAULT pipeline nothing redacts a hex
+ * string containing letters, at any length: `keyNameRule` does not list `hash`,
+ * `bearerRule` needs a prefix, `jwtRule` needs two dots, `pemRule` needs a PEM
+ * header, and `creditCardRule` needs 16 DIGITS plus a Luhn check.
+ * `highEntropyRule` is the only length-sensitive rule and is deliberately
+ * excluded from `BUILTIN_RULES`.
+ *
+ * So losing the exemption changes nothing observable: the hash survives either
+ * way, no rule fires, and an assertion routed through redaction still passes.
+ * The mechanism the old comment named was absent at every length, which makes
+ * it a claim about a guard rather than a guard.
+ *
+ * ## What actually guards the length
+ *
+ * A DIRECT assertion — `SNAPSHOT_HASH.test(createSnapshot(...).hash)` — which
+ * is why this regex is exported. It fails immediately if the truncation
+ * changes, because nothing mediates it. Routing that question through redaction
+ * is what made it vacuous.
+ *
+ * The regex still does real work here: it BOUNDS the exemption to 16-lowercase
+ * hex, so `creditCardRule` stands down on exactly that shape and nothing wider.
+ * That is its job; the length guard is the test's.
  */
-const SNAPSHOT_HASH = /^[0-9a-f]{16}$/;
+export const SNAPSHOT_HASH = /^[0-9a-f]{16}$/;
+
+/** The three positions a snapshot hash occupies within a diff view. */
+const EXPLORER_HASH_POSITIONS = [
+  ['snapshots', '*', 'hash'],
+  ['comparing', 'before', 'hash'],
+  ['comparing', 'after', 'hash'],
+] as const;
+
+/**
+ * The roots redaction visits Explorer data at.
+ *
+ * THREE in-tree sites produce TWO distinct roots: `buildDiffView` redacts at the
+ * diff view's own root, while `buildExplorerPanels` and `embedJson` both redact
+ * the assembled panels object, where the same value sits under `diff`. Every
+ * pass that can see a still-unmasked hash must exempt it — the first pass to
+ * miss masks the value, and later passes then have nothing left to exempt — so
+ * both roots are listed rather than only the outermost.
+ */
+const EXPLORER_ROOTS = [[], ['diff']] as const;
 
 /**
  * Positions exempt from the value-shape rules, per surface.
  *
- * Explorer entries are SUFFIX-matched because redaction runs TWICE over the
- * same value — once inside `buildDiffView` and again over the assembled panels
- * object — so one hash is visited at both `snapshots.<i>.hash` and
- * `diff.snapshots.<i>.hash`. A root-anchored entry would match the outer path
- * only, and pass 1 would already have masked the value before pass 2 saw it:
- * a fix that silently half-works.
+ * ## Anchored, and the reason is failure DIRECTION (#383)
  *
- * They pin the CONTAINER rather than the leaf. Matching on a last segment of
- * `hash` would also exempt `traces.spans.<i>.attributes.hash`, which
- * `buildTraceView` spreads straight from caller-influenced span attributes.
+ * These entries were suffix-matched, on the reasoning that a root-anchored entry
+ * would match the outer path only and silently half-work. That reasoning had the
+ * failure direction backwards, and the correction is worth stating because the
+ * argument against it was already in this file, twenty lines up.
+ *
+ * `redactExplorerModel` is PUBLIC API and generic over the root, so the set of
+ * roots is genuinely open — enumerating today's call sites cannot close it. At a
+ * root nobody enumerated:
+ *
+ *   - SUFFIX matching exempts, so a hash-shaped value at an unforeseen container
+ *     is NOT redacted. Under-redaction, and invisible by construction: nothing
+ *     displays a value that should have been masked.
+ *   - ANCHORED matching does not exempt, so a real hash IS redacted. Over-
+ *     redaction, which is loud — the panel-6 dropdown visibly fills with
+ *     `[REDACTED]` and the derived-hash tests go red.
+ *
+ * For a redaction control the correct default is fail-closed, and fail-closed
+ * here means REDACT. So the exemption applies at exactly six positions — two
+ * roots x three positions — and NOWHERE else, including a `snapshots` container
+ * nested inside caller-influenced span attributes.
+ *
+ * ## The consequence for out-of-tree callers, stated rather than discovered
+ *
+ * An adopter who calls `redactExplorerModel` on a model rooted somewhere this
+ * list does not name gets NO exemption, and their snapshot hashes are redacted.
+ * That is a deliberate, documented cost of anchoring rather than an oversight.
+ * It is the safe direction: they see masked hashes and can say so, where the
+ * alternative is an unmasked value nobody ever sees.
+ *
+ * Generated as a cross-product rather than written out, so the next author reads
+ * "two roots x three positions" instead of six near-duplicate lines inviting a
+ * tidy-up back into the bug — and so adding a fourth pass at a new root is one
+ * line rather than three.
  */
 const STRUCTURAL_PATHS: Readonly<Record<RedactionSurface, readonly StructuralPathPattern[]>> = {
   audit: AUDIT_STRUCTURAL_FIELDS.map((name) => ({ segments: [name], anchored: true })),
-  explorer: [
-    { segments: ['snapshots', '*', 'hash'], anchored: false, valuePattern: SNAPSHOT_HASH },
-    { segments: ['comparing', 'before', 'hash'], anchored: false, valuePattern: SNAPSHOT_HASH },
-    { segments: ['comparing', 'after', 'hash'], anchored: false, valuePattern: SNAPSHOT_HASH },
-  ],
+  explorer: EXPLORER_ROOTS.flatMap((root) =>
+    EXPLORER_HASH_POSITIONS.map((position) => ({
+      segments: [...root, ...position],
+      anchored: true,
+      valuePattern: SNAPSHOT_HASH,
+    })),
+  ),
   log: [],
   span: [],
   metric: [],

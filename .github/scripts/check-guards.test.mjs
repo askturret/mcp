@@ -378,6 +378,114 @@ check(
   0,
 );
 
+// ---------------------------------------------------------------------------
+// The execution guard survives a hostile PATH (#429)
+//
+// This environment has shipped a SPACE-separated PATH. Lookup splits on `:`, so
+// the whole string is one nonexistent directory, `spawnSync('npm', …)` returns
+// `status: null` with `error: ENOENT`, and `run.status !== 0` read that as the
+// package's tests failing.
+//
+// WHAT THAT COST, and the second half is the worse half:
+//
+//   6 assertions failed        every case expecting exit 0
+//   ~10 assertions PASSED      every case expecting exit 1 — vacuously, because
+//                              the guard was failing everything for the wrong
+//                              reason
+//
+// So the broken environment produced six false alarms AND ten false
+// reassurances, and the six are what three agents spent time on. It is #361's
+// argument reaching a place #361 did not: whoever sees it is already debugging
+// a guard, and the red confirms the theory they walked in with.
+//
+// The fix is a PATH the child can resolve through, NOT `process.execPath` —
+// `npm` is a genuine external tool with no in-process equivalent, which #361's
+// own scope note is explicit about. This assertion is what stops it regrowing,
+// because under a normal PATH the fix is invisible: every case above passes
+// with or without it.
+// ---------------------------------------------------------------------------
+{
+  const dir = scratchWorkspace({
+    scripts: { test: 'node -e "console.error(\'Tests: 3 passed, 3 total\')"' },
+  });
+  // ONLY THE DELIMITER IS WRONG — that is what makes this the observed
+  // condition rather than a general "bad PATH" test, and it is NOT the same as
+  // unsetting PATH, which falls back to a system default and can succeed by
+  // accident.
+  //
+  // The directories are the ones seen in the wild. `/opt/homebrew/bin` does not
+  // exist on the Linux runner and does not need to — nothing here depends on
+  // any of them resolving. An earlier version of this comment claimed they were
+  // all real, which was true where it was written and false in CI. A loose
+  // claim inside a fixture about hostile environments is the wrong place to be
+  // approximate.
+  const hostile = spawnSync(process.execPath, [EXECUTION, dir], {
+    encoding: 'utf-8',
+    env: { ...process.env, PATH: '/opt/homebrew/bin /usr/bin /bin' },
+  });
+  const hostileOut = `${hostile.stdout ?? ''}${hostile.stderr ?? ''}`;
+
+  check('execution: passes with a SPACE-separated PATH (#429)', hostile.status, 0);
+  // POSITIVELY assert the package was measured, rather than merely that the
+  // failure message is absent. The negative form passed with the fix removed —
+  // the guard then exits 2 and prints CANNOT CHECK, so "do not execute any
+  // tests" is absent for the wrong reason, and the pair had only one reddening
+  // half. This half now reddens too.
+  check(
+    'execution: ...and the package is actually MEASURED, not reported unmeasurable',
+    /1 running tests/.exec(hostileOut) !== null,
+    true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The CANNOT-CHECK backstop, pinned — and it is what catches its own defect
+// (#429 QA, generalised as #443)
+//
+// The backstop shipped with NO assertion, so nothing executed its detail
+// string, and the detail string was wrong:
+//
+//   if (run.status === null || run.error !== undefined) { … run.error.code … }
+//
+// `status === null` does NOT imply `error` is set. Measured, all three shapes:
+//
+//   command not found   status null   error ENOENT       signal null
+//   KILLED BY SIGNAL    status null   error UNDEFINED    signal SIGKILL  <- throws
+//   timeout kill        status null   error ETIMEDOUT    signal SIGTERM
+//
+// An uncaught throw there exits 1 — this guard's "packages do not execute any
+// tests" code — so an npm child killed by the OOM killer produced a FALSE
+// TEST-COVERAGE ALARM. #429's own symptom inside the fix for #429.
+//
+// `kill -9 $PPID` in the package's test script kills npm itself, which is the
+// middle row exactly, reached through the real npm path. It needs only `sh` and
+// `kill`, both of which the guard's own CHILD_PATH guarantees.
+// ---------------------------------------------------------------------------
+{
+  const dir = scratchWorkspace({ scripts: { test: 'kill -9 $PPID' } });
+  const killed = spawnSync(process.execPath, [EXECUTION, dir], { encoding: 'utf-8' });
+  const out = `${killed.stdout ?? ''}${killed.stderr ?? ''}`;
+
+  check('execution: a signal-killed npm is CANNOT CHECK, not a failing package (#429)', killed.status, 2);
+  check(
+    'execution: ...and says COULD NOT BE CHECKED rather than blaming test coverage',
+    /COULD NOT BE CHECKED/.exec(out) !== null,
+    true,
+  );
+  check(
+    'execution: ...and does NOT report it as a package that runs no tests',
+    /do not execute any tests/.exec(out) !== null,
+    false,
+  );
+  // The assertion that would have caught the shipped defect: it forces the
+  // detail string to be BUILT for the shape where `error` is undefined.
+  check(
+    'execution: ...and names the signal, which is the string that used to throw',
+    /killed by SIG/.exec(out) !== null,
+    true,
+  );
+}
+
 check(
   'execution: honours an explicit testsNotRequired declaration',
   runGuard(

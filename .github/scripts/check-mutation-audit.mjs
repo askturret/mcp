@@ -294,8 +294,22 @@ function runSelfTest(testPath, cwd) {
  * `finally`, with the restore verified. Copying the tree instead was rejected:
  * several self-tests assert against real repository state, so a copy changes
  * what is being measured.
+ *
+ * ## The `mutate` seam
+ *
+ * Overrides how a site is neutralised. It exists so the `node --check` gate can
+ * be WITNESSED, and that is not a convenience: none of the four enumerated
+ * mutations can produce unparseable output by construction — `errors.push` ->
+ * `(()=>{})`, `throw` -> `void`, and both numeric replacements are valid
+ * wherever the original was. Measured, not assumed: zero `unparseable` verdicts
+ * across all 111 sites.
+ *
+ * So the gate defends against a mutation kind that does not exist YET, and
+ * without a seam its assertion could only ever pass vacuously — which is
+ * exactly what QA found: removing the gate entirely left the suite at 48/0.
+ * Production callers pass nothing.
  */
-export function auditGuard({ guardPath, testPath, rootDir, onProgress = () => {} }) {
+export async function auditGuard({ guardPath, testPath, rootDir, onProgress = () => {}, mutate = applyMutations }) {
   const original = readFileSync(guardPath, 'utf-8');
   const sites = enumerateSites(original);
   const name = basename(guardPath);
@@ -318,12 +332,56 @@ export function auditGuard({ guardPath, testPath, rootDir, onProgress = () => {}
   }
   const baselineFailures = new Set(failingAssertions(baseline.out));
 
+  // AN INTERRUPTED RUN MUST NOT LEAVE A DISARMED GUARD ON DISK (#428 QA).
+  //
+  // A mutated guard is on disk for roughly 28% of this audit's ~197s runtime —
+  // QA measured 17 of 60 polls. Node runs no `finally` on an unhandled signal,
+  // so Ctrl-C inside that window left, for example:
+  //
+  //   M .github/scripts/check-adr-citations.mjs   process.exit(1) -> process.exit(0)
+  //
+  // A one-character diff that DISARMS a CI guard, parses, lints, and may leave
+  // its own self-test green — which is this audit's entire premise, produced by
+  // the audit. Ctrl-C on a three-minute tool is the expected interaction.
+  //
+  // The interaction with a dirty tree is what makes it dangerous rather than
+  // merely untidy: a normal run preserves uncommitted work byte-for-byte
+  // (the original is read from disk), but INTERRUPTED plus dirty means the
+  // user cannot tell their own edit from the residue, and `git checkout --`
+  // then destroys their work.
+  //
+  // HONEST LIMIT: SIGKILL cannot be caught, so `kill -9` still leaves residue.
+  // Nothing in a single process can fix that. What is fixed is the signal a
+  // human actually sends.
+  const onSignal = (signal) => {
+    writeFileSync(guardPath, original, 'utf-8');
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
+    process.kill(process.pid, signal); // re-raise with default disposition
+  };
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+
   const results = [];
   let probe = null;
   try {
     for (const [i, site] of sites.entries()) {
+      // YIELD TO THE EVENT LOOP so a queued signal can actually be delivered.
+      //
+      // Without this the loop is one unbroken synchronous block — `spawnSync`
+      // throughout — and Node cannot run a signal handler until the stack
+      // unwinds. Registering a handler would then only SUPPRESS SIGINT's
+      // default disposition: the run would continue to completion and restore
+      // via `finally`, so the file would be safe, but Ctrl-C would do nothing
+      // at all for up to three minutes. Measured, not reasoned — the first
+      // version of this fix exited code 0 with `signal: null` under SIGINT.
+      //
+      // Safe file, uncancellable tool is a worse trade than the defect. One
+      // yield per site costs nothing and makes the handler genuinely reachable.
+      await new Promise((resolve) => setImmediate(resolve));
+
       onProgress(`${name} ${i + 1}/${sites.length} (line ${site.line}, ${site.kind})`);
-      writeFileSync(guardPath, applyMutations(original, [site]), 'utf-8');
+      writeFileSync(guardPath, mutate(original, [site]), 'utf-8');
 
       const parsed = runNodeCheck(guardPath);
       if (!parsed.ok) {
@@ -346,7 +404,7 @@ export function auditGuard({ guardPath, testPath, rootDir, onProgress = () => {}
     // THE COMPLETENESS PROBE. See `interpretProbe` for why the polarity here is
     // not the one #428's review states.
     onProgress(`${name} completeness probe`);
-    writeFileSync(guardPath, applyMutations(original, sites), 'utf-8');
+    writeFileSync(guardPath, mutate(original, sites), 'utf-8');
     const parsedAll = runNodeCheck(guardPath);
     if (!parsedAll.ok) {
       probe = { status: 'unparseable', detail: parsedAll.out.trim().split('\n')[0] ?? '' };
@@ -360,9 +418,19 @@ export function auditGuard({ guardPath, testPath, rootDir, onProgress = () => {}
       };
     }
   } finally {
+    process.removeListener('SIGINT', onSignal);
+    process.removeListener('SIGTERM', onSignal);
     writeFileSync(guardPath, original, 'utf-8');
     const restored = readFileSync(guardPath, 'utf-8');
     if (restored !== original) {
+      // NOTE, because the audit put this line in its OWN unwitnessed list and
+      // the first version of this PR did not connect the two: no fixture
+      // reaches this throw, so "the audit never leaves a wrong write" rested on
+      // reading the code rather than on observing it. The signal handlers above
+      // are what make the claim true for the case that actually occurs; this
+      // line remains the backstop for a filesystem failure, and remains
+      // unwitnessed. Reading your own unwitnessed rows against your own claims
+      // is the cheapest review available.
       throw new Error(`RESTORE FAILED for ${guardPath} — the working tree is dirty and must be checked by hand`);
     }
   }
@@ -451,6 +519,23 @@ export function renderInventory(report) {
   lines.push('A site is WITNESSED when neutralising it turns its guard\'s self-test red —');
   lines.push('witnessed *relative to what that self-test exercises*, which is the honest limit.');
   lines.push('');
+  lines.push('## Read the unwitnessed count with two caveats');
+  lines.push('');
+  lines.push('**1. Some part of it may be MASKING rather than absence.** The unknown-route');
+  lines.push('detector only examines assertions tied to sites already found WITNESSED, so a');
+  lines.push('failure route outside the enumeration can make a genuinely-witnessed site');
+  lines.push('record as unwitnessed while never tripping the detector — QA demonstrated');
+  lines.push('exactly that with a `process.exitCode = 1` route, where a site flipped to');
+  lines.push('witnessed once the hidden route was removed. So the unwitnessed figure is an');
+  lines.push('upper bound on genuine absence, not a precise count of it.');
+  lines.push('');
+  lines.push('**2. It is environment-dependent (#429).** These numbers require a working');
+  lines.push('`PATH`. This repo\'s agent environment has shipped a space-separated `PATH`, on');
+  lines.push('which `env: node` fails in child processes — several guards then go');
+  lines.push('`cannot check`, and the totals move. #429 has bitten three agents; it is the');
+  lines.push('precondition for reproducing anything below. Re-run with a sane `PATH` before');
+  lines.push('treating a difference as a real change.');
+  lines.push('');
   lines.push(`- measured guards: **${report.totals.guards}**`);
   lines.push(`- failure sites: **${report.totals.sites}**`);
   lines.push(`- witnessed: **${report.totals.witnessed}**`);
@@ -503,7 +588,7 @@ export function renderInventory(report) {
   return `${lines.join('\n')}\n`;
 }
 
-export function audit(rootDir, { onProgress = () => {} } = {}) {
+export async function audit(rootDir, { onProgress = () => {} } = {}) {
   const guards = discoverGuards(rootDir);
   const errors = [];
   const measured = [];
@@ -517,7 +602,7 @@ export function audit(rootDir, { onProgress = () => {} } = {}) {
       else noSites += 1;
       continue;
     }
-    const result = auditGuard({ ...g, rootDir, onProgress });
+    const result = await auditGuard({ ...g, rootDir, onProgress });
     if (result.status === 'no-sites') { noSites += 1; continue; }
     measured.push(result);
   }
@@ -558,12 +643,12 @@ export function audit(rootDir, { onProgress = () => {} } = {}) {
   return { guards: measured, unreachable, unwitnessed, noFailureWitnesses, errors, totals };
 }
 
-function main(argv) {
+async function main(argv) {
   const args = argv.slice(2).filter((a) => a !== '--write');
   const write = argv.includes('--write');
   const root = resolve(args[0] ?? '.');
 
-  const report = audit(root, { onProgress: (m) => process.stderr.write(`  ... ${m}\n`) });
+  const report = await audit(root, { onProgress: (m) => process.stderr.write(`  ... ${m}\n`) });
 
   console.log(renderInventory(report));
 
@@ -589,5 +674,5 @@ function main(argv) {
 
 const entry = process.argv[1];
 if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
-  process.exit(main(process.argv));
+  process.exit(await main(process.argv));
 }

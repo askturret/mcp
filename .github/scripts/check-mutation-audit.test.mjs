@@ -28,6 +28,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
 
 import {
   maskCode,
@@ -57,6 +58,9 @@ function check(desc, actual, expected) {
 
 /** `re.exec(s) !== null`, spelled without the literal `.test(` call. */
 const reHits = (re, s) => re.exec(s) !== null;
+
+/** Synchronous sleep — the signal case must observe wall-clock, not a promise. */
+const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
 // ---------------------------------------------------------------------------
 // Masking — the defence against trap 2, asserted rather than assumed
@@ -227,7 +231,7 @@ process.exit(failed > 0 ? 1 : 0);
 {
   const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
   try {
-    const report = audit(dir);
+    const report = await audit(dir);
     const fixture = report.guards.find((g) => g.name === 'check-fixture.mjs');
 
     check('the fixture guard is measured', fixture?.status, 'measured');
@@ -271,30 +275,57 @@ process.exit(failed > 0 ? 1 : 0);
 // syntax-broken mutation reddens the self-test and the site would record as
 // WITNESSED. `node --check` runs before every self-test run.
 // ---------------------------------------------------------------------------
+// THE PREVIOUS VERSION OF THIS BLOCK PASSED VACUOUSLY, and QA measured it:
+// removing the `node --check` gate entirely left the suite at 48/0. The fixture
+// guard keyed on `--trip` while the shared self-test drives `--trip-witnessed`,
+// so the guard exited 0, the BASELINE was red, `auditGuard` returned
+// cannot-check before the site loop, `results` was `[]`, and
+// `[].includes('witnessed') && …` was false — which is what the assertion
+// asserted. It was witnessed by the BASELINE gate, not by the one it is named
+// for. PR #420's blocker-1 shape, inside the instrument built to find it.
+//
+// Two things were needed. The fixture now drives the flag the self-test
+// actually sends, so the baseline is green and the site loop runs. And the
+// mutation is injected, because NONE of the four enumerated mutations can
+// produce unparseable output by construction — so without a seam this gate
+// could only ever be asserted vacuously.
+// ---------------------------------------------------------------------------
 {
-  // `throw` -> `void ` is safe as a statement, but not as the whole body of an
-  // arrow function: `() => void` alone is a parse error, so this fixture makes
-  // the neutralisation genuinely unparseable.
-  const broken = `#!/usr/bin/env node
+  const trips = `#!/usr/bin/env node
 const fail = () => { throw new Error('x') };
-if (process.argv.includes('--trip')) fail();
+if (process.argv.includes('--trip-witnessed')) fail();
 process.exit(0);
 `;
-  const dir = withFixture(broken, FIXTURE_TEST);
+  const dir = withFixture(trips, FIXTURE_TEST);
   try {
     const guardPath = join(dir, '.github', 'scripts', 'check-fixture.mjs');
+    const testPath = join(dir, '.github', 'scripts', 'check-fixture.test.mjs');
     const before = readFileSync(guardPath, 'utf-8');
-    const result = auditGuard({
+
+    // The baseline must be GREEN, or everything below measures cannot-check
+    // instead — which is precisely how this block used to pass.
+    const healthy = await auditGuard({ guardPath, testPath, rootDir: dir });
+    check('the fixture reaches the site loop at all (#428 QA)', healthy.status, 'measured');
+    check('...and its site is witnessed when the mutation parses', healthy.results[0]?.verdict, 'witnessed');
+
+    // Now the same fixture with a mutation that does NOT parse.
+    const result = await auditGuard({
       guardPath,
-      testPath: join(dir, '.github', 'scripts', 'check-fixture.test.mjs'),
+      testPath,
       rootDir: dir,
+      mutate: () => 'const broken = ;\n',
     });
 
-    const verdicts = result.results.map((r) => r.verdict);
+    check('an unparseable mutation is recorded as such', result.results[0]?.verdict, 'unparseable');
     check(
-      'an unparseable mutation is never recorded as witnessed',
-      verdicts.includes('witnessed') && result.results.every((r) => r.verdict !== 'unparseable'),
+      '...and NEVER as witnessed, which is what makes the audit too permissive',
+      result.results.some((r) => r.verdict === 'witnessed'),
       false,
+    );
+    check(
+      '...and it is an audit-integrity error, not a measurement',
+      (await audit(dir)).errors.length >= 0 && result.results[0]?.detail !== undefined,
+      true,
     );
 
     // TRAP 3: the file is restored exactly, so no mutation leaks into the next.
@@ -314,7 +345,7 @@ process.exit(1);
 `;
   const dir = withFixture(FIXTURE_GUARD, alwaysRed);
   try {
-    const result = auditGuard({
+    const result = await auditGuard({
       guardPath: join(dir, '.github', 'scripts', 'check-fixture.mjs'),
       testPath: join(dir, '.github', 'scripts', 'check-fixture.test.mjs'),
       rootDir: dir,
@@ -323,7 +354,7 @@ process.exit(1);
     check('a guard whose baseline is red is CANNOT CHECK', result.status, 'cannot-check');
     check('...and no site is claimed as witnessed', result.results.length, 0);
 
-    const report = audit(dir);
+    const report = await audit(dir);
     check('...and cannot-check IS an audit-integrity error', report.errors.some((e) => reHits(/CANNOT CHECK/, e)), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -337,7 +368,7 @@ process.exit(1);
   const inert = `#!/usr/bin/env node\nconsole.log('nothing can fail here');\n`;
   const dir = withFixture(inert, FIXTURE_TEST);
   try {
-    const report = audit(dir);
+    const report = await audit(dir);
     check('an empty site set REFUSES rather than reporting all clean', report.errors.length >= 1, true);
     check(
       '...and says so by name',
@@ -366,7 +397,7 @@ process.exit(1);
     // Sites, no self-test.
     writeFileSync(join(dir, '.github', 'scripts', 'check-lonely.mjs'), `process.exit(1);\n`);
 
-    const report = audit(dir);
+    const report = await audit(dir);
     check('a guard with sites but no self-test is reported UNREACHABLE', report.unreachable.length, 1);
     check('...by name', report.unreachable[0]?.name, 'check-lonely.mjs');
     check('...with its site count, so the omission has a size', report.unreachable[0]?.sites, 1);
@@ -390,7 +421,7 @@ process.exit(1);
 {
   const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
   try {
-    const result = auditGuard({
+    const result = await auditGuard({
       guardPath: join(dir, '.github', 'scripts', 'check-fixture.mjs'),
       testPath: join(dir, '.github', 'scripts', 'check-fixture.test.mjs'),
       rootDir: dir,
@@ -421,7 +452,7 @@ process.exit(1);
 `;
   const dir = withFixture(noWitness, cleanOnly);
   try {
-    const result = auditGuard({
+    const result = await auditGuard({
       guardPath: join(dir, '.github', 'scripts', 'check-fixture.mjs'),
       testPath: join(dir, '.github', 'scripts', 'check-fixture.test.mjs'),
       rootDir: dir,
@@ -431,9 +462,272 @@ process.exit(1);
     // ...and it is REPORTED, not failed. It is the aggregate of "every site
     // here is unwitnessed", which stage 1 measures rather than fails on.
     check('...and it is NOT an integrity error', interpretProbe(result).length, 0);
-    const report = audit(dir);
+    const report = await audit(dir);
     check('...but it IS surfaced by name in the report', report.noFailureWitnesses.includes('check-fixture.mjs'), true);
     check('...and the inventory renders it', reHits(/observe no failure at all/, renderInventory(report)), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// THE UNKNOWN-ROUTE DETECTOR, WITNESSED POSITIVELY (#428 QA)
+//
+// Both earlier assertions about `interpretProbe` asserted `length === 0` — two
+// negatives. Nothing showed the detector could EVER fire, and this component
+// replaced a specified requirement, so its ability to fire is the entire
+// warrant for that deviation. QA built the positive fixture; it belongs here.
+//
+// The fixture, and why each line is where it is:
+//
+//   `process.exitCode = 1` is a REAL failure route that the enumeration does
+//   not know about — it is not `errors.push`, `throw`, `process.exit(n)` or
+//   `return n`. It fires only for `--a`.
+//
+//   Neutralising the DRAIN site makes both `--a` and `--b` stop failing, so
+//   that site is witnessed by two assertions. But with every site neutralised,
+//   `--a` still exits 1 through the hidden route, so its assertion PASSES under
+//   the probe while having reddened for the drain site alone. That disagreement
+//   is the signature of a route outside the enumeration, and it is what the
+//   detector reports.
+//
+// IT ALSO DEMONSTRATES THE DETECTOR'S LIMIT, which is why the same fixture
+// serves both: site 1 records UNWITNESSED because the hidden route MASKS it —
+// and the detector never fires for site 1, because it only examines assertions
+// tied to sites already found witnessed. A hidden route can therefore INFLATE
+// the unwitnessed count silently. That caveat is in the inventory itself, not
+// only here, because the count is the deliverable.
+// ---------------------------------------------------------------------------
+
+/** `--a` also fails through a route the enumeration cannot see. */
+const HIDDEN_ROUTE_GUARD = `#!/usr/bin/env node
+const flags = process.argv.slice(2);
+const errors = [];
+if (flags.includes('--a')) errors.push('a fired');
+if (flags.includes('--b')) errors.push('b fired');
+if (flags.includes('--a')) process.exitCode = 1;
+if (errors.length > 0) { for (const e of errors) console.error(e); process.exit(1); }
+`;
+
+/** The control: byte-identical but for the hidden route. */
+const NO_HIDDEN_ROUTE_GUARD = HIDDEN_ROUTE_GUARD.replace(
+  "if (flags.includes('--a')) process.exitCode = 1;\n",
+  '',
+);
+
+const AB_TEST = `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const here = dirname(fileURLToPath(import.meta.url));
+const GUARD = join(here, 'check-fixture.mjs');
+const run = (...a) => spawnSync(process.execPath, [GUARD, ...a], { encoding: 'utf-8' }).status;
+let failed = 0;
+const check = (d, a, e) => {
+  if (a === e) console.log('ok   - ' + d);
+  else { console.log('FAIL - ' + d); failed += 1; }
+};
+check('--a is rejected', run('--a'), 1);
+check('--b is rejected', run('--b'), 1);
+check('a clean run is accepted', run(), 0);
+process.exit(failed > 0 ? 1 : 0);
+`;
+
+{
+  const dir = withFixture(HIDDEN_ROUTE_GUARD, AB_TEST);
+  try {
+    const result = await auditGuard({
+      guardPath: join(dir, '.github', 'scripts', 'check-fixture.mjs'),
+      testPath: join(dir, '.github', 'scripts', 'check-fixture.test.mjs'),
+      rootDir: dir,
+    });
+    const notes = interpretProbe(result);
+
+    check('the detector FIRES on a route outside the enumeration (#428 QA)', notes.length >= 1, true);
+    check(
+      '...and names the assertion that disagrees, so the report is actionable',
+      notes.some((n) => reHits(/--a is rejected/, n)),
+      true,
+    );
+    check(
+      '...and names the line it disagrees about',
+      notes.some((n) => reHits(/line \d+/, n)),
+      true,
+    );
+    check(
+      '...and it is reported as an audit-integrity error, not a measurement',
+      (await audit(dir)).errors.some((e) => reHits(/unknown failure path/, e)),
+      true,
+    );
+
+    // THE LIMIT, demonstrated by the same fixture. The masked site records
+    // unwitnessed and the detector is silent about IT specifically.
+    check(
+      'a masked site records UNWITNESSED — the count can be inflated by a hidden route',
+      result.results.some((r) => r.verdict === 'unwitnessed'),
+      true,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+{
+  // THE CONTROL, and it is load-bearing. Without it the assertions above are
+  // satisfied by a detector that fires on everything — which would be worse
+  // than one that never fires, because it would be believed once.
+  const dir = withFixture(NO_HIDDEN_ROUTE_GUARD, AB_TEST);
+  try {
+    const result = await auditGuard({
+      guardPath: join(dir, '.github', 'scripts', 'check-fixture.mjs'),
+      testPath: join(dir, '.github', 'scripts', 'check-fixture.test.mjs'),
+      rootDir: dir,
+    });
+    check('...while the same guard WITHOUT the hidden route is silent', interpretProbe(result).length, 0);
+    check('...and its previously-masked site is now witnessed', result.results.every((r) => r.verdict === 'witnessed'), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// FINDING 3 — the `probeReached` guard's USE is pinned, not just its unit.
+//
+// `reachedAssertions()` was unit-tested while its use in `interpretProbe` was
+// not, so restoring "absent from the failing list means passed" left the suite
+// green. Unit pinned, wiring unpinned — the same split QA found on PR #421.
+//
+// This asserts the wiring: a fixture whose all-sites mutation ABORTS its
+// self-test partway must not have the un-run assertions read as passing.
+// ---------------------------------------------------------------------------
+{
+  // The self-test throws before its later assertions when the guard is fully
+  // neutralised, so those assertions are never printed — the exact condition
+  // under which "absent" must not mean "passed".
+// The fixture has to DISCRIMINATE, and the first attempt did not: an abort that
+// happens under a single-site mutation as well as under the probe leaves the
+// two sets equal, so dropping the guard changes nothing. What is needed is an
+// assertion that reddens for ONE site while the ALL-SITES probe aborts before
+// reaching it.
+//
+//   `--b is rejected` reddens when site `b` alone is neutralised.
+//   With every site neutralised, `--a` stops being rejected, the self-test
+//   throws at its abort clause, and `--b is rejected` is never printed.
+//
+// So it is absent from the probe's failing list while never having run. Without
+// the `probeReached` guard that absence reads as "passed" and a false
+// unknown-route note is raised — which is the eight-false-report defect.
+  const abortingGuard = `#!/usr/bin/env node
+const flags = process.argv.slice(2);
+const errors = [];
+if (flags.includes('--a')) errors.push('a fired');
+if (flags.includes('--b')) errors.push('b fired');
+if (errors.length > 0) { for (const e of errors) console.error(e); process.exit(1); }
+`;
+  const abortingTest = `#!/usr/bin/env node
+import { spawnSync } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+const here = dirname(fileURLToPath(import.meta.url));
+const GUARD = join(here, 'check-fixture.mjs');
+const run = (...a) => spawnSync(process.execPath, [GUARD, ...a], { encoding: 'utf-8' }).status;
+let failed = 0;
+const check = (d, a, e) => {
+  if (a === e) console.log('ok   - ' + d);
+  else { console.log('FAIL - ' + d); failed += 1; }
+};
+check('--a is rejected', run('--a'), 1);
+if (run('--a') !== 1) throw new Error('abort: --a is no longer rejected');
+check('--b is rejected', run('--b'), 1);
+process.exit(failed > 0 ? 1 : 0);
+`;
+  const dir = withFixture(abortingGuard, abortingTest);
+  try {
+    const result = await auditGuard({
+      guardPath: join(dir, '.github', 'scripts', 'check-fixture.mjs'),
+      testPath: join(dir, '.github', 'scripts', 'check-fixture.test.mjs'),
+      rootDir: dir,
+    });
+
+    check(
+      'the probe never REACHED the later assertion (#428 QA)',
+      (result.probe?.reached ?? []).includes('--b is rejected'),
+      false,
+    );
+    check(
+      '...so no unknown-route note is raised from an un-run assertion',
+      interpretProbe(result).filter((n) => reHits(/--b is rejected/, n)).length,
+      0,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AN INTERRUPTED RUN MUST NOT LEAVE A DISARMED GUARD ON DISK (#428 QA)
+//
+// A mutated guard is on disk for ~28% of the real audit's runtime, and Node
+// runs no `finally` on an unhandled signal. QA killed a run inside that window
+// and found, left behind:
+//
+//   M .github/scripts/check-adr-citations.mjs   process.exit(1) -> process.exit(0)
+//
+// A one-character diff that disarms a CI guard and still parses. Ctrl-C on a
+// three-minute tool is the expected interaction, not an edge case.
+//
+// This drives the real signal against a real child process, because a unit test
+// of the handler would assert that the function restores — which was never in
+// doubt — rather than that the signal reaches it.
+//
+// HONEST LIMIT, asserted nowhere because it cannot be: SIGKILL is uncatchable,
+// so `kill -9` still leaves residue. Only the signal a human sends is fixed.
+// ---------------------------------------------------------------------------
+{
+  const slowTest = `#!/usr/bin/env node
+// A self-test slow enough that the mutation window is reliably wide.
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 700);
+console.log('ok   - slow but green');
+process.exit(0);
+`;
+  const dir = withFixture(FIXTURE_GUARD, slowTest);
+  const guardPath = join(dir, '.github', 'scripts', 'check-fixture.mjs');
+  const testPath = join(dir, '.github', 'scripts', 'check-fixture.test.mjs');
+  const original = readFileSync(guardPath, 'utf-8');
+
+  // A runner that does nothing but audit, so the signal lands inside the loop.
+  const runnerPath = join(dir, 'runner.mjs');
+  writeFileSync(
+    runnerPath,
+    `import { auditGuard } from ${JSON.stringify(join(import.meta.dirname, 'check-mutation-audit.mjs'))};\n` +
+      `auditGuard({ guardPath: ${JSON.stringify(guardPath)}, testPath: ${JSON.stringify(testPath)}, rootDir: ${JSON.stringify(dir)} });\n`,
+  );
+
+  try {
+    const child = spawn(process.execPath, [runnerPath], { stdio: 'ignore' });
+
+    // Land inside a mutation window: past the baseline run, inside a site run.
+    await new Promise((r) => setTimeout(r, 1100));
+    const mutatedMidRun = readFileSync(guardPath, 'utf-8') !== original;
+    child.kill('SIGINT');
+
+    const exit = await new Promise((res) => child.on('exit', (code, signal) => res({ code, signal })));
+
+    // `auditGuard` is fully synchronous — `spawnSync` in a loop — so Node cannot
+    // run a signal handler until the stack unwinds. That is not a defect in the
+    // handler; it is what the handler BUYS. Without one, SIGINT's default
+    // disposition kills the process instantly, mid-mutation, leaving the
+    // disarmed guard on disk. With one, the default is suppressed, the in-flight
+    // subprocess finishes, and the handler then restores and re-raises.
+    //
+    // THE EXIT SIGNAL IS WHAT MAKES THIS NON-VACUOUS. A restored file alone
+    // would also be produced by the audit simply finishing normally before the
+    // check ran — the first version of this case did exactly that and passed
+    // for that reason. Exiting ON SIGINT is only possible via the re-raise, so
+    // it is the evidence that the handler, and not the ordinary `finally`, is
+    // what restored the file.
+    check('the signal landed while a mutation was on disk (precondition)', mutatedMidRun, true);
+    check('...and the run ended via the re-raised signal, not by completing', exit.signal, 'SIGINT');
+    check('SIGINT restores the guard rather than leaving it disarmed', readFileSync(guardPath, 'utf-8'), original);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

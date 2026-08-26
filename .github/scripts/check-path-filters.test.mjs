@@ -100,6 +100,133 @@ function withFixture(...args) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Lane classification (#327)
+//
+// A real git repository, not a stubbed diff. The check answers "what does this
+// PR change", and the plumbing that answers it — `git diff base...HEAD` — is
+// part of what can break. Stubbing it would test the message and not the check.
+// ---------------------------------------------------------------------------
+
+const git = (dir, ...args) =>
+  spawnSync('git', args, { cwd: dir, encoding: 'utf-8', env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null' } });
+
+/**
+ * A fixture whose base commit is clean and whose HEAD changes `changedPaths`,
+ * built as a PR labelled `labels`.
+ */
+function laneFixture({ labels, changedPaths, filtersBlock, packages = { core: [] } }) {
+  // `workspace` must be a declared output or the pre-existing check C fires and
+  // masks what these cases are actually asserting.
+  const dir = fixture(packages, filtersBlock, { outputs: [...Object.keys(packages), 'workspace'] });
+
+  git(dir, 'init', '-q', '-b', 'main');
+  git(dir, 'config', 'user.email', 'guard@test');
+  git(dir, 'config', 'user.name', 'Guard Test');
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'base');
+
+  git(dir, 'checkout', '-q', '-b', 'pr');
+  for (const rel of changedPaths) {
+    mkdirSync(join(dir, dirname(rel)), { recursive: true });
+    writeFileSync(join(dir, rel), 'changed\n');
+  }
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-q', '-m', 'pr');
+
+  // The payload Actions writes for a pull_request event, which every step can
+  // read via GITHUB_EVENT_PATH — no workflow wiring needed.
+  const eventPath = join(dir, 'event.json');
+  writeFileSync(eventPath, JSON.stringify({ pull_request: { labels: labels.map((name) => ({ name })) } }));
+
+  const r = spawnSync('node', [GUARD, dir, 'main'], {
+    encoding: 'utf-8',
+    env: { ...process.env, GITHUB_EVENT_PATH: eventPath },
+  });
+  rmSync(dir, { recursive: true, force: true });
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+}
+
+const LANE_FILTERS = `            core:
+              - 'packages/core/**'
+            workspace:
+              - 'package.json'
+              - 'tsconfig.json'
+              - '.github/workflows/**'`;
+
+{
+  const r = laneFixture({
+    labels: ['ci:cheap'],
+    changedPaths: ['.github/workflows/release.yml'],
+    filtersBlock: LANE_FILTERS,
+  });
+  check('lane: a ci:cheap PR editing a workflow FAILS (#327)', r.code, 1);
+  check('lane: ...and names the workspace filter as the reason', /filter 'workspace'/.test(r.out), true);
+  check('lane: ...and teaches the capacity-gate consequence', r.out.includes('signing-runner slot'), true);
+  check(
+    'lane: ...and points at extending an already-wired guard as the cheap route',
+    r.out.includes('EXTENDING an already-wired guard'),
+    true,
+  );
+}
+
+check(
+  'lane: a genuinely cheap PR (docs + .operum/audit) still passes (#327)',
+  laneFixture({
+    labels: ['ci:cheap'],
+    changedPaths: ['docs/thing.md', '.operum/audit/note.jsonl'],
+    filtersBlock: LANE_FILTERS,
+  }).code,
+  0,
+);
+
+check(
+  'lane: a ci:cheap PR touching packages/ FAILS too — same claim, same check (#327)',
+  laneFixture({
+    labels: ['ci:cheap'],
+    changedPaths: ['packages/core/src/thing.ts'],
+    filtersBlock: LANE_FILTERS,
+  }).code,
+  1,
+);
+
+check(
+  'lane: the SAME workflow edit labelled ci:full passes — the label is the subject (#327)',
+  // The paired positive. Without it, a check that failed every workflow edit
+  // regardless of label would satisfy the negatives above.
+  laneFixture({
+    labels: ['ci:full'],
+    changedPaths: ['.github/workflows/release.yml'],
+    filtersBlock: LANE_FILTERS,
+  }).code,
+  0,
+);
+
+check(
+  'lane: an UNLABELLED PR editing a workflow passes — this check polices a claim, not a change',
+  laneFixture({
+    labels: [],
+    changedPaths: ['.github/workflows/release.yml'],
+    filtersBlock: LANE_FILTERS,
+  }).code,
+  0,
+);
+
+check(
+  'lane: trip-paths come from the FILTER CONFIG, not a hardcoded list (#327)',
+  // `.github/workflows/**` is absent from this fixture's filters, so a
+  // hardcoded list would still flag it. Deriving from config must not.
+  laneFixture({
+    labels: ['ci:cheap'],
+    changedPaths: ['.github/workflows/release.yml'],
+    filtersBlock: `            core:
+              - 'packages/core/**'
+            workspace:
+              - 'package.json'`,
+  }).code,
+  0,
+);
+
 const CORE = '@askturret/mcp-core';
 
 // --- the hole the guard exists to catch -----------------------------------

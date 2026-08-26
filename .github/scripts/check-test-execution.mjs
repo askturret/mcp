@@ -177,6 +177,13 @@ function parseExecutedFiles(output) {
  *   - one test in a file skipped -> the `PASS` line is still emitted and the
  *     file passes, which is correct: it contributed tests.
  *
+ * That first bullet is a claim about JEST, not about this guard, so it is pinned
+ * by a check that runs REAL jest over a fully-skipped file — the `#346` block in
+ * `check-guards.test.mjs`. The fixture-based assertions there pin how this guard
+ * REACTS to the symptom; only that one pins jest still producing it. If a jest
+ * upgrade starts emitting `PASS` for fully-skipped suites, that check goes red
+ * and this paragraph gets corrected rather than silently becoming wrong again.
+ *
  * The keyed symptom did the work again. Nothing here special-cases `.skip`; a
  * fully-skipped file contributes nothing to the run, which is the only question
  * being asked.

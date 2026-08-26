@@ -449,14 +449,76 @@ check(
   // repo's real jest: a fully-skipped file emits NO per-suite line, so it lands
   // in the same bucket as an excluded one, while a partly-skipped file still
   // emits its line and correctly passes. Nothing special-cases `.skip`; the
-  // keyed symptom ("contributed no tests") covers it. Pinned here so the
-  // corrected docstring cannot drift back into being wrong.
+  // keyed symptom ("contributed no tests") covers it.
+  //
+  // This assertion pins the GUARD'S REACTION to the symptom, which the #339
+  // assertion above already pinned — the two are mechanically identical, and no
+  // mutation distinguishes them (#346). What produces the symptom is jest, and
+  // that is pinned separately below.
   runGuard(
     EXECUTION,
     scratchPerFile({ onDisk: ['src/a.test.ts', 'src/quiet.test.ts'], reported: ['src/a.test.ts'] }),
   ).code,
   1,
 );
+
+// ---------------------------------------------------------------------------
+// The jest behaviour the corrected docstring RESTS on (#346)
+//
+// Everything above simulates the symptom with a fixed `reported` list. That
+// pins how the guard reacts and says nothing about whether jest still produces
+// the symptom — and the docstring's claim is about JEST, not about the guard:
+//
+//   "every test in a file skipped -> jest emits no per-suite line at all"
+//
+// If a jest upgrade began emitting `PASS` for fully-skipped suites, the guard
+// would pass those files again and the docstring would be silently wrong again
+// — the exact defect #344 was filed to fix — and no fixture-based assertion
+// here would fire, because they all supply the symptom themselves.
+//
+// So this runs REAL jest over a two-file fixture. It is the only check in this
+// file that does; the cost is one jest invocation over two trivial files.
+// ---------------------------------------------------------------------------
+
+{
+  const dir = mkdtempSync(join(tmpdir(), 'guard-jest-skip-'));
+  tmpDirs.push(dir);
+  mkdirSync(join(dir, 'src'), { recursive: true });
+
+  // The control file. Load-bearing, not scenery — see below.
+  writeFileSync(join(dir, 'src', 'running.test.js'), "test('runs', () => { expect(1).toBe(1); });\n");
+  writeFileSync(
+    join(dir, 'src', 'skipped.test.js'),
+    "test.skip('a', () => { expect(1).toBe(1); });\ntest.skip('b', () => { expect(2).toBe(2); });\n",
+  );
+  writeFileSync(join(dir, 'jest.config.js'), "module.exports = { testEnvironment: 'node', rootDir: '.' };\n");
+
+  const jestBin = join(here, '..', '..', 'node_modules', 'jest', 'bin', 'jest.js');
+  const r = spawnSync(process.execPath, [jestBin, '--config', join(dir, 'jest.config.js'), '--ci'], {
+    cwd: dir,
+    encoding: 'utf-8',
+  });
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+  const suiteLine = (name) => new RegExp(String.raw`(?:PASS|FAIL)[^\n]*${name}\.test\.js`).test(out);
+
+  // THE PAIRED POSITIVE, and it is the load-bearing half of this pair.
+  //
+  // "no per-suite line for the skipped file" is satisfied by jest never running
+  // at all — a missing install, a bad config, a renamed CLI flag, a crash all
+  // produce it, and nothing-ran is indistinguishable from ran-and-stayed-quiet
+  // from the outside. Asserting the RUNNING file DID get a line is what makes
+  // the negative below mean something, and it is why this check fails loudly
+  // rather than passing vacuously when jest cannot run.
+  check('jest: the control file DID emit a per-suite line, so jest actually ran (#346)', suiteLine('running'), true);
+
+  // The property the docstring rests on.
+  check('jest: a fully-skipped file emits NO per-suite line (#346)', suiteLine('skipped'), false);
+
+  // Belt to the braces: jest's own summary must agree that a suite was skipped
+  // rather than never collected. Distinguishes "skipped" from "never found",
+  // which the two assertions above cannot tell apart on their own.
+  check('jest: ...and reports it as SKIPPED rather than never collected', /Test Suites:[^\n]*\bskipped\b/.test(out), true);
+}
 
 check(
   'per-file: a written exemption is honoured',

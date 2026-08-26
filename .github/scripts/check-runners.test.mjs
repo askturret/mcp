@@ -102,6 +102,17 @@ check('flow sequence on the approved pool passes', one(`runs-on: ${APPROVED}`).c
 // returns 0 here, and the reintroduction ships.
 check('bare string `ubuntu-latest` FAILS', one('runs-on: ubuntu-latest').code, 1);
 
+// Its paired positive, and the reason it is not optional (#354). Every other
+// shape here is asserted in BOTH directions; the bare scalar — the one the
+// header calls load-bearing — had only the failing half.
+//
+// A negative alone does not distinguish "understands bare scalars and judges
+// them correctly" from "rejects every bare scalar". Established by mutation
+// rather than by reading: with the guard altered to treat EVERY scalar as a
+// violation — which would reject legitimate config — the suite stayed green.
+// This line is what goes red on that.
+check('bare string `self-hosted` PASSES — the paired positive', one('runs-on: self-hosted').code, 0);
+
 checkIncludes(
   'the bare-string failure names the offending label',
   one('runs-on: ubuntu-latest').err,
@@ -379,6 +390,118 @@ jobs:
 check('CANNOT CHECK outranks a violation', mixed.code, 2);
 checkIncludes('the unreadable job is reported', mixed.err, "job 'broken'");
 checkIncludes('the violation is still reported alongside it', mixed.err, "job 'hosted'");
+
+// ---------------------------------------------------------------------------
+// Per-job CANNOT-CHECK paths (#354)
+//
+// The top-level refusals above are all pinned; these seven per-job ones were
+// not. Behaviour today is correct — every one of them already refuses — so this
+// is coverage rather than a defect. It matters because nothing would catch a
+// refactor quietly turning one of these refusals into a pass, which is the #349
+// shape: a fail-closed branch with no test is what gets "simplified" into
+// fail-open by someone who cannot see what it protects.
+//
+// EVERY case asserts the SPECIFIC message, not merely exit 2. That is not
+// decoration. While building these, a fixture intended for the "content inside
+// `jobs:` before any job name" branch did exit 2 — via a DIFFERENT refusal that
+// is already asserted elsewhere. On exit code alone it would have looked pinned
+// while testing nothing new. An assertion that cannot fail on the thing it
+// names is decorative.
+// ---------------------------------------------------------------------------
+
+{
+  const r = withFixture(
+    {
+      'test.yml': `name: f
+on: [push]
+
+jobs:
+  - not-a-job-name
+`,
+    },
+    run,
+  );
+  check('a non-key entry in the `jobs:` block is CANNOT CHECK', r.code, 2);
+  checkIncludes('...and says the entry was unrecognised', r.err, 'unrecognised entry in the `jobs:` block');
+}
+
+{
+  const r = withFixture(
+    {
+      'test.yml': `name: f
+on: [push]
+
+jobs:
+    build:
+      runs-on: ${APPROVED}
+      steps:
+        - run: echo hi
+  stray: value
+`,
+    },
+    run,
+  );
+  check('a line shallower than the job keys but not top-level is CANNOT CHECK', r.code, 2);
+  checkIncludes('...and says it is indented less than the job keys', r.err, 'indented less than the job keys');
+}
+
+{
+  // A job name with nothing under it at all. The guard must not read "no body"
+  // as "no violation".
+  const r = withFixture(
+    {
+      'test.yml': `name: f
+on: [push]
+
+jobs:
+  build:
+  other:
+    runs-on: ${APPROVED}
+`,
+    },
+    run,
+  );
+  check('an empty job body is CANNOT CHECK', r.code, 2);
+  checkIncludes('...and says the body was empty', r.err, 'the job body is empty');
+}
+
+{
+  const r = one(`runs-on:
+    steps:
+      - run: echo hi`);
+  check('a `runs-on:` with no value at all is CANNOT CHECK', r.code, 2);
+  checkIncludes('...and says the value was empty', r.err, '`runs-on` has an empty value');
+}
+
+{
+  const r = one(`runs-on:
+      flavour: large`);
+  check('an unrecognised `runs-on` mapping key is CANNOT CHECK', r.code, 2);
+  checkIncludes('...and quotes the key it did not recognise', r.err, 'unrecognised `runs-on` mapping key');
+}
+
+{
+  // `labels:` with no sequence beneath it. Distinct from `group:` alone, which
+  // is asserted above — here labels is PRESENT but unreadable, and a parser that
+  // treated an unreadable value as "no labels" would fall through to the group
+  // branch and report the wrong reason.
+  const r = one(`runs-on:
+      labels:
+      group: g`);
+  check('`runs-on.labels` with no readable value is CANNOT CHECK', r.code, 2);
+  checkIncludes('...and says the labels were unreadable', r.err, '`runs-on.labels` has no readable value');
+}
+
+// NOT asserted, deliberately, and recorded so the gap is not mistaken for an
+// oversight: the `content inside jobs: before any job name` refusal is
+// UNREACHABLE through this walk. `jobIndent` is assigned from the FIRST
+// non-skippable line in the block, so that line always satisfies
+// `indent === jobIndent` and either sets `current` or trips the unrecognised-
+// entry refusal above. No later line can therefore find `current === null`.
+// Three shapes were tried — a deeper first line, a comment then a deeper line,
+// a blank then a deeper line — and all three hit the unrecognised-entry branch
+// instead. It is defensive code, and a fixture claiming to reach it would be
+// asserting a different branch under its name.
 
 // ---------------------------------------------------------------------------
 // The guard must be green on the real repository it ships in.

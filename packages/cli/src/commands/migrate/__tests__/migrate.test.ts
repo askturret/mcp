@@ -1190,15 +1190,123 @@ describe('the registry docstring rests on a checkable premise (#433)', () => {
     // The premise, re-derived from disk on every run.
     expect(publishable.length).toBeGreaterThan(0);
 
-    expect(registrySource).not.toMatch(/every workspace is still `private: true`/i);
-    expect(registrySource).not.toMatch(/no adopter has ever installed a version to migrate from/i);
+    expect(normalise(registrySource)).not.toMatch(/every workspace is still `private: true`/i);
+    expect(normalise(registrySource)).not.toMatch(/no adopter has ever installed a version to migrate from/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // THE CLAIM LIVED IN THREE PLACES AND THIS CHECKED ONE (#433 QA)
+  //
+  // The first version searched for the SENTENCE and corrected the one file that
+  // carried it. The CLAIM was also in `README.md` — the first thing an adopter
+  // reads — and twice in `packages/gateway/README.md`, whose own package is
+  // publishable, so it asserted its own privacy while being public-listed.
+  //
+  // Confidence proportional to one file, for something living in three.
+  //
+  // So this scans for the universal-quantifier CLAIM rather than any particular
+  // wording, across every place documentation lives. A fourth instance in a new
+  // README is caught by the same assertion, which the sentence-shaped check
+  // could never do.
+  //
+  // It must NOT flag `docs/releasing.md`, which correctly lists WHICH packages
+  // are private. A scoped enumeration is true; a universal quantifier is the
+  // false thing. The pattern targets the quantifier, and that file is in the
+  // scanned set precisely so the distinction is exercised rather than assumed.
+  // -------------------------------------------------------------------------
+  /**
+   * Strip comment/blockquote leaders and join wrapped lines.
+   *
+   * Both the claim scan and the phrase assertions run on this rather than raw
+   * text, because a claim does not stop being a claim when it wraps. The first
+   * version matched raw source and failed on this file's own docstring, where
+   * "never cut / a release" is split by a JSDoc continuation — an assertion
+   * hostage to where a line happens to break, which is a defect in the
+   * assertion rather than in the prose.
+   *
+   * Sentence boundaries survive: `.` is preserved, and every pattern here is
+   * bounded by `[^.]`, so joining lines cannot run a match across two
+   * sentences.
+   */
+  function normalise(text: string): string {
+    return text
+      .split('\n')
+      // `\*(?!\*)` — a JSDoc continuation is ONE asterisk. Markdown bold at the
+      // start of a line (`**Private:**`) is two, and stripping the first turned
+      // it into `*Private:**`, breaking the scoped-list case below. Caught by
+      // that case, which is what it is there for.
+      .map((line) => line.replace(/^\s*(?:\*(?!\*)|>|\/\/)\s?/, '').trim())
+      .join(' ')
+      .replace(/\s+/g, ' ');
+  }
+
+  /** Every markdown file that could carry the claim, plus the registry. */
+  function claimSites(): { path: string; text: string }[] {
+    const out: { path: string; text: string }[] = [];
+    const add = (p: string) => {
+      if (existsSync(p)) out.push({ path: p, text: normalise(readFileSync(p, 'utf8')) });
+    };
+    add(join(repoRoot, 'README.md'));
+    add(join(repoRoot, '.github', 'CONTRIBUTING.md'));
+    for (const dir of ['packages', 'examples']) {
+      const base = join(repoRoot, dir);
+      if (!existsSync(base)) continue;
+      for (const entry of readdirSync(base, { withFileTypes: true })) {
+        if (entry.isDirectory()) add(join(base, entry.name, 'README.md'));
+      }
+    }
+    const docs = join(repoRoot, 'docs');
+    if (existsSync(docs)) {
+      for (const f of readdirSync(docs)) if (f.endsWith('.md')) add(join(docs, f));
+    }
+    out.push({ path: 'registry.ts', text: normalise(registrySource) });
+    return out;
+  }
+
+  /**
+   * "every/all workspace(s) IS/ARE private" — the universal claim, any wording.
+   *
+   * PRESENT TENSE IS REQUIRED, and that is not incidental. `docs/releasing.md`
+   * records "Every workspace package WAS `private: true`" as a historical
+   * defect it fixed — true, useful, and the first version of this pattern
+   * flagged it. Rewriting a correct historical record to satisfy a guard would
+   * be a worse outcome than the defect the guard exists for.
+   *
+   * So the copula is matched explicitly rather than the words merely
+   * co-occurring. A claim about what IS the case is the thing that can rot; a
+   * record of what WAS is not.
+   */
+  const UNIVERSAL_PRIVACY_CLAIM =
+    /\b(?:every|all)\b[^.\n]{0,60}\bworkspaces?\b[^.\n]{0,30}\b(?:is|are|remains?|stays?)\b[^.\n]{0,30}`?private/i;
+
+  it('scans more than one file, so the claim-wide check is not vacuous', () => {
+    // The #433 defect in miniature: a scan that examines nothing reports clean.
+    expect(claimSites().length).toBeGreaterThan(3);
+  });
+
+  it('NO documentation claims every workspace is private (#433)', () => {
+    const offenders = claimSites()
+      .filter((s) => UNIVERSAL_PRIVACY_CLAIM.exec(s.text) !== null)
+      .map((s) => s.path);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('...while a SCOPED list of which packages are private is fine', () => {
+    // The paired negative. Without it the assertion above is satisfied by a
+    // pattern so broad it would force `docs/releasing.md` to stop saying the
+    // true thing — which would be a worse outcome than the defect.
+    const releasing = claimSites().find((s) => s.path.endsWith('releasing.md'));
+    expect(releasing).toBeDefined();
+    expect(releasing?.text).toMatch(/\*\*Private:\*\*/);
+    expect(UNIVERSAL_PRIVACY_CLAIM.exec(releasing?.text ?? '')).toBeNull();
   });
 
   it('...and says what IS true, rather than going quiet about it', () => {
     // Deleting the false sentence without replacing it would leave the next
     // reader to re-derive the whole question from nothing. The docstring has to
     // carry the corrected fact, not merely stop carrying the wrong one.
-    expect(registrySource).toMatch(/never cut a release/i);
-    expect(registrySource).toMatch(/licenses nothing/i);
+    expect(normalise(registrySource)).toMatch(/never cut a release/i);
+    expect(normalise(registrySource)).toMatch(/licenses nothing/i);
   });
 });

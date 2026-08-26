@@ -32,12 +32,45 @@
  * MECHANISM that made the conclusion safe, and it is gone. What holds now is
  * weaker and easier to lose:
  *
- *   the only publish path is `npm publish --access public` in
- *   `supply-chain.yml`, gated on `if: github.event_name == 'release'` — and
- *   this repository has never cut a release.
+ *   the only publish path is `npm publish --workspaces --provenance
+ *   --access public` in `supply-chain.yml`, gated on
+ *   `if: github.event_name == 'release'` — and this repository has never cut
+ *   a release.
  *
- * So the protection is "nobody has tagged a release yet", which one `git tag`
- * push ends. It is not a property of the packages any more.
+ * So the protection is procedural, not structural: it is "no release has been
+ * published", and it is no longer a property of the packages.
+ *
+ * **ONE PUBLISHED GITHUB RELEASE ENDS IT — not a tag push.** An earlier version
+ * of this paragraph said a `git tag` push would, and that is wrong:
+ * `supply-chain.yml` triggers on `pull_request`, `push:[main]`,
+ * `release:[published]` and `workflow_dispatch`. There is no tag trigger, so a
+ * pushed tag is inert here. Overstating the trigger of the thing that ends the
+ * protection is the same category of error this docstring is repairing, which
+ * is why it is corrected rather than quietly adjusted.
+ *
+ * ## And it ends for ALL NINE AT ONCE
+ *
+ * The step is `npm publish --workspaces`, so the first release ever cut
+ * publishes every publishable package simultaneously, with provenance, as a
+ * public debut. There is no incremental first package and no chance to watch
+ * one land before the rest follow. From that moment the compatibility policy
+ * binds for all nine together — which is the reason any of this matters, and
+ * why "nothing is published" is a statement with an expiry rather than a
+ * standing fact.
+ *
+ * ## WHICH CLAIM IS BEING MADE, precisely
+ *
+ * **Supported: nothing has been published BY THIS REPOSITORY.** That rests on
+ * the publish path above plus zero releases, and it is what the evidence
+ * establishes.
+ *
+ * The stronger reading — *nothing exists under these names anywhere* — is
+ * probable but not proven by the same evidence. Every publishable name returns
+ * 404 unauthenticated, and a negative control confirms the probe discriminates,
+ * but a package published MANUALLY with `--access restricted`, outside this
+ * repository's path, would also 404. That residual is stated rather than
+ * blurred, because collapsing the two is how the sentence above went wrong in
+ * the first place.
  *
  * ## Re-derive it; do not trust this paragraph
  *

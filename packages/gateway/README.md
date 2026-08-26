@@ -11,11 +11,14 @@ npx @askturret/mcp-gateway \
   --port 7000
 ```
 
-> **Not published yet.** Every workspace in this repository is `private: true`,
-> so the `npx` line above does not resolve today. That is a release-policy
-> decision (which packages become public, under what compatibility promise) plus
-> credentials, not something a feature PR settles — the same split #54 made when
-> it filed #173. See **Publishing** below.
+> **Not published yet.** This repository has never cut a release, and
+> publishing happens only from a published GitHub Release — so the `npx` line
+> above does not resolve today. It is not a privacy question: `mcp-gateway` is
+> one of the nine packages [`docs/releasing.md`](../../docs/releasing.md) lists
+> as public, so it is publishable already. What remains is a release-policy
+> decision (under what compatibility promise) plus credentials, not something a
+> feature PR settles — the same split #54 made when it filed #173. See
+> **Publishing** below.
 
 ## What it is for
 
@@ -139,7 +142,7 @@ are tracked separately:
 
 | Step | Blocked on |
 |---|---|
-| npm publish | every workspace is `private: true` (#173's release-policy decision) + `NPM_TOKEN` |
+| npm publish | no GitHub Release has been published (#173's release-policy decision) + `NPM_TOKEN` |
 | Docker image publish | registry choice + credentials |
 | MCP Registry entry | the above, plus the §18.8 metadata process |
 

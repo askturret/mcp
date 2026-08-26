@@ -48,7 +48,7 @@ function scratch(files) {
   return dir;
 }
 
-const run = (dir) => spawnSync('node', [GUARD, dir], { encoding: 'utf-8' });
+const run = (dir) => spawnSync(process.execPath, [GUARD, dir], { encoding: 'utf-8' });
 
 /** A workflow whose single `run:` step is `command`. */
 const workflow = (command) =>

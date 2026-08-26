@@ -56,7 +56,7 @@ function fixture({ git = true, gitignore = null }) {
 }
 
 function runGuard(dir) {
-  return spawnSync('node', [GUARD, dir], { encoding: 'utf8' }).status;
+  return spawnSync(process.execPath, [GUARD, dir], { encoding: 'utf8' }).status;
 }
 
 const fixtures = [];

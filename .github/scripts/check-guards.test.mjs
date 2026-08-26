@@ -12,7 +12,7 @@
  * Run: node .github/scripts/check-guards.test.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -39,7 +39,7 @@ function check(desc, actual, expected) {
 }
 
 function runGuard(script, dir, ...extraArgs) {
-  const r = spawnSync('node', [script, dir, ...extraArgs], { encoding: 'utf-8' });
+  const r = spawnSync(process.execPath, [script, dir, ...extraArgs], { encoding: 'utf-8' });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -1182,6 +1182,57 @@ check(
     'scripts: root typecheck does not use --noEmit, which checks nothing here',
     typecheck.includes('--noEmit') ? `uses --noEmit: "${typecheck}"` : 'no --noEmit',
     'no --noEmit',
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Guard self-tests resolve their own interpreter (#361)
+//
+// A self-test that spawns a bare `node` resolves the interpreter through PATH.
+// Off PATH every spawn fails to START, so the suite reports a wall of red that
+// is an ENVIRONMENTAL failure wearing the costume of a code defect. Measured
+// before #361 fixed it: this suite 4 passed / 81 failed, check-adr-citations
+// 0 / 10 — the latter total, and so indistinguishable from a broken guard.
+//
+// Placement is what makes it serious rather than merely noisy. THIS suite is
+// what someone runs when they are already debugging a guard. They arrive
+// holding the hypothesis "a guard is broken", and 81 red assertions confirm the
+// wrong theory they walked in with.
+//
+// `process.execPath` is the interpreter already running this file: exact, and
+// it cannot drift. Enforced here rather than left to preference because the
+// wrong form was the MAJORITY — only 2 of 16 self-tests used execPath before
+// #361 — and a dominant wrong pattern regrows unless something refuses it.
+//
+// Scope is deliberately narrow, and the boundary is a real distinction rather
+// than a convenience:
+//
+//   - `git` and `npm` are genuine EXTERNAL tools with no in-process equivalent,
+//     so spawning them by name is correct and stays allowed. `node` was never
+//     in that category — the interpreter is already known, so resolving it
+//     through PATH bought nothing and cost the failure above.
+//   - PRODUCTION scripts are out of scope. sdk-upgrade-drill.mjs spawns a bare
+//     `node` and is triaged separately (#361), because a production script
+//     resolving the wrong interpreter fails in a live path rather than a test
+//     run, and its fix may not be a plain substitution.
+//
+// The scan window is the sibling *.test.mjs files, NOT this assertion's own
+// source — the pattern below is written so it cannot match itself, which is the
+// Decorative Guard antipattern in docs/TESTING.md. Verified by reverting one
+// call site and watching this go red while the rest of the suite stayed green.
+// ---------------------------------------------------------------------------
+
+{
+  const BARE_NODE = /(?:spawnSync|spawn|execFileSync|execFile|execSync)\(\s*(['"])node\1/;
+  const offenders = readdirSync(here)
+    .filter((f) => f.endsWith('.test.mjs'))
+    .filter((f) => BARE_NODE.test(readFileSync(join(here, f), 'utf-8')))
+    .sort();
+
+  check(
+    'no guard self-test spawns a bare `node` — use process.execPath (#361)',
+    offenders.join(', ') || 'none',
+    'none',
   );
 }
 

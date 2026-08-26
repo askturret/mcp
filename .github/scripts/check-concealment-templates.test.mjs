@@ -94,7 +94,7 @@ function withRepo(toml, { corpus = true } = {}) {
 }
 
 function runGuard(dir) {
-  const r = spawnSync('node', [GUARD, dir], { encoding: 'utf-8' });
+  const r = spawnSync(process.execPath, [GUARD, dir], { encoding: 'utf-8' });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 

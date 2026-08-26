@@ -223,7 +223,26 @@ It belongs here anyway, because the rule it needs is already written in
 rule; until this section, nobody said it to the author of a comment.
 
 **Operational test.** Name the mutation that would falsify the claim. Apply it.
-Run the suite. **Green ⇒ instance.**
+Run the suite. **Green ⇒ instance — provided the mutation landed at the intended
+site.**
+
+**That proviso is load-bearing, not a hedge.** Green also means *the mutation
+never reached the code*, which is
+[variant 2](#variants-1-and-2-are-duals-and-that-pairing-is-the-point) of the
+[Mutation-application traps](#mutation-application-traps) below. Without the
+check, a reader following this test literally, whose mutation silently misses,
+**records a false instance of this very antipattern** — a section about
+protections nothing observes, manufacturing reports of protections nothing
+observes. So: assert the mutation landed **at the intended site**, not merely
+that the file changed.
+
+**And this section is unusually good at creating that trap, which is the part
+worth internalising.** A string-replace hits the FIRST textual match, and a
+well-written explanatory comment about a regex — sitting directly above its own
+declaration, quoting it — is that first match. **Documenting a thing well makes
+its mutation more likely to hit prose, not less.** Two of the near-misses on
+record arrived exactly that way, one of them a step from being filed as a
+finding here.
 
 That is determinate *given a candidate claim*. **Enumerating the claims is the
 undecidable part** — and that is the tractability answer itself, not a caveat on
@@ -285,8 +304,19 @@ also demonstrates the corollary below twice over, because the correction went
 wrong the same way twice more — the replacement wording was verified against the
 real keyword list only after the second refusal, and a history note describing
 the mistake **quoted the offending phrase in full**, re-arming it a third time.
-Markdown emphasis does not stop GitHub parsing a reference: quoting a closing
-keyword is applying one.
+Markdown emphasis does not stop GitHub parsing a reference.
+
+**Where that matters, precisely — because the broad version of the rule would
+suppress write-ups like this one.** GitHub parses closing keywords on the
+surfaces it links from: a **PR body**, a **commit message**, an **issue or PR
+comment**. On those, quoting a closing keyword is applying one, and the quoting
+marks buy nothing. It does **not** parse repository **file content** — which is
+why the paragraph above can quote `Also fixes #395` in full, in this `.md` file,
+safely, and why you should not hesitate to write such an incident down.
+
+So the rule is: *on a parsed surface, a quoted keyword is a live one.* Stated
+any wider it would cost in the wrong direction, making people reluctant to
+document the very mistakes this section exists to collect.
 
 The remedy is the operational test applied to prose, and it costs seconds: name
 the mutation that falsifies *"this wording is not close-intent"* — the wording

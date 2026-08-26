@@ -177,19 +177,18 @@ export async function testFromDefinitionsCustomSourceId(): Promise<void> {
 }
 
 /**
- * Run all fromDefinitions tests
+ * The jest entry point (#313).
+ *
+ * Same shape as `composite.test.ts`: a self-invocation block that jest never
+ * runs, on a file the package config also excluded. See that file's note.
+ *
+ * The bodies above are unchanged, for the same reason — they carry their own
+ * `throw new Error(...)` assertions, and rewriting them here would blur a
+ * pre-existing failure with one introduced by the conversion.
  */
-if (import.meta.url === `file://${process.argv[1]}`) {
-  (async () => {
-    try {
-      await testFromDefinitionsReturnsAllOperations();
-      await testDefinitionLocationOverride();
-      await testFromDefinitionsPreservesFields();
-      await testFromDefinitionsCustomSourceId();
-      console.log('\n✅ All fromDefinitions tests passed');
-    } catch (error) {
-      console.error('\n❌ fromDefinitions test failed:', error);
-      process.exit(1);
-    }
-  })();
-}
+describe('fromDefinitions', () => {
+  it('returns every definition it was given', testFromDefinitionsReturnsAllOperations);
+  it('lets a definition override its location', testDefinitionLocationOverride);
+  it('preserves the fields of each definition', testFromDefinitionsPreservesFields);
+  it('honours a custom source id', testFromDefinitionsCustomSourceId);
+});

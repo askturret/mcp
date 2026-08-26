@@ -15,19 +15,20 @@ export default {
     ],
   },
   testMatch: ['**/__tests__/**/*.test.ts'],
-  // Every entry here is a test file that DOES NOT RUN. `types.test.ts` was
-  // removed from this list by #216: it held no jest tests, only exported
-  // functions and a self-invocation runner that never fired, so the exclusion
-  // was hiding a file that checked nothing rather than skipping a slow one.
+  // NO test file belongs in this list. #216 removed `types.test.ts`, and #313
+  // removed the last two — `composite.test.ts` and `from-definitions.test.ts`,
+  // both converted to real jest tests in the same change.
   //
-  // The two below have the SAME defect — excluded here AND carrying a
-  // self-invocation guard that never fires, so nothing in them has ever run.
-  // Deliberately not converted in #216's change; tracked by #313. Never add a
-  // file to this list to quieten a failing suite; converting it is the fix.
-  testPathIgnorePatterns: [
-    '/node_modules/',
-    'src/sources/__tests__/composite\\.test\\.ts',
-    'src/sources/__tests__/from-definitions\\.test\\.ts',
-  ],
+  // All three had one shape: excluded HERE and carrying an
+  // `import.meta.url === file://...` self-invocation runner that jest never
+  // fires. Either half alone stops the file running; together they meant the
+  // file name promised tests that had never once executed. Proven rather than
+  // argued: a top-level `throw` added to composite.test.ts left the core suite
+  // byte-identical at 55 suites / 847 tests, exit 0.
+  //
+  // Never add a test file here to quieten a failing suite. An excluded test
+  // file reads as covered and is not, which is the one failure this
+  // repository's guards exist to refuse. Converting it is the fix.
+  testPathIgnorePatterns: ['/node_modules/'],
   collectCoverageFrom: ['src/**/*.ts', '!src/**/*.test.ts', '!src/__tests__/**'],
 };

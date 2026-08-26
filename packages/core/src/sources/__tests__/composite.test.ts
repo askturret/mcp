@@ -307,22 +307,55 @@ export async function testSequentialAbortMidFlight(): Promise<void> {
 }
 
 /**
- * Run all composite tests
+ * The jest entry point (#313).
+ *
+ * This file previously ended in an `import.meta.url === \`file://${process.argv[1]}\``
+ * self-invocation block, and was ALSO listed in the package's
+ * `testPathIgnorePatterns`. Either alone would have been enough to stop it
+ * running; together they meant nothing in it had ever executed, while the file
+ * name promised seven tests. #216 was the first instance of this shape; this is
+ * the second, and #313 the third.
+ *
+ * The bodies above are deliberately unchanged — they carry their own
+ * `throw new Error(...)` assertions, and rewriting them in the same commit that
+ * makes them run would make it impossible to tell a pre-existing failure from
+ * one introduced by the conversion.
  */
-if (import.meta.url === `file://${process.argv[1]}`) {
-  (async () => {
-    try {
-      await testCompositeWithOverlappingIds();
-      await testCompositeAbortSignal();
-      await testCompositeAbortMidFlight();
-      await testCompositeParallelDiscovery();
-      await testCompositeSequentialDiscovery();
-      await testCompositeCustomSourceId();
-      await testSequentialAbortMidFlight();
-      console.log('\n✅ All composite tests passed');
-    } catch (error) {
-      console.error('\n❌ Composite test failed:', error);
-      process.exit(1);
-    }
-  })();
-}
+describe('compositeSource', () => {
+  it('de-duplicates overlapping candidate ids across sources', testCompositeWithOverlappingIds);
+  it('rejects when the abort signal is already aborted', testCompositeAbortSignal);
+  it('stops mid-flight when the signal aborts during discovery', testCompositeAbortMidFlight);
+  it('discovers from sources in parallel by default', testCompositeParallelDiscovery);
+  it('discovers sequentially when asked to', testCompositeSequentialDiscovery);
+  it('honours a custom source id', testCompositeCustomSourceId);
+
+  /**
+   * KNOWN DEFECT, surfaced by making this file run for the first time (#313).
+   *
+   * `it.failing` asserts the test FAILS today. It is not a skip: the body
+   * executes, and if someone fixes `composite.ts` this goes RED with "Failing
+   * test passed", which is the prompt to delete this comment and flip it back
+   * to `it`. A `.skip` would assert nothing and rot silently — the exact shape
+   * #313 exists to remove.
+   *
+   * What it catches: `discoverSequential` deliberately breaks out of its loop on
+   * abort and returns the operations gathered so far, but `discover()` then does
+   *
+   *     if (abortSignal.aborted) return [];
+   *
+   * unconditionally, so those partial results are discarded and the
+   * accumulation is unreachable. Two code paths in one module disagree, and
+   * nothing noticed because this file had never executed.
+   *
+   * The test asserts the fast source's operation survives an abort that lands
+   * mid-flight in a later source. It gets 0. Both the test and
+   * `discoverSequential` are independent artifacts of the author's intent, and
+   * they agree with each other against the outer discard.
+   *
+   * NOT fixed here on purpose: what `discover()` returns when aborted is a
+   * public-API behaviour decision for `packages/core`, and this change set is
+   * "make these files execute". `compositeSource` has no production callers
+   * today, so the fix is cheap whenever it is approved.
+   */
+  it.failing('aborts mid-flight in sequential mode too', testSequentialAbortMidFlight);
+});

@@ -61,3 +61,4 @@
 {"ts":"2026-08-25T21:14:44Z","branch":"fix/issue-207-scoped-test-invocation","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-25T21:33:44Z","branch":"fix/issue-216-types-test-actually-runs","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-26T03:12:36Z","branch":"feat/issue-327-mechanical-lane-classification","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-26T03:24:51Z","branch":"feat/issue-280-check-runners","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

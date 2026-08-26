@@ -65,7 +65,52 @@ evidence = [
 prose = "Note: <PATH> changed on disk since you last read it. That's usually deliberate, so take it as the current state rather than reverting it; if the change looks wrong, say so rather than undoing it yourself \u2014 otherwise no need to call it out. Here are the relevant changes (shown with line numbers):"
 trailing_attachment = "line-numbered-listing"
 attachment_required = true
-attachment_pattern = '''^(?:[ \t]*\d+[^\n]*\n?)+$'''
+attachment_pattern = '''^(?:[ \t]*\d+(?![0-9])[^\n]*\n)*[ \t]*\d+(?![0-9])[^\n]*\n?$'''
+
+# THE ACCEPTED SET IS UNCHANGED. This pattern was rewritten for TIME, not for
+# what it matches (#406). Verified by differential test over 276 inputs,
+# including every corpus verbatim and its tail: zero divergences. If you touch
+# it, re-run that differential rather than reasoning about it.
+#
+# WHY IT WAS REWRITTEN. The previous form was
+# `^(?:[ \t]*\d+[^\n]*\n?)+$`, and it backtracked catastrophically on input it
+# must REJECT - a listing followed by anything that is not a numbered line.
+# Measured on a one-digit-run-per-line listing: n=16 0.5ms, n=18 4.1ms,
+# n=20 37.7ms, n=22 342.1ms. Roughly nine-fold per two lines. The real message
+# in the capture that surfaced this had 160 lines, which does not finish.
+#
+# That is worse than a slow regex. Verifying Factor 2 MEANS running the
+# matcher, so a matcher that hangs on real input makes the cheap path "read the
+# template and reason" - which is how a confidently wrong Factor 2 gets
+# recorded by an agent doing exactly what the doctrine says.
+#
+# TWO CAUSES, AND THE OBVIOUS ONE IS NOT SUFFICIENT.
+#
+#   1. The optional trailing `\n?` let each iteration end with or without its
+#      newline. Making it mandatory is the fix that suggests itself, and it is
+#      NOT ENOUGH: measured at n=20 0.5ms, n=22 2.0ms, still exponential with a
+#      smaller base. Do not re-derive that edit; it was tried and measured.
+#   2. The real ambiguity is `\d+` followed by `[^\n]*`, both of which can
+#      match digits. For a line number `12` the group can end the run at `1`
+#      or at `12`, so every line has two parses and a failed match explores
+#      2^n of them. `(?![0-9])` forces the run maximal, which leaves exactly
+#      one parse per line without changing which strings match.
+#
+# Both are needed. With both: n=160 0.0ms, n=1000 0.1ms, n=20000 3.3ms - linear.
+#
+# THE FINAL `\n?` STAYS OPTIONAL ON PURPOSE. A listing is the END of a T1
+# message, so its last line may or may not carry a trailing newline, and there
+# is direct evidence in this repository that the no-trailing-newline case
+# occurs (#384, where a listing check passed for an unrelated reason because
+# its last line lacked one). The leading group requires a newline because those
+# lines are followed by another line; the final line is separate precisely so
+# the optional newline cannot reintroduce the ambiguity.
+#
+# A TIMING ASSERTION IN check-concealment-templates.test.mjs PINS THIS. It is
+# not decoration: this pattern was CORRECT before the change and merely
+# exponential, so every correctness assertion passed and no existing test could
+# observe the defect. Reverting to the optional `\n?` reddens that assertion by
+# name.
 
   [[template.slot]]
   name = "PATH"

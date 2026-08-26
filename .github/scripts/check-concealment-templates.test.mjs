@@ -439,6 +439,49 @@ rejects('text after a value is rejected', (t) => t.replace('corpus_matches = 1',
         false,
       );
 
+      // 2b. TIMING, not correctness (#406).
+      //
+      // This assertion exists because no correctness assertion can observe the
+      // defect it guards. T1's attachment pattern was CORRECT before #406 and
+      // merely exponential, so every check in this file passed while the
+      // matcher could not finish on a real 160-line listing. A pattern that
+      // hangs is not a performance nit here: verifying Factor 2 MEANS running
+      // the matcher, so a matcher that hangs makes "read the template and
+      // reason" the cheap path, which is how a confidently wrong Factor 2 gets
+      // recorded by an agent doing exactly what the doctrine says.
+      //
+      // The input is one T1 must REJECT — a listing followed by a line that is
+      // not number-led — because rejection is where a backtracking regex
+      // explores every parse. Measured on the pre-#406 pattern: n=18 4.1ms,
+      // n=20 37.7ms, n=22 342.1ms, roughly nine-fold per two lines. At n=24
+      // below it is seconds; at the real capture's 160 lines it does not
+      // finish. The current pattern is ~0.1ms, so the ceiling carries about
+      // three orders of magnitude of headroom and is not a tight race.
+      //
+      // RED on revert, by name: restore the optional `\n?` in
+      // attachment_pattern and this assertion fails while every other check in
+      // this file stays green.
+      {
+        const reject =
+          `${head}\n` +
+          Array.from({ length: 24 }, (_, i) => `${i + 1}\tsome source text here`).join('\n') +
+          '\nthis trailing line is not number-led';
+
+        const started = process.hrtime.bigint();
+        const matched = matchMessage(t1, cT1, reject);
+        const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+
+        // Paired with the timing: if this stopped being a rejection the timing
+        // would be measuring a fast SUCCESS and would pass for the wrong
+        // reason — the assertion satisfied by absence, one level up.
+        check('the timing fixture is genuinely REJECTED by T1', matched, false);
+        check(
+          `T1 rejects a 24-line listing in under 250ms (took ${elapsedMs.toFixed(1)}ms) (#406)`,
+          elapsedMs < 250,
+          true,
+        );
+      }
+
       // 2b. TIMING, not correctness (#413).
       //
       // T1C was believed linear because it was measured on input it MATCHES.

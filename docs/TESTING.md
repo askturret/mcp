@@ -77,6 +77,10 @@ asserts plenty.
 pass vacuously?* Then assert that input is impossible. Any guard with a scan
 window needs a case proving the window is non-empty.
 
+**Its sibling one level up:** the same question applies to the *mutation* that
+verifies a test, not only to the test's own input — see
+[Mutation-application traps](#mutation-application-traps), variant 5.
+
 ### 3. Frozen Snapshot
 
 **Shape:** the test pins current behaviour rather than correct behaviour, so it
@@ -184,6 +188,132 @@ axis does the bug live on?* If a mutation to production code turns fewer
 assertions red than you expected — or turns red for the wrong reason — you have
 found a consensus, not a guard. Two rules that both refuse an input are defence
 in depth and worth keeping; they just need one case each that isolates them.
+
+---
+
+## Mutation-application traps
+
+**A mutation result that looks like evidence and is not.**
+
+The five antipatterns above are defects in *tests*. These are defects in the
+*procedure* that verifies a test — the manual RED-on-revert this document
+recommends as its primary control. They are worth naming separately because
+that control is what catches the antipatterns, so a silent failure here removes
+the thing everything else leans on.
+
+Mutation testing earns its keep because a failure count tells you an assertion
+is load-bearing. Every variant below produces a **plausible count** from a
+mutation that did not test what you thought.
+
+> ### When a mutation figure surprises you, check the MUTATION before you check the code.
+>
+> Every instance below was found this way, and several were found by the person
+> who had just fallen into them. A surprising count is far more often a broken
+> mutation than a surprising codebase.
+
+### The five variants
+
+Easier to recognise than to define, so this table is symptom-first — someone
+hunting a confusing result will match on what they are seeing, not on a name.
+
+| # | Symptom | What it reads as | What actually happened | Instrument |
+|---|---|---|---|---|
+| 1 | mutation fails **everything** | broad, thorough coverage | the edit **broke the file**; nothing ran | compile-check after every edit (`node --check`, `tsc -b`) |
+| 2 | mutation fails **nothing** | a coverage gap | the edit **never reached the code**; it landed elsewhere | assert the mutation landed **at the intended site**, not merely that the file changed |
+| 3 | **more** assertions fail than expected | poor isolation between changes | the mutation changed **two things** — usually harness residue | read **which** assertions failed, by name |
+| 4 | correct exit code, case looks pinned | the branch is asserted | the fixture left via an **already-asserted** path | assert the **message**, not just the status |
+| 5 | assertion passes under the mutation | the property holds | the assertion is satisfied by the named thing being **absent** | run every predicate against an **empty** source |
+
+### Variants 1 and 2 are duals, and that pairing is the point
+
+One fails everything; the other fails nothing. **Neither ran the code you meant
+to test.** A reader who knows only variant 1 will not recognise variant 2 when
+it arrives, because it presents as the opposite symptom — and the opposite
+symptom is the one that reads as an honest finding rather than an error.
+
+Variant 2's specific fix is worth stating exactly, because the obvious guard
+does not catch it: checking that the file *changed* is not enough. A
+string-replace hits the **first** textual match, and a regex or identifier
+quoted in a doc comment above its own declaration is that first match. The
+mutation then edits **prose**, the file genuinely differs, a no-op guard passes
+it, and the suite stays green — which reads as a missing assertion. Target the
+**declaration**, and assert the mutated region is the one you meant.
+
+### Recorded instances
+
+Cited so the claims here can be checked rather than taken on trust.
+
+| Variant | Instance |
+|---|---|
+| 1 | An instrumentation shim inserted **before the shebang** broke the file; three cannot-check paths reported as asserted were a syntax artefact (#354 review) |
+| 2 | `String.replace` hit a regex quoted in a doc comment above its own declaration; two mutations edited prose and reported a clean pass (#266) |
+| 3 | Fault-injection scaffolding left in place during a second mutation reddened an unrelated assertion, so two failures looked like isolation and were not (#371) |
+| 4 | A fixture written for one refusal exited via a different, already-asserted refusal — correct exit code, nothing new tested (#354) |
+| 5 | `indexOf(a) < indexOf(b)` ordering assertions passed **vacuously** when the guard was deleted, because `indexOf` returns `-1` and `-1` precedes any real position (#371); and a 17-character hex asserted to *survive* redaction, which passed under a widening mutation because no rule fires on it at all (#266) |
+
+### Two habits that pay for themselves
+
+**Read which assertions failed, by name — not how many.** This is the
+highest-value habit of the set: it is the only instrument that catches both
+variant 3 and variant 4, and it costs nothing beyond reading the output you
+already have.
+
+**Pair a negative conjunct with a positive one.** A bare negative — *"the
+offender list is empty"*, *"this value is not masked"* — is vacuously true on an
+empty input. Pairing it with an assertion that the input was non-empty is what
+separates "checked and found nothing" from "did not check". This is the same
+question the Decorative Guard antipattern asks of a scan window, one level up:
+there it is the guard's input, here it is the mutation's.
+
+### Sometimes the honest answer is a non-assertion
+
+Not every property can be pinned. If a value cannot be affected by the code
+under test *in either direction*, an assertion about it passes regardless and is
+decorative — it is variant 5 wearing the clothes of thoroughness.
+
+A worked example (#266): a 16-character **uppercase** hex is outside an
+exemption's lowercase-only pattern, but no redaction rule can fire on it at that
+length. "It is still redacted" and "it survives" both pass whether or not the
+exemption covers it. The property is real and unobservable, so it was **recorded
+as a deliberate non-assertion** in the test file rather than pinned by a test
+that could not fail. Writing down why a case is absent is worth more than a
+green tick that means nothing.
+
+### Is *this* mechanisable?
+
+Partially, and the honest split matters more than the total.
+
+**Variants 1 and 2 are mechanisable inside the harness**, and cheaply: a
+compile-check after each edit, and an assertion that the mutation landed at the
+intended site. Both are properties of the harness's own actions, so it can check
+them directly. Any mutation harness should do both.
+
+**Variants 3 and 4 are not mechanisable** — they need a human to read which
+assertions failed and decide whether that set is the expected one. There is no
+signature distinguishing "these two failures are the isolation working" from
+"these two failures include one I caused by accident".
+
+**Variant 5 is the interesting refusal.** One sub-shape is trivially
+detectable — an `indexOf(…) < indexOf(…)` comparison with no `!== -1` guard is a
+syntactic pattern a guard could find, needs no new workflow step, and would fit
+inside the already-wired `check-guards.test.mjs`. **It is deliberately not
+proposed here**, because "satisfied by absence" is a *semantic* property with
+many shapes, and a guard covering one syntactic sub-shape would read as covering
+the class. That is variant 5's own failure mode applied to the guard meant to
+catch it — a check that passes because the thing it looks for is absent from its
+window. If it is wanted, it should be filed as its own issue and scoped
+explicitly as "this one shape", not as coverage of the class.
+
+**These are traps in verifying a fix, not defects in the fixes.** Every instance
+above was caught **before it was acted on** — several by the person who had just
+fallen into it — and the fix each was verifying turned out to be correct. The
+cost was wasted cycles and, more importantly, the near-miss of recording a wrong
+reason for a right answer.
+
+That claim is deliberately narrow so it can be checked: each row cites the issue
+it came from, and "caught before it was acted on" is falsifiable against those.
+It is **not** a claim that this list is complete, or that the instruments here
+are sufficient — only that these five have been seen and are worth recognising.
 
 ---
 

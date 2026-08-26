@@ -204,8 +204,11 @@ A one-command worked setup (gateway + mock upstream + OTel collector) is in
 [`examples/gateway-compose`](examples/gateway-compose); see the
 [gateway README](packages/gateway/README.md) for configuration.
 
-> Not published to npm yet — every workspace here is currently `private`, so
-> build and run it from source in the meantime.
+> Not published to npm yet — this repository has never cut a release, and
+> publishing happens only from a published GitHub Release. Build and run it
+> from source in the meantime. (Privacy is not what is holding publication:
+> most workspaces are publishable. See
+> [`docs/releasing.md`](docs/releasing.md) for which nine are public.)
 
 ### The adapter conformance contract
 

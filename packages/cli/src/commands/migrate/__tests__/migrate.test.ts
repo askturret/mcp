@@ -18,7 +18,7 @@
  */
 
 import { describe, it, expect, jest, afterEach } from '@jest/globals';
-import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, mkdtempSync, writeFileSync, rmSync, readdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -1128,5 +1128,254 @@ describe('the no-changes report (#284)', () => {
     });
 
     expect(out).not.toContain('No changes needed: nothing matched these rules.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The registry docstring's premise is RE-DERIVED, not restated (#433)
+//
+// It used to assert "every workspace is still `private: true`, so no adopter
+// has ever installed a version to migrate from". The conclusion was true; the
+// PREMISE was false and had decayed silently — most workspaces are publishable
+// today.
+//
+// That sentence was not a note about packaging. It was the standing
+// justification for treating compatibility breaks as free, and it nearly
+// settled #432's adopter-visible `--json` question that way. A false premise
+// that makes work look CHEAPER fails silently, in the direction of doing more.
+//
+// It decayed because it was PROSE stating a fact about the tree, with nothing
+// comparing the two. So this reads the tree.
+//
+// WHAT THIS DELIBERATELY DOES NOT ASSERT: a count. A hardcoded number is the
+// exact thing that drifted, and pinning "9 of 16" here would re-create the
+// defect one file over — failing the day someone adds a package, for no reason
+// anyone could act on. It pins the SHAPE the docstring depends on.
+// ---------------------------------------------------------------------------
+describe('the registry docstring rests on a checkable premise (#433)', () => {
+  const repoRoot = join(__dirname, '..', '..', '..', '..', '..', '..');
+
+  /** Every workspace package.json, read from disk rather than described. */
+  function workspacePackages(): { name: string; isPrivate: boolean }[] {
+    const root = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')) as {
+      workspaces?: string[];
+    };
+    const out: { name: string; isPrivate: boolean }[] = [];
+    for (const pattern of root.workspaces ?? []) {
+      if (!pattern.endsWith('/*')) continue;
+      const dir = join(repoRoot, pattern.slice(0, -2));
+      if (!existsSync(dir)) continue;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        const pkgPath = join(dir, entry.name, 'package.json');
+        if (!existsSync(pkgPath)) continue;
+        const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string; private?: boolean };
+        out.push({ name: pkg.name ?? entry.name, isPrivate: pkg.private === true });
+      }
+    }
+    return out;
+  }
+
+  const registrySource = readFileSync(join(__dirname, '..', 'registry.ts'), 'utf8');
+
+  it('finds workspace packages at all, so the cases below are not vacuous', () => {
+    // Without this a broken path makes every assertion here pass by examining
+    // nothing — which is the shape #433 is about, one level up.
+    expect(workspacePackages().length).toBeGreaterThan(0);
+  });
+
+  it('does NOT claim every workspace is private, because that is false', () => {
+    const publishable = workspacePackages().filter((p) => !p.isPrivate);
+
+    // The premise, re-derived from disk on every run.
+    expect(publishable.length).toBeGreaterThan(0);
+
+    expect(normalise(registrySource)).not.toMatch(/every workspace is still `private: true`/i);
+    expect(normalise(registrySource)).not.toMatch(/no adopter has ever installed a version to migrate from/i);
+  });
+
+  // -------------------------------------------------------------------------
+  // THE CLAIM LIVED IN THREE PLACES AND THIS CHECKED ONE (#433 QA)
+  //
+  // The first version searched for the SENTENCE and corrected the one file that
+  // carried it. The CLAIM was also in `README.md` — the first thing an adopter
+  // reads — and twice in `packages/gateway/README.md`, whose own package is
+  // publishable, so it asserted its own privacy while being public-listed.
+  //
+  // Confidence proportional to one file, for something living in three.
+  //
+  // So this scans for the universal-quantifier CLAIM rather than any particular
+  // wording, across every place documentation lives. A fourth instance in a new
+  // README is caught by the same assertion, which the sentence-shaped check
+  // could never do.
+  //
+  // It must NOT flag `docs/releasing.md`, which correctly lists WHICH packages
+  // are private. A scoped enumeration is true; a universal quantifier is the
+  // false thing. The pattern targets the quantifier, and that file is in the
+  // scanned set precisely so the distinction is exercised rather than assumed.
+  // -------------------------------------------------------------------------
+  /**
+   * Strip comment/blockquote leaders and join wrapped lines.
+   *
+   * Both the claim scan and the phrase assertions run on this rather than raw
+   * text, because a claim does not stop being a claim when it wraps. The first
+   * version matched raw source and failed on this file's own docstring, where
+   * "never cut / a release" is split by a JSDoc continuation — an assertion
+   * hostage to where a line happens to break, which is a defect in the
+   * assertion rather than in the prose.
+   *
+   * Sentence boundaries survive: `.` is preserved, and every pattern here is
+   * bounded by `[^.]`, so joining lines cannot run a match across two
+   * sentences.
+   */
+  function normalise(text: string): string {
+    return text
+      .split('\n')
+      // `\*(?!\*)` — a JSDoc continuation is ONE asterisk. Markdown bold at the
+      // start of a line (`**Private:**`) is two, and stripping the first turned
+      // it into `*Private:**`, breaking the scoped-list case below. Caught by
+      // that case, which is what it is there for.
+      .map((line) => line.replace(/^\s*(?:\*(?!\*)|>|\/\/)\s?/, '').trim())
+      .join(' ')
+      .replace(/\s+/g, ' ');
+  }
+
+  /** Every markdown file that could carry the claim, plus the registry. */
+  function claimSites(): { path: string; text: string }[] {
+    const out: { path: string; text: string }[] = [];
+    const add = (p: string) => {
+      if (existsSync(p)) out.push({ path: p, text: normalise(readFileSync(p, 'utf8')) });
+    };
+    add(join(repoRoot, 'README.md'));
+    // AT THE ROOT, not under `.github/` (#433 QA). The first version added
+    // `.github/CONTRIBUTING.md`, which does not exist — and because `add` is
+    // `existsSync`-guarded, that line contributed NOTHING, silently, while
+    // reading as though CONTRIBUTING were covered. The real file is 14.5 KB at
+    // the root and was never scanned. `claimSites().length > 3` could not catch
+    // it: plenty of other files are found.
+    add(join(repoRoot, 'CONTRIBUTING.md'));
+    for (const dir of ['packages', 'examples']) {
+      const base = join(repoRoot, dir);
+      if (!existsSync(base)) continue;
+      for (const entry of readdirSync(base, { withFileTypes: true })) {
+        if (entry.isDirectory()) add(join(base, entry.name, 'README.md'));
+      }
+    }
+    // RECURSIVELY (#433 QA). Top-level-only reached 21 of 39 markdown files
+    // under `docs/`, leaving the 17 ADRs and `docs/migrations/` unscanned — and
+    // an ADR is exactly where a publishing-or-privacy claim gets argued at
+    // length.
+    const walk = (dir: string): void => {
+      if (!existsSync(dir)) return;
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith('.md')) add(full);
+      }
+    };
+    walk(join(repoRoot, 'docs'));
+    out.push({ path: 'registry.ts', text: normalise(registrySource) });
+    return out;
+  }
+
+  /**
+   * "every/all workspace(s) IS/ARE private" — the universal claim, any wording.
+   *
+   * PRESENT TENSE IS REQUIRED, and that is not incidental. `docs/releasing.md`
+   * records "Every workspace package WAS `private: true`" as a historical
+   * defect it fixed — true, useful, and the first version of this pattern
+   * flagged it. Rewriting a correct historical record to satisfy a guard would
+   * be a worse outcome than the defect the guard exists for.
+   *
+   * So the copula is matched explicitly rather than the words merely
+   * co-occurring. A claim about what IS the case is the thing that can rot; a
+   * record of what WAS is not.
+   *
+   * ## WHAT THIS DOES AND DOES NOT CATCH — stated narrowly on purpose
+   *
+   * It catches a recurrence of the CLAIM in this shape — quantifier, the noun
+   * `workspace`, a present-tense copula, `private` — in any file scanned above,
+   * including a new one. That is the property worth having, and it is real: a
+   * fourth instance in a new README is caught where a sentence-shaped check
+   * could never manage it.
+   *
+   * IT IS NOT A SEMANTIC CHECK, and it does not scan for every way the thought
+   * could be phrased. QA stress-tested 21 phrasings and 9 slip through by
+   * changing the NOUN, the QUANTIFIER or the word order rather than the copula:
+   * "All packages in this repository are private" (and the directories really
+   * are called `packages/`), "Each workspace is private", "None of the
+   * workspaces are public".
+   *
+   * CHASING THAT IS DELIBERATELY NOT DONE. Completeness over prose is
+   * unattainable, and precision matters more for a guard reading every document
+   * in the tree: a noisy guard gets deleted, and this one currently
+   * over-flags NOTHING — zero false positives across both past-tense records,
+   * both scoped lists, the partial claim and the TypeScript-private field.
+   *
+   * An earlier version of this comment said it scanned "across every place
+   * documentation lives", which overstated its reach. A guard whose comment
+   * claims more coverage than it has is this PR's own subject, one level down.
+   */
+  const UNIVERSAL_PRIVACY_CLAIM =
+    /\b(?:every|all)\b[^.\n]{0,60}\bworkspaces?\b[^.\n]{0,30}\b(?:is|are|remains?|stays?|continues?)\b[^.\n]{0,30}`?private/i;
+
+  it('scans more than one file, so the claim-wide check is not vacuous', () => {
+    // The #433 defect in miniature: a scan that examines nothing reports clean.
+    expect(claimSites().length).toBeGreaterThan(3);
+  });
+
+  // THE ASSERTION THAT WOULD HAVE CAUGHT THE DEAD PATH (#433 QA).
+  //
+  // The scan added `.github/CONTRIBUTING.md`, which does not exist. `add()` is
+  // `existsSync`-guarded, so the line contributed nothing — SILENTLY — while
+  // reading as though CONTRIBUTING were covered. The count-based non-vacuity
+  // check above could not see it, because plenty of other files were found.
+  //
+  // A count proves the scan found SOMETHING. It cannot prove it found the
+  // things it was aimed at. So the set is pinned by NAME: pin it, do not assume
+  // it — the same lesson this PR applies to the claim it is fixing.
+  //
+  // Named individually rather than as a total, because a total is the thing
+  // that just failed to notice. `docs/adr/` is listed to pin RECURSION
+  // specifically: a top-level-only walk reached 21 of 39 markdown files, and an
+  // ADR is exactly where a publishing claim gets argued at length.
+  it('...and it scans the files it is AIMED at, by name (#433)', () => {
+    const scanned = claimSites().map((s) => s.path);
+    const hasSuffix = (suffix: string) => scanned.some((p) => p.endsWith(suffix));
+
+    expect(hasSuffix('/README.md')).toBe(true);
+    expect(hasSuffix('/CONTRIBUTING.md')).toBe(true);
+    expect(hasSuffix('/packages/gateway/README.md')).toBe(true);
+    expect(hasSuffix('/docs/releasing.md')).toBe(true);
+    // Recursion, pinned: these are two directory levels down.
+    expect(scanned.some((p) => p.includes('/docs/adr/'))).toBe(true);
+    expect(scanned.some((p) => p.includes('/docs/migrations/'))).toBe(true);
+    expect(scanned).toContain('registry.ts');
+  });
+
+  it('NO documentation claims every workspace is private (#433)', () => {
+    const offenders = claimSites()
+      .filter((s) => UNIVERSAL_PRIVACY_CLAIM.exec(s.text) !== null)
+      .map((s) => s.path);
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('...while a SCOPED list of which packages are private is fine', () => {
+    // The paired negative. Without it the assertion above is satisfied by a
+    // pattern so broad it would force `docs/releasing.md` to stop saying the
+    // true thing — which would be a worse outcome than the defect.
+    const releasing = claimSites().find((s) => s.path.endsWith('releasing.md'));
+    expect(releasing).toBeDefined();
+    expect(releasing?.text).toMatch(/\*\*Private:\*\*/);
+    expect(UNIVERSAL_PRIVACY_CLAIM.exec(releasing?.text ?? '')).toBeNull();
+  });
+
+  it('...and says what IS true, rather than going quiet about it', () => {
+    // Deleting the false sentence without replacing it would leave the next
+    // reader to re-derive the whole question from nothing. The docstring has to
+    // carry the corrected fact, not merely stop carrying the wrong one.
+    expect(normalise(registrySource)).toMatch(/never cut a release/i);
+    expect(normalise(registrySource)).toMatch(/licenses nothing/i);
   });
 });

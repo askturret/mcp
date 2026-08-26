@@ -600,6 +600,15 @@ jobs:
       - name: MCP SDK stays behind the transport boundary
         run: node .github/scripts/check-sdk-boundary.mjs
 
+      # #371: the drill was the only script wired here WITHOUT a sibling
+      # self-test, and that gap is why its spawn-failure routing went unnoticed.
+      # A build that never STARTED returns status null, which `status === 0`
+      # reads as false — so it fell through to interpretation, found no failing
+      # packages, and reported PASS with an empty blast radius from a compiler
+      # that never ran. Self-tested first, like every other guard here.
+      - name: Self-test the SDK-upgrade drill
+        run: node .github/scripts/sdk-upgrade-drill.test.mjs
+
       # The criterion is not "nothing imports it" but "an SDK change costs
       # nothing outside the transport". Only breaking one and looking proves
       # that, so the drill does exactly that and restores the file afterwards.

@@ -54,11 +54,58 @@ const SYNTHETIC_BREAK = {
   replace: 'import type { ServerRenamedByUpstream as _McpSdkServer }',
 };
 
+/**
+ * Compile the workspace at `root`.
+ *
+ * `process.execPath` rather than a bare 'node' (#371): the interpreter running
+ * this file is already known exactly, so resolving it through PATH bought
+ * nothing and cost a spawn that fails to START off PATH. Note this changes the
+ * INTERPRETER only — `node_modules/typescript/bin/tsc` stays relative and still
+ * resolves against `cwd: root`, which is a temp copy of the repository rather
+ * than this checkout.
+ */
 function build(root) {
-  return spawnSync('node', ['node_modules/typescript/bin/tsc', '-b'], {
+  return spawnSync(process.execPath, ['node_modules/typescript/bin/tsc', '-b'], {
     cwd: root,
     encoding: 'utf-8',
   });
+}
+
+/**
+ * Did this spawn fail to START, as opposed to running and reporting failure?
+ *
+ * `spawnSync` reports a process that never started with `status: null` and NULL
+ * stdout/stderr — not an exit code, and not empty output from a real run. The
+ * distinction is the whole point (#371): downstream, "the compiler emitted no
+ * diagnostics" and "the compiler never ran" are the same bytes.
+ *
+ * In a self-test that shape is loud red. HERE it was a quiet wrong ANSWER: the
+ * second build's result is tested with `status === 0`, and `null === 0` is
+ * false, so a spawn that never started fell through to the interpretation path.
+ * `failingPackages('')` finds nothing, no package looks escaped, and the drill
+ * returned code 0 — "PASS ... Blast radius: (none)" — from a compiler that
+ * never ran. That is this repository's signature defect: a check reporting
+ * success for work it did not do.
+ *
+ * So `status === null` is tested FIRST at both call sites, and routes to
+ * CANNOT CHECK. Never to interpretation.
+ */
+export function didNotStart(result) {
+  return result.status === null;
+}
+
+/** CANNOT CHECK (2) for a build that never ran. Reports the cause, not a verdict. */
+export function couldNotRun(result, phase) {
+  return {
+    code: 2,
+    message:
+      `The ${phase} build COULD NOT RUN, so this drill has not measured anything.\n` +
+      `It is reporting that it could not check — which is never the same as a pass.\n\n` +
+      `spawn error: ${result.error ? result.error.message : '(none reported)'}\n\n` +
+      `The compiler process never started, so there is no output to interpret. Had\n` +
+      `this fallen through to the normal path it would have found no failing\n` +
+      `packages and reported PASS with an empty blast radius.`,
+  };
 }
 
 /**
@@ -122,6 +169,10 @@ export function runDrill(repoDir = '.') {
     // Baseline: the workspace must build BEFORE the drill, or a failure
     // afterwards proves nothing about the SDK.
     const before = build(root);
+    // Checked BEFORE `status !== 0` — not merely for correctness of routing, but
+    // because the branch below reads `before.stdout + before.stderr`, which are
+    // null on a spawn that never started. `(null + null).trim()` throws.
+    if (didNotStart(before)) return couldNotRun(before, 'baseline');
     if (before.status !== 0) {
       return {
         code: 2,
@@ -135,6 +186,11 @@ export function runDrill(repoDir = '.') {
     writeFileSync(file, original.replace(SYNTHETIC_BREAK.find, SYNTHETIC_BREAK.replace), 'utf-8');
 
     const after = build(root);
+    // The load-bearing one. `null === 0` is false, so without this a spawn that
+    // never started skips the branch below and is INTERPRETED as a build that
+    // ran and emitted nothing — which reads as PASS.
+    if (didNotStart(after)) return couldNotRun(after, 'post-break');
+
     const output = `${after.stdout}${after.stderr}`;
     const failed = failingPackages(output);
 

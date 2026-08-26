@@ -7,6 +7,14 @@ How this repository decides whether a test is worth having.
 
 **A test must go RED when the fix it guards is reverted.**
 
+**The same rule addressed to prose: a sentence asserting that something is
+protected must name the assertion that goes RED when the protection is removed —
+or state that none does.** The first sentence is said to test authors constantly;
+the second is said to comment authors never, which is how a protection that
+nothing observes gets written down and then believed. That is
+[antipattern 6](#6-unobserved-guarantee), and it is the same rule, not a second
+one.
+
 That is the whole standard, and everything below is a way of failing it. Before
 opening a PR that fixes a bug: comment out the fix, run the test, watch it fail,
 restore the fix, watch it pass. If you cannot produce a deterministic
@@ -30,11 +38,12 @@ Two guards run in the `test-integrity` job on every PR:
 
 They are worth having and they are not enough. Every antipattern below **passes
 both**. A test can execute, assert something specific and real, and still guard
-nothing.
+nothing. Antipattern 6 is not even that: in four of its six recorded instances
+there is **no test file for either guard to inspect** — the claim is a sentence.
 
 ---
 
-## The five antipatterns
+## The six antipatterns
 
 ### 1. Transcribed Oracle
 
@@ -188,6 +197,181 @@ axis does the bug live on?* If a mutation to production code turns fewer
 assertions red than you expected — or turns red for the wrong reason — you have
 found a consensus, not a guard. Two rules that both refuse an input are defence
 in depth and worth keeping; they just need one case each that isolates them.
+
+### 6. Unobserved Guarantee
+
+> **A protection is stated where a reader trusts it, and nothing in the build
+> fails when the protection is removed.**
+
+**Shape:** a protection is asserted in an artifact a reader trusts — a code
+comment, a docstring, an ADR, an assertion's own label, a PR body — and no test,
+guard or check goes red if the protection is taken away. The system is correct
+today. Nothing observes it ceasing to be.
+
+**This one is not like the five above, and the difference is the point.** Those
+are ways a test *that exists* fails to earn its green tick. Here, in four of the
+six instances below, **there is no test at all** — there is a sentence. This
+document opens by saying it is about *"whether a test is worth having"*, and a
+sentence is outside that:
+
+> `TESTING.md` governs artifacts that claim to **test**. This antipattern governs
+> artifacts that claim to be **protected**.
+
+It belongs here anyway, because the rule it needs is already written in
+[The one rule](#the-one-rule) and was simply addressed to the wrong party.
+*"A test must go RED when the fix it guards is reverted"* is exactly the missing
+rule; until this section, nobody said it to the author of a comment.
+
+**Operational test.** Name the mutation that would falsify the claim. Apply it.
+Run the suite. **Green ⇒ instance.**
+
+That is determinate *given a candidate claim*. **Enumerating the claims is the
+undecidable part** — and that is the tractability answer itself, not a caveat on
+it. Nothing in the build reads prose, so nothing can hand you the list of
+sentences to test.
+
+#### Two variants — a definition covering only the first misses the worse one
+
+- **Variant A — the absent witness.** The falsifying mutation is green **now**.
+  Nothing was ever written to observe the property. Instances 1, 2, 3, 5, 6.
+- **Variant B — the delayed fuse.** The falsifying mutation is **red now**, and
+  the artifact carries an invitation to make it green — a correct, load-bearing
+  assertion labelled *"belt to the braces"*. The claim that is false is not
+  *"this is protected"* but *"this is redundant"*. Instance 4.
+
+Variant B is the more dangerous of the two and **the only one no automated
+technique can reach, because the defect is in the future**: today the assertion
+is real and the mutation reddens it. The remedies differ accordingly — variant A
+needs a witness added, variant B needs a label corrected.
+
+#### The six instances
+
+Cited so the definition can be checked against them rather than asserted. All
+six are from a single session (2026-08-26, ~04:00–08:00Z), in unrelated
+subsystems, found by three different agents — and **every one was found by a
+human noticing, never by a check**.
+
+| # | Claim, and where it was stated | Falsifying mutation | Build after | Variant |
+|---|---|---|---|---|
+| 1 | **#383** — the audit exemption is root-anchored (a data flag, described by the comment above it) | `anchored: true` → `false` | **862/862 green**, while materially widening what stays unredacted | A |
+| 2 | **#388** — the invariant `factor_1: unverifiable ⇒ anomalous` is *"enforced by a schema checker"* | *none available* — **the named checker does not exist in this repository** | green | A |
+| 3 | **#381** — guard scripts under `.github/scripts/` run in CI | remove the workflow step that invokes one | green — **and the guard's own self-test still passes**, which reads as confirmation | A |
+| 4 | **#393** — a third assertion labelled *"belt to the braces"* | delete it | **RED** | **B** |
+| 5 | **#383** — `SNAPSHOT_HASH` *"IS the truncation-length guard"* | change the truncation length | green **at every length**, because the only length-sensitive rule is excluded from the default rule set | A |
+| 6 | **#389** — the generated position list that replaced instance 1's flag | drop one of the three positions | **863/863 and 87/87 green**, real hashes silently masked | A |
+
+Two more from the same session are arguably this class one level out: **#387**, a
+classifier whose inconsistent application concealed a large false-positive rate —
+consistency would have made it visible; and **#392**, a finding recorded where
+nobody searching for it would look.
+
+**Why the guards miss it:** `check-test-execution.mjs` and
+`check-placeholder-tests.mjs` both pass, and in four of the six there is no test
+file for them to inspect. Mutation testing — the systematic form of the
+RED-on-revert check — reaches **three of the six**; see
+[Is this systematically catchable?](#is-this-systematically-catchable) for the
+measurement and why it cannot do better.
+
+#### Why it is expensive
+
+**It is invisible in the safe direction, and the point is sharper than "both are
+green".** Green is the *correct* observation in both cases, so there is no
+anomaly to investigate at any moment. Contrast a flaky test, which also passes
+sometimes but **self-signals**; here there is no signal ever.
+
+One refinement matters for design, because it is what makes some instances cost
+more than others:
+
+> The failure is **always** silent in the build. Whether it is silent **in the
+> world** varies — and **the doubly-silent ones are the expensive ones.**
+
+Instance 6 is loud in the world: real hashes start reading `[REDACTED]` and a
+panel visibly fills with them. Instance 1 is silent in both — an exemption widens
+and nothing anywhere looks different.
+
+**The statement suppresses investigation** — a reader who meets *"this is guarded
+by X"* stops looking, and an admitted gap gets watched where one believed closed
+does not. But not uniformly, and the exception is the useful part: a claim that
+is **checkable at a glance** invites a two-second verification instead of
+suppressing it. *"Guarded by `check-audit-append-only.mjs`"* is confirmable
+immediately. Suppression is strong for **unfalsifiable-looking** claims and weak
+for **citable** ones — which is why requiring the citation below is not
+bookkeeping. **It is what removes the suppression.**
+
+#### Fail-closed design is the lever that is not a test
+
+Fail-closed design **bounds this class even while the guarantee stays
+unobserved.** It does not make the claim observed; it makes the *consequence* of
+losing it observable somewhere. #383 is the worked example: anchoring
+over-redacts **loudly**, suffix matching under-redacts **silently**, so for a
+redaction control fail-closed means redact. Instance 6 became a loud-in-the-world
+failure for the same reason.
+
+This is worth recording as a mitigation in its own right, because it is the only
+one that works **without anyone having to notice the claim** — every other
+remedy here starts with someone reading the sentence.
+
+#### How to catch it — the authorship rule
+
+The review question is not new. This repository already writes it into acceptance
+criteria — *"observed failing, not merely passing on a clean tree"* — and it
+works: it found five of the six. **What is missing is a trigger.** So the rule
+attaches the existing question to a determinate event:
+
+> **When a diff adds or edits a sentence asserting that something is protected,
+> the same diff must either (a) name the assertion that goes RED if the
+> protection is removed, or (b) state that none does.**
+
+**Where it fires:** at *authorship of the claim* — while the author is writing
+the sentence and still has the mechanism in their head. It re-fires at review,
+cheaply.
+
+**What makes it fire rather than be forgotten**, three properties, and the third
+is the load-bearing one:
+
+1. **It triggers on an act the author is already performing deliberately.**
+   Writing *"this is guarded by X"* is not incidental; it is a claim being made.
+2. **Option (b) makes honesty cheaper than silence.** That disposition is already
+   in this document, verbatim, for tests: *"an unverifiable test is allowed, a
+   silently unverified one is not. 'I could not' and 'I did not mention it' must
+   not be indistinguishable."* Extending that sentence to claims is the whole
+   change.
+3. **A reviewer needs no domain knowledge to ask it.** *"This says X is guarded —
+   which test?"* costs nothing and requires understanding neither the subsystem
+   nor the test framework. Compare *"is this protection real?"*, which requires
+   expertise and therefore gets skipped. **Review questions survive in proportion
+   to how little they cost the reviewer**, and this one converts a semantic
+   question into a lookup — without pretending the lookup can find *unmarked*
+   claims.
+
+#### The corollary — a fix for this class relocates the guarantee
+
+> **Name every input to the new mechanism, and for each, name the assertion that
+> reddens if it changes.**
+
+This is not a refinement; it is the observed failure mode of fixing this class.
+**Instance 1's fix produced instance 6 within hours.** PR #389 replaced an
+unobserved flag with a generated list, and nothing observed the list's *inputs* —
+three positions and a flag, of which only the flag was witnessed. The same
+defect, one field over, introduced by its own remedy.
+
+That is also the argument for naming the class at all rather than fixing six
+instances: the individual fixes do not generalise, and one of them manufactured a
+seventh problem while closing a first.
+
+#### What is deliberately not built
+
+A marker convention (`@guarded-by <test>`) plus a linter checking the cited
+assertion exists would be sound for what it checks — **and it would have found
+zero of the six**, because every instance is an *unmarked* claim. Its coverage of
+the class on the historical record is nil; its only value is preventing decay of
+citations that already exist.
+
+Shipping that under a name like *"unobserved-guarantee check"* would supply
+reassurance without coverage. **That is this antipattern.** Refusing to build it
+is an application of the finding, not a failure to deliver one — the same
+refusal, for the same reason, as
+[variant 5's](#is-this-mechanisable) syntactic sub-shape below.
 
 ---
 
@@ -366,6 +550,28 @@ antipatterns by construction:
 - **Untested Branch Consensus** — the un-varied axis leaves survivors clustered
   on one branch, which is a sharper signal than coverage, since coverage would
   report that branch as executed.
+
+**It does not catch [Unobserved Guarantee](#6-unobserved-guarantee) the same way,
+and the reason is structural:**
+
+> **Mutation testing cannot find an unobserved guarantee, because it does not
+> know the claim exists.** It enumerates mutations of *code*. The claim lives in
+> *prose*, and no build step reads prose.
+
+Measured against that antipattern's six recorded instances — **3 of 6**:
+
+| Instance | Result |
+|---|---|
+| 1, 5, 6 | **found** — a surviving mutant |
+| 2 (#388) | **missed** — the mutation would be "delete the checker", and there is no checker to delete. Nothing to mutate |
+| 3 (#381) | **missed, and worse** — mutating the guard reddens its own *self-test*, so the harness returns a false all-clear while nothing invokes the guard in CI |
+| 4 (#393) | **missed by construction** — the assertion is load-bearing today; the defect is a future deletion |
+
+The same shape as the 1-of-3 measured for variant 5's syntactic sub-shape above,
+one level up. So even the systematic form is **half a detector**, and shipping it
+as *the* answer to that class would be the class wearing a tool's clothes. It is
+a real half, though, and the proportionate version recommended below covers
+variant A on changed code — which is where most instances are.
 
 **Three real limits, which is why this is "partially".**
 

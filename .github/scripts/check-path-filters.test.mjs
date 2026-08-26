@@ -109,7 +109,7 @@ ${opts.extraJobs ?? ''}`,
  */
 function run(dir) {
   const { GITHUB_EVENT_PATH: _ambient, ...env } = process.env;
-  const r = spawnSync('node', [GUARD, dir], { encoding: 'utf-8', env });
+  const r = spawnSync(process.execPath, [GUARD, dir], { encoding: 'utf-8', env });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -161,7 +161,7 @@ function laneFixture({ labels, changedPaths, filtersBlock, packages = { core: []
   const eventPath = join(dir, 'event.json');
   writeFileSync(eventPath, JSON.stringify({ pull_request: { labels: labels.map((name) => ({ name })) } }));
 
-  const r = spawnSync('node', [GUARD, dir, 'main'], {
+  const r = spawnSync(process.execPath, [GUARD, dir, 'main'], {
     encoding: 'utf-8',
     env: { ...process.env, GITHUB_EVENT_PATH: eventPath },
   });

@@ -13,19 +13,58 @@
  * in prose. #347's acceptance asked for the first to be "verified mechanically,
  * not asserted"; the second is the same shape and gets the same treatment.
  *
- * Two independent checks on the duplication half, because they fail for
- * different reasons:
+ * Three checks on the duplication half, because they fail for different
+ * reasons:
  *
  * 1. **Behavioural** — `createSnapshot`'s hash equals `computeHash`'s over the
- *    same operations. This catches DRIFT: a second implementation that has
- *    diverged reddens here whatever it is called.
- * 2. **Structural** — the source contains one definition, and its users import
- *    it. This catches DUPLICATION BEFORE it drifts, which is the moment it is
- *    cheap to fix, and it is the only one of the two that can see a copy that
- *    currently agrees.
+ *    same operations. Catches DRIFT: a second implementation that has diverged
+ *    reddens here whatever it is called.
+ * 2. **Structural, by NAME** — the identifier `computeHash` is defined once,
+ *    and its users import it. Catches duplication BEFORE it drifts, which is
+ *    when it is cheap to fix.
+ * 3. **Structural, by BODY** — no other source file contains a
+ *    whitespace-normalised copy of the hash body, taken from `hash.ts` itself
+ *    rather than transcribed here.
  *
- * Neither alone is enough: a fresh copy passes (1), and a drifted copy under a
- * new name passes (2).
+ * ## What these do NOT observe — stated rather than left to be discovered
+ *
+ * Check 2 was originally the only structural check, under a title claiming the
+ * hash "has exactly one implementation". **It claimed more than it observed**,
+ * and QA demonstrated the gap rather than arguing it: a byte-identical copy of
+ * the real body under a different name passed the whole file, 4 of 4. Check 3
+ * closes that specific escape and the titles below now say what each one tests.
+ *
+ * Two residuals, and the second corrects a claim this file used to make.
+ *
+ * **(a)** A copy that **renames internals** or **interleaves comments**
+ * survives whitespace normalisation and check 3 does not see it. There is no
+ * sound syntactic fix — *"is this the same algorithm?"* is a semantic question,
+ * and a check covering one more shape while reading as covering the class is
+ * the Unobserved Guarantee this repository spent today naming
+ * (docs/TESTING.md §6).
+ *
+ * **(b)** A **dead** duplicate — defined, drifted, and never called — is seen by
+ * nothing. Its body differs, so check 3 misses it; its name differs, so check 2
+ * misses it; and nothing calls it, so check 1 cannot. Measured, not reasoned:
+ * a drifted copy under a new name leaves the suite **fully green**.
+ *
+ * That last result corrects what this file previously implied. The original
+ * mutation pair reported a drifted copy as loudly caught — but it was named
+ * `computeHash`, so it **shadowed the import** and `createSnapshot` really did
+ * call it. Rename it and the same copy is inert. QA could not reproduce the
+ * pair and said so rather than implying they had; they were right, and the
+ * corrected matrix is:
+ *
+ * | duplicate | reddens |
+ * |---|---|
+ * | identical, same name (shadows the import) | checks 2 and 3 |
+ * | identical, different name | check 3 only — QA's escape, now closed |
+ * | drifted, different name (dead code) | **nothing** |
+ *
+ * A dead drifted copy is inert until something calls it, and at that moment
+ * check 1 fires. So the honest statement is: **duplication is observed in two
+ * shapes, and drift is observed only once it is reachable.** Written down
+ * rather than papered over with a wider-sounding assertion.
  */
 
 import { describe, it, expect } from '@jest/globals';
@@ -73,7 +112,25 @@ function operation(id: string): OperationDefinition {
   } as OperationDefinition;
 }
 
-describe('the snapshot content hash has exactly one implementation', () => {
+/** Collapse every whitespace run, so reindentation does not defeat a match. */
+const normalise = (s: string): string => s.replace(/\s+/g, ' ').trim();
+
+/**
+ * The body of `computeHash`, read from the production module.
+ *
+ * Taken from `hash.ts` at runtime rather than pasted here: a transcribed copy
+ * would agree with itself after the real one changed, which is the Transcribed
+ * Oracle antipattern and is exactly what this file exists to guard against.
+ */
+function hashBodyFromSource(): string {
+  const text = readFileSync(join(SRC, 'compiler', 'hash.ts'), 'utf-8');
+  const decl = text.indexOf('export function computeHash');
+  const open = text.indexOf('{', decl);
+  const close = text.indexOf('\n}', open);
+  return normalise(text.slice(open + 1, close));
+}
+
+describe('duplication of the snapshot content hash — by name and by body', () => {
   it('createSnapshot produces the same hash the shared module computes', () => {
     // The drift detector. `createSnapshot` is the only route by which a
     // snapshot's hash is authored; if the pass ever grows its own copy of the
@@ -88,7 +145,33 @@ describe('the snapshot content hash has exactly one implementation', () => {
     expect(snapshot.hash).toMatch(/^[0-9a-f]{16}$/);
   });
 
-  it('is defined in exactly one source file, and its users import it', () => {
+  it('no other source file contains a copy of the hash BODY', () => {
+    // Check 3. QA's escape: a byte-identical copy of the real body under a
+    // different name passed check 2 entirely, because that check reads the
+    // IDENTIFIER. This one reads the code.
+    const needle = hashBodyFromSource();
+
+    // The needle must be real. A mis-parse yielding a short or empty string
+    // would make every `includes` below pass or fail for the wrong reason —
+    // the Decorative Guard shape, where the scan window is the defect.
+    expect(needle.length).toBeGreaterThan(400);
+    expect(needle).toContain("createHash('sha256')");
+    expect(needle).toContain('localeCompare');
+
+    // Positive control: the needle is findable in the file it came from. If
+    // this fails, the extraction is wrong and every negative below is vacuous.
+    const source = normalise(readFileSync(join(SRC, 'compiler', 'hash.ts'), 'utf-8'));
+    expect(source).toContain(needle);
+
+    const offenders = sourceFiles(SRC)
+      .filter((f) => relative(SRC, f).split(sep).join('/') !== 'compiler/hash.ts')
+      .filter((f) => normalise(readFileSync(f, 'utf-8')).includes(needle))
+      .map((f) => relative(SRC, f).split(sep).join('/'));
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('the identifier `computeHash` is defined in exactly one source file, and its users import it', () => {
     const files = sourceFiles(SRC);
 
     // Non-empty scan window. "No duplicates found" and "nothing was scanned"

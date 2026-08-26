@@ -59,10 +59,75 @@
  */
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { join, resolve, relative, sep } from 'node:path';
+import { join, resolve, relative, sep, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 const repoRoot = resolve(process.argv[2] ?? '.');
+
+/**
+ * A PATH the child can actually resolve `npm` through (#429).
+ *
+ * ## The failure this prevents, and why its DIRECTION is the problem
+ *
+ * This environment has shipped a SPACE-separated `PATH`. Lookup splits on the
+ * platform delimiter — `:` here — so the whole string is one nonexistent
+ * directory and `spawnSync('npm', …)` returns `status: null` with
+ * `error: ENOENT`. The drain below then read `run.status !== 0` as
+ * `null !== 0` — TRUE — and reported "test command exited non-zero" for every
+ * package.
+ *
+ * So an environment that could not be measured rendered as SIX NAMED FAILURES
+ * in `check-guards`. That is #361's own argument in a place #361 did not reach:
+ * whoever sees it is already debugging a guard, and six red assertions confirm
+ * the wrong theory they walked in with. It has cost three agents — a mid-QA
+ * detour, a design conclusion drawn from two self-tests that were green all
+ * along, and a diagnosis.
+ *
+ * ## Why `process.execPath` is NOT the fix here, unlike #361
+ *
+ * #361 swept bare `node` out of guard SELF-TESTS, and its scope note is
+ * explicit that `npm` stays allowed: a genuine external tool with no in-process
+ * equivalent, so there is no execPath substitute to swap in. Its scan window is
+ * the sibling `*.test.mjs` files besides, and this is a production guard.
+ * Nothing regrew and nothing was overlooked — the boundary was drawn correctly
+ * and this sits outside it. (The candidate #361 deferred, `sdk-upgrade-drill`,
+ * is NOT implicated in these six; see #429.)
+ *
+ * What IS available is the interpreter's own directory. `npm` ships with node
+ * and lives beside it — true of the Homebrew layout here and of
+ * `actions/setup-node` on the runner — so prepending `dirname(process.execPath)`
+ * makes that lookup succeed however mangled the inherited value is.
+ *
+ * ## THREE hops break, not one — measured, because fixing two looked like enough
+ *
+ * The interpreter directory alone is NOT sufficient, and the failure moves
+ * rather than disappearing:
+ *
+ *   1. the guard spawns `npm`            -> fixed by the interpreter directory
+ *   2. npm's `#!/usr/bin/env node`       -> same directory, so also fixed
+ *   3. npm runs the package's `test`     -> `spawn sh ENOENT`
+ *      script THROUGH A SHELL
+ *
+ * Hop 3 is the one that is easy to miss: `sh` lives in `/bin`, reachable only
+ * through the part of the inherited value that is broken. After fixing hops 1
+ * and 2 the guard still reported every package as failing — the same wrong
+ * answer, one layer down. So the POSIX defaults are appended too.
+ *
+ * ## Ordering, and why this is not "repairing someone else's PATH"
+ *
+ * Deliberately NOT parsed, split on whitespace, or rewritten. A directory may
+ * legitimately contain a space, so inferring the intended delimiter would be
+ * guessing at meaning. This only ever ADDS candidate directories, and the
+ * inherited value keeps its precedence over the appended fallbacks:
+ *
+ *   dirname(process.execPath)  first  — the interpreter we are already running
+ *   the inherited PATH         next   — a real one still wins over the defaults
+ *   /usr/bin, /bin             last   — only reached when the above resolve nothing
+ */
+const PATH_SEP = process.platform === 'win32' ? ';' : ':';
+const CHILD_PATH = [dirname(process.execPath), process.env.PATH ?? '', '/usr/bin', '/bin']
+  .filter((p) => p !== '')
+  .join(PATH_SEP);
 
 /** Test scripts that cannot possibly run a test. */
 const NO_OP_SCRIPT = /^\s*(exit\s+0|true|echo\b.*)\s*$/;
@@ -305,8 +370,38 @@ for (const { dir, pkg } of workspacePackages()) {
   const run = spawnSync('npm', ['test', '--workspace', name], {
     cwd: repoRoot,
     encoding: 'utf-8',
-    env: { ...process.env, CI: 'true' },
+    env: { ...process.env, CI: 'true', PATH: CHILD_PATH },
   });
+
+  // THE COMMAND NEVER STARTED IS NOT THE COMMAND FAILING (#429).
+  //
+  // `spawnSync` reports a process that never started with `status: null` and an
+  // `error`. Reading only the status turns "npm was not found" into "your tests
+  // exited non-zero" — a measurement that could not be taken, reported as a
+  // defect in the thing being measured.
+  //
+  // THIS RULE ALREADY EXISTED IN THIS REPOSITORY AND DID NOT REACH HERE. #371
+  // established it for `sdk-upgrade-drill`, whose `didNotStart()` tests
+  // `status === null` FIRST at both call sites and routes to CANNOT CHECK,
+  // with a docblock naming the exact hazard: "the compiler emitted no
+  // diagnostics" and "the compiler never ran" are the same bytes. That guard
+  // was immune to #429 for precisely this reason; this one was not. The
+  // predicate is inlined rather than imported because importing a wired
+  // production script executes it.
+  //
+  // `CHILD_PATH` above should make this unreachable for the PATH case, so this
+  // is the backstop for the layouts it cannot repair — npm genuinely absent, or
+  // installed somewhere other than beside node. CANNOT CHECK, never a failure,
+  // and it names the cause.
+  if (run.status === null || run.error !== undefined) {
+    results.push({
+      name,
+      status: 'cannot-check',
+      detail: `could not run npm (${run.error.code ?? run.error.message}) — the test command never started`,
+    });
+    continue;
+  }
+
   const output = `${run.stdout ?? ''}\n${run.stderr ?? ''}`;
   const failed = run.status !== 0;
 
@@ -359,11 +454,27 @@ for (const r of results) {
 }
 
 const failures = results.filter((r) => r.status === 'fail');
+const unmeasurable = results.filter((r) => r.status === 'cannot-check');
 console.log(
   `\n${results.length} package(s): ${results.filter((r) => r.status === 'ok').length} running ` +
     `tests, ${results.filter((r) => r.status === 'exempt').length} declared exempt, ` +
     `${failures.length} failing.`,
 );
+
+// CANNOT CHECK is reported BEFORE failures, and separately (#429). If npm could
+// not be spawned, nothing was measured — so calling that a failing package
+// states a conclusion about test coverage drawn from an absence of evidence.
+// Exit 2 is this guard's existing code for "could not run", not a new one.
+if (unmeasurable.length > 0) {
+  console.error(
+    `\n::error::${unmeasurable.length} package(s) COULD NOT BE CHECKED — npm could not be run.\n` +
+      'This is an environment problem, not a test-coverage problem, and it is reported\n' +
+      'separately so it cannot be mistaken for one. Check that npm is installed and\n' +
+      `resolvable; the interpreter is ${process.execPath}.`,
+  );
+  for (const r of unmeasurable) console.error(`  - ${r.name}: ${r.detail}`);
+  process.exit(2);
+}
 
 if (failures.length > 0) {
   console.error(

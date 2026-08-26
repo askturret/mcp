@@ -378,6 +378,52 @@ check(
   0,
 );
 
+// ---------------------------------------------------------------------------
+// The execution guard survives a hostile PATH (#429)
+//
+// This environment has shipped a SPACE-separated PATH. Lookup splits on `:`, so
+// the whole string is one nonexistent directory, `spawnSync('npm', …)` returns
+// `status: null` with `error: ENOENT`, and `run.status !== 0` read that as the
+// package's tests failing.
+//
+// WHAT THAT COST, and the second half is the worse half:
+//
+//   6 assertions failed        every case expecting exit 0
+//   ~10 assertions PASSED      every case expecting exit 1 — vacuously, because
+//                              the guard was failing everything for the wrong
+//                              reason
+//
+// So the broken environment produced six false alarms AND ten false
+// reassurances, and the six are what three agents spent time on. It is #361's
+// argument reaching a place #361 did not: whoever sees it is already debugging
+// a guard, and the red confirms the theory they walked in with.
+//
+// The fix is a PATH the child can resolve through, NOT `process.execPath` —
+// `npm` is a genuine external tool with no in-process equivalent, which #361's
+// own scope note is explicit about. This assertion is what stops it regrowing,
+// because under a normal PATH the fix is invisible: every case above passes
+// with or without it.
+// ---------------------------------------------------------------------------
+{
+  const dir = scratchWorkspace({
+    scripts: { test: 'node -e "console.error(\'Tests: 3 passed, 3 total\')"' },
+  });
+  // Every directory named here is real; only the delimiter is wrong. That is
+  // the observed condition, and it is NOT the same test as unsetting PATH — an
+  // unset PATH falls back to a system default and can succeed by accident.
+  const hostile = spawnSync(process.execPath, [EXECUTION, dir], {
+    encoding: 'utf-8',
+    env: { ...process.env, PATH: '/opt/homebrew/bin /usr/bin /bin' },
+  });
+
+  check('execution: passes with a SPACE-separated PATH (#429)', hostile.status, 0);
+  check(
+    'execution: ...and does not report the packages as failing',
+    /do not execute any tests/.exec(`${hostile.stdout ?? ''}${hostile.stderr ?? ''}`) !== null,
+    false,
+  );
+}
+
 check(
   'execution: honours an explicit testsNotRequired declaration',
   runGuard(

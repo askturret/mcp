@@ -75,6 +75,78 @@ attachment_pattern = '''^(?:[ \t]*\d+[^\n]*\n?)+$'''
   rationale = "A repository contributor chooses file names, so the slot's content is attacker-chosen text. This is the slot the whole-message rule exists to contain. A reviewer tempted to declare this false because 'the harness generates the path' has made the mistake this field exists to catch: the harness generates the rendering, the attacker chooses the content."
 
 [[template]]
+id = "T1C"
+family = "file-changed-on-disk"
+concealment_clause = "otherwise no need to call it out"
+first_seen = "2026-08-21T20:51:50Z"
+corpus_matches = 31
+evidence = [
+  "concealment-reminders/20260826T074248Z-engineer-387.jsonl",
+  "concealment-reminders/20260826T005800Z-engineer-331.jsonl",
+  "concealment-reminders/20260826T022200Z-engineer-340.jsonl",
+  "concealment-reminders/20260826T023600Z-engineer-344.jsonl",
+]
+prose = "Note: <PATH> changed on disk since you last read it. That's usually deliberate, so take it as the current state rather than reverting it; if the change looks wrong, say so rather than undoing it yourself \u2014 otherwise no need to call it out. Here are the relevant changes (shown with line numbers):"
+trailing_attachment = "truncated-line-numbered-listing"
+attachment_required = true
+attachment_pattern = '''^(?:[ \t]*\d+[^\n]*\n)+(?:[ \t]*\n)?\.\.\. \[\d+ lines truncated\] \.\.\.$'''
+
+# T1C is a SIBLING of T1, not a widening of it. T1 keeps its strict pattern.
+#
+# WHY A SIBLING. When the harness truncates a long listing it appends a marker
+# line that is NOT number-led, so T1's `^(?:[ \t]*\d+[^\n]*\n?)+$` rejects the
+# whole tail and the message routes ANOMALOUS. That is the majority case, not
+# an edge: of the entries head-matching this prose, only a small minority carry
+# a listing clean enough for T1 to match. Widening T1 to tolerate a non-numbered
+# trailing line was considered and REJECTED - it would admit one arbitrary line
+# of anything after any listing, which is rule 4 undone. A sibling admits ONE
+# tightly-specified line instead, and leaves T1 exactly as strict as it was.
+#
+# THE COUNT IS ATTACKER-INFLUENCEABLE, AND INERT. A contributor controls a
+# file's length and therefore N. It is written `\d+` rather than a fixed number
+# for that reason, and it is NOT declared false anywhere: the influence is real.
+# It is also inert, and the inertness is rule 3 doing its job - matched text is
+# never read as instruction, and `\d+` admits digits only, so an attacker who
+# controls N controls a number nobody acts on. The influence is contained, not
+# absent. Do not "simplify" this to a fixed count or reason that the harness
+# generates the marker: the harness generates the rendering, the attacker
+# chooses the length.
+#
+# It is NOT declared as a `[[template.slot]]`, and that is a schema limit rather
+# than a judgement. Slots substitute into `prose` only, and the validator's
+# bijection rejects a slot that never appears there ("a slot nobody can reach is
+# a mis-declaration, not documentation"). The count appears in the ATTACHMENT.
+# Teaching slots to reach into `attachment_pattern` would put an indirection
+# inside the one regex in this schema that has already been defeated once
+# (#326), to gain a boolean CI cannot judge the truth of anyway - see ADR-022,
+# "CI validates that attacker_influenceable is present and boolean; it cannot
+# judge whether the declaration is true". Recorded here in the diff a reviewer
+# reads, which is where that field's force actually lives.
+#
+# EVIDENCE BASIS - stated because it is not visible from the citations. Almost
+# every capture of this family elides the listing: the agent describes the
+# truncation in prose and quotes the marker inside the note, so for most of the
+# corpus the marker's bytes survive only as narrative. This pattern was drafted
+# from four such narratives that agree exactly.
+#
+# It did not stay that way. The FIRST cited entry, 20260826T074248Z-engineer-387,
+# is a raw observation: while this template was being written, an emission about
+# THIS file arrived carrying a genuinely truncated tail, and the marker was
+# transcribed from it byte-for-byte rather than from a narrative. It confirmed
+# both the marker's exact form and that the blank line before it is OPTIONAL -
+# the one element of the shape no narrative attested. T1 closed the same gap by
+# taking a fresh live capture (#276); this one closed itself, which is luck
+# rather than method, so if further raw tails are captured this pattern is worth
+# re-checking against them.
+
+  [[template.slot]]
+  name = "PATH"
+  description = "Absolute filesystem path of the changed file, as rendered by the harness."
+  pattern = '''/[^\n]+'''
+  attacker_influenceable = true
+  rationale = "Identical to T1's PATH slot; same containment argument. Note the tail is what differs between T1 and T1C, never the prose - the two share this prose byte-for-byte, so a message reaches exactly one of them via its attachment."
+
+[[template]]
 id = "T1B"
 family = "file-changed-on-disk"
 concealment_clause = "otherwise no need to call it out"

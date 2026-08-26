@@ -163,6 +163,23 @@ when `1.0.0` ships.
   follows from a 409 or a 405, but the residual class becomes inspectable
   without growing the union.
   Not a covered surface — `details` is optional and this is additive.
+- `deserializeSnapshot` now verifies the stored content hash against the
+  deserialized operations and throws `SnapshotFormatError` on mismatch (#347).
+  Pass `{ verifyHash: false }` for the previous behaviour.
+  **Changed — core public entry point** (compatibility-policy §1, "everything
+  exported from `@askturret/mcp-core`'s public entry point"); the `diff --json`
+  contract (§3) reaches it via `packages/cli/src/commands/diff.ts:239`.
+  Classified MINOR because the old behaviour stays reachable by writing the
+  value explicitly — §4 states that rule for CLI defaults, and the policy has
+  **no general rule for API option defaults**, so this applies §4's principle
+  by analogy rather than citing it. That gap is being filed against the policy
+  document rather than resolved here.
+  **§5 is not engaged**: the hash algorithm is unchanged. `computeHash` moved
+  from `compiler/passes/freeze-and-hash.ts` to `compiler/hash.ts` so one
+  implementation serves both the pass and the reader; the function body is
+  byte-identical to its previous form, and a test asserts `createSnapshot`'s
+  hash equals the shared module's output. Nothing is re-exported, so the
+  compiler's public surface is unchanged — two tests observe that too.
 
 ### Fixed
 - `compositeSource().discover()` no longer swallows a child source's

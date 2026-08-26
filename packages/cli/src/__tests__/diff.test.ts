@@ -17,6 +17,12 @@ import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import {
+  createSnapshot,
+  serializeSnapshot,
+  type OperationDefinition,
+} from '@askturret/mcp-core';
+
 import { diffCommand, EXIT_BREAKING, EXIT_OK, EXIT_USAGE } from '../commands/diff.js';
 
 class ExitError extends Error {
@@ -34,28 +40,43 @@ interface Op {
   effects?: Record<string, unknown>;
 }
 
+/**
+ * A snapshot file the CLI will actually accept.
+ *
+ * The hash used to be the mnemonic `hash-${version}`, which was fine while
+ * `deserializeSnapshot` did not check it. Since #347 it does, and the CLI
+ * reaches it on a PRODUCTION path (`diff.ts` → `parse` → `deserializeSnapshot`)
+ * where `{ verifyHash: false }` is not available and should not be — so these
+ * fixtures now carry the real hash, produced by `createSnapshot` rather than
+ * transcribed. Nothing here asserts on the hash's value; what matters is that
+ * the file is internally consistent, as a real one would be.
+ *
+ * `createdAt` is pinned back to a fixed instant afterwards. That is safe by the
+ * hash contract, not by luck: `createdAt` is excluded from the hash (ADR-004),
+ * so overriding it cannot invalidate what `createSnapshot` just computed. The
+ * core round-trip suite pins that exclusion.
+ */
 function snapshot(operations: Op[], version = 1): string {
+  const definitions = operations.map((o) => ({
+    id: o.id,
+    name: o.name ?? o.id,
+    description: o.description ?? `Operation ${o.id}`,
+    input: o.input ?? { type: 'object', properties: {} },
+    output: o.output ?? { type: 'object', properties: {} },
+    effects: {
+      readOnly: true,
+      idempotent: true,
+      retryable: true,
+      idempotencyKeyRequired: false,
+      classifications: [],
+      ...(o.effects ?? {}),
+    },
+    executor: { type: 'http' },
+  })) as unknown as OperationDefinition[];
+
   return JSON.stringify({
-    formatVersion: 1,
-    version,
-    hash: `hash-${version}`,
+    ...serializeSnapshot(createSnapshot(definitions, version)),
     createdAt: '2026-01-01T00:00:00.000Z',
-    operations: operations.map((o) => ({
-      id: o.id,
-      name: o.name ?? o.id,
-      description: o.description ?? `Operation ${o.id}`,
-      input: o.input ?? { type: 'object', properties: {} },
-      output: o.output ?? { type: 'object', properties: {} },
-      effects: {
-        readOnly: true,
-        idempotent: true,
-        retryable: true,
-        idempotencyKeyRequired: false,
-        classifications: [],
-        ...(o.effects ?? {}),
-      },
-      executor: { type: 'http' },
-    })),
   });
 }
 

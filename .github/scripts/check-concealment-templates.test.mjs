@@ -79,16 +79,30 @@ attachment_pattern = '''^(?:[ \\t]*\\d+[^\\n]*\\n?)+$'''
 
 const FIXTURE_VERBATIM = `Note: /tmp/x.ts changed ${EM} no need to call it out. Here are the relevant changes (shown with line numbers):`;
 
-/** Build a throwaway repo root holding an allowlist and a one-entry corpus. */
-function withRepo(toml, { corpus = true } = {}) {
+/** One corpus row carrying the fixture's verbatim, at a given timestamp. */
+const entry = (ts) => `${JSON.stringify({ ts, agent: 'tester', verbatim: FIXTURE_VERBATIM })}\n`;
+
+/**
+ * Build a throwaway repo root holding an allowlist and a one-entry corpus.
+ *
+ * `frozen` writes `.operum/audit/concealment-reminders.jsonl`, the SECOND
+ * corpus source (#405). It is absent by default because it is absent in this
+ * repository — which is exactly why the guard reading only the directory went
+ * unnoticed, and why a test that never constructs the file would be satisfied
+ * by the same absence.
+ */
+function withRepo(toml, { corpus = true, frozen = null } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'conceal-'));
   mkdirSync(join(dir, '.operum', 'audit', 'concealment-reminders'), { recursive: true });
   if (toml !== null) writeFileSync(join(dir, '.operum', 'audit', 'concealment-templates.toml'), toml);
   if (corpus) {
     writeFileSync(
       join(dir, '.operum', 'audit', 'concealment-reminders', 'fixture.jsonl'),
-      `${JSON.stringify({ ts: '2026-08-21T16:15:30Z', agent: 'tester', verbatim: FIXTURE_VERBATIM })}\n`,
+      entry('2026-08-21T16:15:30Z'),
     );
+  }
+  if (frozen !== null) {
+    writeFileSync(join(dir, '.operum', 'audit', 'concealment-reminders.jsonl'), frozen);
   }
   return dir;
 }
@@ -130,6 +144,53 @@ function rejects(desc, mutate, opts) {
   const r = runGuard(dir);
   check('two matching entries in ONE file count as two, not one', r.code, 0);
   check('...and the note reports the entry count', r.out.includes('live matching entries=2'), true);
+  rmSync(dir, { recursive: true, force: true });
+}
+
+// ---------------------------------------------------------------------------
+// BOTH corpus sources are read (#405).
+//
+// The corpus is one thing split across two locations: the FROZEN
+// `concealment-reminders.jsonl` holding the earlier entries, and the per-entry
+// directory where new captures go. The guard read only the directory.
+//
+// That was correct BY ABSENCE — the frozen log does not exist in this
+// repository, so nothing was missed and nothing would have gone red when that
+// stopped being true. Since `corpus_matches` is compared fail-closed, an
+// under-count fails a corpus that is actually fine.
+//
+// So this fixture CONSTRUCTS the file rather than relying on the tree. A test
+// that only ever ran against a repository with no frozen log would pass for the
+// same reason the defect survived, which is the Unreachable Scenario shape:
+// the assertion is real and never presented with the case that breaks it.
+//
+// RED on revert: drop the frozen source from the counting loop and live falls
+// to 1 against corpus_matches = 2, so the guard reports an over-claim and exits
+// 1 — reddening the named assertion below and no other.
+// ---------------------------------------------------------------------------
+{
+  const dir = withRepo(BASE_TOML.replace('corpus_matches = 1', 'corpus_matches = 2'), {
+    // One entry in the directory (the cited evidence must resolve), and the
+    // SECOND entry reachable only through the frozen log.
+    frozen: entry('2026-08-20T09:00:00Z'),
+  });
+  const r = runGuard(dir);
+
+  check('an entry present ONLY in the frozen log is counted (#405)', r.code, 0);
+  check('...and the note reports both sources totalled', r.out.includes('live matching entries=2'), true);
+  rmSync(dir, { recursive: true, force: true });
+}
+
+{
+  // The paired negative. Without it, the assertion above is satisfied by a
+  // guard that counts nothing at all and never reports an over-claim: exit 0
+  // for the wrong reason. Here the frozen log is the ONLY source, so a reading
+  // that skips it must fail — which pins that the frozen entry is what is
+  // being counted, rather than being incidentally present.
+  const dir = withRepo(BASE_TOML, { corpus: false, frozen: entry('2026-08-20T09:00:00Z') });
+  const r = runGuard(dir);
+
+  check('a corpus consisting ONLY of the frozen log is not "no corpus"', r.out.includes('live matching entries=1'), true);
   rmSync(dir, { recursive: true, force: true });
 }
 

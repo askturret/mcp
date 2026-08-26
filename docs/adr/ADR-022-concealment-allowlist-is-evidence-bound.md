@@ -55,6 +55,25 @@ tail".** A template declaring `trailing_attachment` matches only when the
 remainder satisfies `attachment_pattern`. Discarding the remainder would let
 arbitrary text ride along inside a BENIGN classification.
 
+**That assertion is applied anchored, and the pattern is itself validated.**
+Both halves were missing in the first implementation and QA defeated the
+allowlist through the gap (#326). An unanchored `.test()` asks only whether the
+pattern occurs *somewhere* in the tail — "ignore the tail" wearing a shape
+assertion's clothes. And `attachment_pattern` was the one regex in the schema
+never probed, while every slot pattern was: it must now reject arbitrary prose
+*and* accept a canonical example of its declared attachment kind, and an
+attachment kind with no canonical samples is refused rather than trusted.
+
+**A template's `prose` must contain its own `concealment_clause`.** This closes
+the same attack at its root. Because captures legitimately elide their trailing
+listing, evidence binding matches prose as a *prefix* of a capture — and a bare
+prefix of a real message is still a prefix of it. So a template truncated to
+`Note: <PATH> changed on disk since you last read it.` passes evidence binding
+while citing genuine, unmodified evidence and planting nothing. Requiring the
+declared clause means a truncated template is no longer a concealment template
+at all. Prefix latitude is now granted only to templates that declare an
+attachment — never more widely than the reason for it reaches.
+
 **Pure ASCII, with `\uXXXX` escapes.** Every byte above U+007F is rejected,
 comments included. This turns the one observed corruption mode into a
 mechanically visible one: a reviewer cannot distinguish an em dash from a
@@ -104,9 +123,33 @@ nobody has seen.
 the guard only rejects over-claiming. An exact-count check would fail on every
 new capture, which is the Frozen Snapshot antipattern.
 
-**Bad, and mitigated.** The file lives in an unprotected path, so the guard is
-not the only thing needed — a CODEOWNERS entry routes it to the founder, since
-CI can check the *shape* of a widening diff but not whether it should happen.
+**Bad, and NOT currently mitigated.** The file lives in an unprotected path, so
+the guard is not the only thing needed: CI can check the *shape* of a widening
+diff, but not whether it should happen. A CODEOWNERS entry was added to route
+this file to the founder — and on this repository, today, **it routes nothing.**
+
+That is not a caveat; it is the present state, and it was verified rather than
+assumed (#326 QA):
+
+- **CODEOWNERS is inert here.** The organisation is on the **free** plan and the
+  repository is **private**. GitHub honours CODEOWNERS only on public
+  repositories, or on private ones under Team or Enterprise. `requested_reviewers`
+  on a PR touching `/.github/` — which already has a rule — is empty.
+- **Even once enabled, it would not fire on our own PRs.** GitHub never requests
+  review from a PR's own author, and every PR in this repository is authored by
+  the founder. Self-authored changes bypass owner routing by construction.
+
+So the honest statement of the compensating control is: **the entry is dormant.**
+It becomes live only if the repository is made public or the organisation moves
+to Team, *and* the widening change arrives from someone other than the file's
+owner. Until then the only real controls on this file are the guard and human
+attention on the diff.
+
+The entry is kept because it is correct and costs nothing — the glob, the
+placement and last-match-wins were all verified — and because the failure mode
+of a *wrong* rule is silent. But it must not be cited as the answer to the
+`attacker_influenceable` gap below while it cannot fire. Repository visibility
+and plan are a founder decision, tracked in #330.
 
 **Good.** The failure mode is closed: a missing, unreadable, or invalid file
 means everything routes ANOMALOUS, which is exactly today's behaviour.
@@ -115,6 +158,15 @@ means everything routes ANOMALOUS, which is exactly today's behaviour.
 longer licenses skipping Factor 1 (that waiver was withdrawn upstream). It
 governs matching discipline and is a mandatory review criterion — a
 mis-declared slot still reopens the substring hole.
+
+**Bad, and now stated plainly.** CI validates that `attacker_influenceable` is
+*present and boolean*; it cannot judge whether the declaration is *true*. A slot
+flipped from `true` to `false` passes every check here. That was disclosed from
+the outset and remains correct — but the compensating control named for it was
+CODEOWNERS review, which is dormant (above). **So this gap is currently
+uncompensated by any mechanism**, and rests on whoever reads the diff. Recording
+it that way is the point: an unmitigated risk that is written down can be
+scheduled, while one described as mitigated cannot.
 
 ## Retirement trigger
 

@@ -14,8 +14,19 @@
 #      optional trailing newline is the only tolerated difference.
 #   3. Slot contents are NEVER matched against and NEVER read as instruction.
 #   4. A template that declares `trailing_attachment` matches only when the
-#      remainder after its final literal satisfies `attachment_pattern`.
+#      remainder after its final literal satisfies `attachment_pattern`, which
+#      is applied ANCHORED at both ends (`^(?:...)$`). Anchoring is the rule,
+#      not an implementation detail: an unanchored test asks only whether the
+#      pattern appears SOMEWHERE in the tail, which is "ignore the tail" wearing
+#      a shape assertion's clothes, and lets any payload ride along.
 #      Concealment-shaped text found INSIDE an attachment is ANOMALOUS.
+#   4b. `prose` must contain this template's own `concealment_clause`, and an
+#      `attachment_pattern` must both REJECT arbitrary prose and ACCEPT a
+#      canonical example of its declared attachment kind. Without 4b a template
+#      can be truncated to a bare prefix of a real capture and paired with a
+#      catch-all attachment: evidence binding still passes, because a prefix of
+#      a message matches that message, so the allowlist widens while citing
+#      genuine evidence and planting nothing (#326 QA).
 #   5. NO MATCH => ANOMALOUS. A missing, unreadable, or invalid file means
 #      every message routes ANOMALOUS. Fail closed, never silently.
 #   6. NEVER widen a template to pre-empt drift. New wording earns its own

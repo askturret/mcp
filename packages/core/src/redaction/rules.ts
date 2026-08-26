@@ -18,7 +18,7 @@
  */
 
 import { REDACTED, shannonEntropy } from '../logging/redaction.js';
-import type { RedactionContext, RedactionRule } from './types.js';
+import type { RedactionContext, RedactionRule, RedactionSurface } from './types.js';
 
 // Re-uses #38's constant rather than declaring a second one. Two definitions
 // of the mask string is how a surface ends up emitting '[redacted]' while a
@@ -103,6 +103,41 @@ const NORMALIZED_SENSITIVE = new Set(SENSITIVE_KEY_NAMES.map(normalizeKey));
  * caller-controlled can reach the exempted field. Anything added to this list
  * later has to clear that same bar, and the cheapest way to remember is to see
  * what happened the one time it was not met.
+ *
+ * ## The Explorer entries clear that bar differently — by SHAPE, not provenance
+ *
+ * Everything above is sound because of where the value comes FROM. The
+ * `explorer` entries below cannot be, and saying so is the point of this note
+ * (#266). A snapshot hash is server-computed at `freeze-and-hash.ts`, but
+ * `deserializeSnapshot` accepts a hand-edited `snapshot.json` WITHOUT
+ * recomputing the hash — by documented design — and both it and
+ * `buildExplorerPanels({ retained })` are public exports. So a caller-supplied
+ * string can reach `snapshots[].hash`, and provenance cannot be the basis.
+ *
+ * Those entries therefore carry a `valuePattern`, and their soundness is local:
+ * it holds whoever supplies the snapshot, and no code added elsewhere can
+ * invalidate it.
+ *
+ * **The residual, stated rather than left to be rediscovered: the card shape.**
+ * `[0-9]` is a subset of `[0-9a-f]`, so a 16-digit Luhn-valid PAN still matches
+ * `/^[0-9a-f]{16}$/`. That is NOT fixable by tightening the regex — the values
+ * this exemption exists to preserve are precisely 16-character all-decimal
+ * hashes, which is the same string space as a PAN. Every exemption that keeps
+ * those hashes intact necessarily admits PAN-shaped values at these paths.
+ *
+ * What the pattern buys is a bounded blast radius rather than soundness by
+ * construction. Of the four rules that consult this exemption, only
+ * `creditCardRule` can match a 16-lowercase-hex value at all — `bearerRule`
+ * needs whitespace and a prefix, `jwtRule` needs two dots, `highEntropyRule`
+ * needs >= 24 characters. So the gated exemption grants exactly one power:
+ * creditCardRule stands down on 16-lowercase-hex at three Explorer paths.
+ * Ungated it would be "any string whatsoever at these paths", which is the #129
+ * shape again.
+ *
+ * The remaining channel — 64 bits, shape-pinned, reachable only through an
+ * attacker-authored snapshot file the operator chose to open — is closed by
+ * #347 verifying the hash on deserialisation. That is a different layer, not a
+ * precondition for this.
  */
 export const AUDIT_STRUCTURAL_FIELDS: readonly string[] = [
   'eventId',
@@ -118,6 +153,79 @@ export const AUDIT_STRUCTURAL_FIELDS: readonly string[] = [
   'durationMs',
 ];
 
+/**
+ * One exempted position, with its anchoring and value constraint stated.
+ *
+ * `anchored` is a required field rather than an inferred default because the
+ * two surfaces genuinely need opposite behaviour, so whoever adds the next
+ * entry is asked the question rather than inheriting whatever was there.
+ */
+export interface StructuralPathPattern {
+  /** Path segments; `'*'` matches exactly one segment, array indices included. */
+  readonly segments: readonly string[];
+  /** `true` = must match from the path root; `false` = suffix match. */
+  readonly anchored: boolean;
+  /** When present, the exemption applies only to a string value matching this. */
+  readonly valuePattern?: RegExp;
+}
+
+/**
+ * A snapshot hash: SHA-256 truncated to 16 hex characters by
+ * `compiler/passes/freeze-and-hash.ts`.
+ *
+ * This regex IS the truncation-length guard (#266 criterion 6). If that
+ * `substring(0, 16)` ever changes, real hashes stop matching, stop being
+ * exempted, and the tests that derive their fixture from the compiler's own
+ * hash path go red. The failure direction is safe and loud: hashes become MORE
+ * redacted and the panel-6 dropdown visibly fills with `[REDACTED]`.
+ *
+ * The guard is only real because those tests derive the hash rather than
+ * hard-coding a 16-character literal. A hard-coded fixture would keep passing
+ * after the length changed, and this comment would be decorative.
+ */
+const SNAPSHOT_HASH = /^[0-9a-f]{16}$/;
+
+/**
+ * Positions exempt from the value-shape rules, per surface.
+ *
+ * Explorer entries are SUFFIX-matched because redaction runs TWICE over the
+ * same value — once inside `buildDiffView` and again over the assembled panels
+ * object — so one hash is visited at both `snapshots.<i>.hash` and
+ * `diff.snapshots.<i>.hash`. A root-anchored entry would match the outer path
+ * only, and pass 1 would already have masked the value before pass 2 saw it:
+ * a fix that silently half-works.
+ *
+ * They pin the CONTAINER rather than the leaf. Matching on a last segment of
+ * `hash` would also exempt `traces.spans.<i>.attributes.hash`, which
+ * `buildTraceView` spreads straight from caller-influenced span attributes.
+ */
+const STRUCTURAL_PATHS: Readonly<Record<RedactionSurface, readonly StructuralPathPattern[]>> = {
+  audit: AUDIT_STRUCTURAL_FIELDS.map((name) => ({ segments: [name], anchored: true })),
+  explorer: [
+    { segments: ['snapshots', '*', 'hash'], anchored: false, valuePattern: SNAPSHOT_HASH },
+    { segments: ['comparing', 'before', 'hash'], anchored: false, valuePattern: SNAPSHOT_HASH },
+    { segments: ['comparing', 'after', 'hash'], anchored: false, valuePattern: SNAPSHOT_HASH },
+  ],
+  log: [],
+  span: [],
+  metric: [],
+  error: [],
+  'diagnostic-bundle': [],
+};
+
+/** Does `path` end with (or, when anchored, exactly equal) `segments`? */
+function segmentsMatch(path: readonly string[], pattern: StructuralPathPattern): boolean {
+  const { segments, anchored } = pattern;
+  if (anchored) {
+    if (path.length !== segments.length) return false;
+  } else if (path.length < segments.length) {
+    return false;
+  }
+
+  const offset = anchored ? 0 : path.length - segments.length;
+  return segments.every((segment, i) => segment === '*' || segment === path[offset + i]);
+}
+
 const JWT = /^[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}$/;
 const BEARER = /^(bearer|basic)\s+\S{8,}$/i;
 const PEM = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
@@ -131,13 +239,25 @@ function lastSegment(context: RedactionContext): string {
   return context.path[context.path.length - 1] ?? '';
 }
 
-/** Is this an audit field whose value is a digest or id, not a payload? */
-function isAuditStructural(context: RedactionContext): boolean {
-  return (
-    context.surface === 'audit' &&
-    context.path.length === 1 &&
-    AUDIT_STRUCTURAL_FIELDS.includes(context.path[0] as string)
-  );
+/**
+ * Is this a position whose value is a digest or id, not a payload?
+ *
+ * Takes the VALUE as well as the context because an entry may constrain what
+ * it will exempt by shape (see `StructuralPathPattern.valuePattern`). All four
+ * call sites already have `value` in scope, so this is a signature widening
+ * with no plumbing.
+ *
+ * A `valuePattern` entry never exempts a non-string: the pattern is a
+ * constraint, so a value it cannot be tested against fails it rather than
+ * bypassing it.
+ */
+function isStructural(context: RedactionContext, value: unknown): boolean {
+  for (const pattern of STRUCTURAL_PATHS[context.surface]) {
+    if (!segmentsMatch(context.path, pattern)) continue;
+    if (pattern.valuePattern === undefined) return true;
+    if (typeof value === 'string' && pattern.valuePattern.test(value)) return true;
+  }
+  return false;
 }
 
 /**
@@ -192,14 +312,14 @@ export const keyNameRule: RedactionRule = {
 export const bearerRule: RedactionRule = {
   id: 'bearer-prefixed',
   matches: (context, value) =>
-    !isAuditStructural(context) && typeof value === 'string' && BEARER.test(value),
+    !isStructural(context, value) && typeof value === 'string' && BEARER.test(value),
   transform: mask,
 };
 
 export const jwtRule: RedactionRule = {
   id: 'jwt-shaped',
   matches: (context, value) =>
-    !isAuditStructural(context) && typeof value === 'string' && JWT.test(value),
+    !isStructural(context, value) && typeof value === 'string' && JWT.test(value),
   transform: mask,
 };
 
@@ -212,7 +332,7 @@ export const pemRule: RedactionRule = {
 export const creditCardRule: RedactionRule = {
   id: 'credit-card',
   matches: (context, value) =>
-    !isAuditStructural(context) &&
+    !isStructural(context, value) &&
     typeof value === 'string' &&
     CARD_SHAPED.test(value) &&
     passesLuhn(value),
@@ -247,7 +367,7 @@ export const creditCardRule: RedactionRule = {
 export const highEntropyRule: RedactionRule = {
   id: 'high-entropy',
   matches: (context, value) =>
-    !isAuditStructural(context) &&
+    !isStructural(context, value) &&
     typeof value === 'string' &&
     value.length >= ENTROPY_MIN_LENGTH &&
     looksGenerated(value) &&

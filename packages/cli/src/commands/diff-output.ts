@@ -5,6 +5,7 @@
  */
 
 import type { Change, ChangeSeverity, DiffReport } from '@askturret/mcp-core';
+import { shouldUseColor } from '../color.js';
 
 const COLORS = {
   red: '\x1b[31m',
@@ -15,15 +16,12 @@ const COLORS = {
   reset: '\x1b[0m',
 } as const;
 
-/**
- * Colour is suppressed when stdout is not a TTY.
- *
- * `--json` is the CI path, but a human-readable run piped to a file or a log
- * collector is common too, and escape codes there are noise a reader has to
- * mentally strip. Matches the convention every other CLI in this repo follows
- * by accident; here it is deliberate and overridable for tests.
- */
 export interface FormatOptions {
+  /**
+   * Force colour on or off. Omitted, colour is detected from `NO_COLOR` and
+   * whether stdout is a TTY (see `shouldUseColor`). Present so tests can pin
+   * either mode without mutating globals.
+   */
   readonly color?: boolean;
 }
 
@@ -54,7 +52,7 @@ const SEVERITY_COLOR: Record<ChangeSeverity, keyof typeof COLORS> = {
 };
 
 export function formatHumanReadable(report: DiffReport, options: FormatOptions = {}): string {
-  const color = options.color ?? process.stdout.isTTY === true;
+  const color = options.color ?? shouldUseColor();
   const lines: string[] = [];
 
   lines.push('');

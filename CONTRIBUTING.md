@@ -120,11 +120,10 @@ While working on one thing you will notice another — a bug next door, a stale
 comment, a check that cannot fail. **A finding that is not about the issue you
 are working on gets its own issue.**
 
-Not a comment on someone else's issue, not a PR body, not a handoff note. Those
-three are where findings go to become invisible.
-
-**Note it in passing where you found it — that part is good.** Mention it in the
-review, in the PR, in the issue thread. The distinction that matters:
+Not a comment on someone else's issue, not a PR body, not a handoff note —
+those three are where findings go to become invisible. **But do note it in
+passing where you found it: that part is good, and worth keeping.** Mention it
+in the review, in the PR, in the issue thread. The distinction that matters:
 
 > The note is a **pointer**. The issue is the **record**.
 > What fails is the note *being* the record.
@@ -155,9 +154,24 @@ yet," not a description that implies you have.
 rather than an omission.** *"Is this comment a finding about something else?"* is
 a semantic judgement with many shapes. A check that caught one syntactic form
 would read as covering the class, and reviewers would trust it for the cases it
-cannot see — the same reason this repository declined a guard on
-[#378](https://github.com/askturret/mcp/issues/378). If you find yourself
-wanting to add one here, that is this rule's own argument telling you not to.
+cannot see. If you find yourself wanting to add one here, that is this rule's
+own argument telling you not to.
+
+The argument is not new, and the precedent is worth citing exactly.
+[docs/TESTING.md, *"Is this mechanisable?"*](docs/TESTING.md#is-this-mechanisable)
+declines a guard for a different semantic property on the same grounds —
+*"a guard covering one syntactic sub-shape would read as covering the class"* —
+and is the better read if you are about to propose one, because it also shows
+the arithmetic: a syntactic guard would have caught one of three real instances
+and reported clean on the other two.
+
+[#378](https://github.com/askturret/mcp/issues/378) is the issue that produced
+that section. It **asks** whether the check is mechanisable; the answer was
+given in the document. Origin of the question and record of the decision are
+two different things, and an earlier draft of this very section cited the
+former as if it were the latter — which a reader following the number would
+have caught, since it leads to an issue inviting the guard it was quoted as
+refusing.
 
 <details>
 <summary>Where this came from</summary>

@@ -560,6 +560,13 @@ green tick that means nothing.
 
 ### Is *this* mechanisable?
 
+The question is [#378](https://github.com/askturret/mcp/issues/378)'s, from the
+acceptance list that produced this whole section — *"Consider whether the
+empty-source check is mechanisable as a guard rather than a habit."* **This
+subsection is the answer, and the issue does not carry it.** Named here because
+the decision was cited from elsewhere as living in #378, where a reader
+following the number finds the question rather than the answer.
+
 Partially, and the honest split matters more than the total.
 
 **Variants 1 and 2 are mechanisable inside the harness**, and cheaply: a

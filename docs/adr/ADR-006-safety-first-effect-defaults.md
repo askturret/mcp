@@ -52,14 +52,30 @@ wins.
 
 ## Provenance
 
-Reconstructed from a single surviving citation — the thinnest evidence base of
-the fourteen:
+Reconstructed from two surviving citations:
 
 - `packages/sources-openapi/src/from-openapi.ts:497` — *"Per §2.3 safety-first
   defaults and §5.7 ADR-006:"* followed by the table above, and the
   `inferEffects` implementation directly beneath it
+- `packages/sources-openapi/src/from-openapi.ts:520` — *"Idempotent mutations,
+  but require explicit retry opt-in"*, on the `PUT`/`DELETE` branch itself
 
-The **table is quoted from the source, not inferred.** The reasoning in
-*"The `PUT`/`DELETE` row is the interesting one"* is this document's
-reconstruction of why that row reads as it does; no surviving comment states it.
-Read it as inference, and correct it if the original rationale resurfaces.
+The **table is quoted from the source, not inferred.**
+
+In *"The `PUT`/`DELETE` row is the interesting one"*, the two halves have
+different evidence and are worth separating:
+
+- **Supported.** *"Retry stays an explicit opt-in"* is `:520` almost verbatim,
+  and it sits on the exact branch it describes.
+- **Inference.** *Why* HTTP idempotence is not sufficient for replay — the
+  distinction between server state after N requests and safety to replay
+  unbidden, and the claim that the conservative default beats the spec-accurate
+  one — is this document's reconstruction. No surviving comment states it.
+
+Correct the second half if the original rationale resurfaces.
+
+This section previously described itself as a single-citation reconstruction
+and flagged the whole subsection as unsupported. That was wrong in the honest
+direction — it claimed less evidence than it had — but it was still wrong, and
+a provenance note that understates is a provenance note nobody can calibrate
+against. Corrected under #321.

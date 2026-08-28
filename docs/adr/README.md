@@ -52,7 +52,7 @@ rather than renumber the citations** if the original allocation resurfaces.
 
 Numbers 001, 003, 005, 008, 009 and 017 are unused. No source comment cites
 them, so there is nothing to reconstruct and no gap to explain. Do not reuse
-them for new decisions: a future reader finding an ADR-003 would reasonably
+them for new decisions: a future reader finding an ADR-003 would reasonably <!-- adr-citation-exempt: deliberate hypothetical, and the number is unused on purpose -->
 assume it was one of the originals.
 
 ## Format

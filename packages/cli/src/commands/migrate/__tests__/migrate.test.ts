@@ -783,6 +783,170 @@ describe('source rules', () => {
       expect(result.files[0]?.contents ?? '').toContain(`{ durability: 'required' }`);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Statement-aware classification of a LOCAL `export { … }` (#424)
+  //
+  // `classifyOccurrence` decided `shorthand` from pure local syntax and never
+  // consulted the enclosing statement, so one category covered four positions
+  // and its reason — "renaming it changes the emitted key" — was true of
+  // exactly one. A local export specifier has no emitted key.
+  //
+  // The premise this issue was FILED on is false and worth restating, because
+  // it inverts which option is cautious: a `SourceRule` with `to` defined means
+  // `durability` is GONE from the module, so the adopter's file does not
+  // compile BEFORE migrate runs. Refusing both halves is not conservative — it
+  // leaves them exactly where they started plus a manual finding.
+  //
+  // THE BOUNDARY, as one discriminator: is the refusal self-contained — does
+  // refusing this occurrence leave valid code in the statement containing it?
+  // Yes -> refuse. No -> the tool owes a correct edit.
+  // -------------------------------------------------------------------------
+  describe('local `export { … }` is classified by its statement (#424)', () => {
+    it('rewrites `export { durability }` to an alias, leaving a file that compiles', () => {
+      // THE HEADLINE ACCEPTANCE. Before this, the import was rewritten and the
+      // export was refused as "object shorthand", emitting a file that exported
+      // a binding which no longer existed.
+      const result = runDurability(
+        `import { durability } from '@askturret/mcp-core';\nexport { durability };\n`,
+      );
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toBe(
+        `import { durable } from '@askturret/mcp-core';\nexport { durable as durability };\n`,
+      );
+
+      // The compile property, checked as COHERENCE rather than as a string
+      // match: the binding the export names must be the one the import now
+      // provides. A half-migrated file is precisely where these two disagree.
+      const imported = /import \{ (\w+) \}/.exec(out)?.[1];
+      const exportedBinding = /export \{ (\w+) as/.exec(out)?.[1];
+      expect(imported).toBe('durable');
+      expect(exportedBinding).toBe(imported);
+
+      // ...and the public surface is untouched, which is why blast radius is zero.
+      expect(out).toContain('as durability');
+    });
+
+    it('reports the alias, says it was deliberate, and says how to undo it', () => {
+      // A judgement made on someone's behalf has to be visible and reversible,
+      // or it is a silent edit with better intentions.
+      const result = runDurability(
+        `import { durability } from '@askturret/mcp-core';\nexport { durability };\n`,
+      );
+      const detail = result.findings.map((f) => f.detail).join('\n');
+
+      expect(detail).toContain(`'export { durable as durability }'`);
+      expect(detail).toContain('deliberately');
+      expect(detail).toContain(`delete ' as durability'`);
+      // No occurrence is refused on this path, so nothing is reported `manual`.
+      expect(result.findings.every((f) => f.action === 'rewrite')).toBe(true);
+    });
+
+    it('REFUSES local `export { other as durability }` — that name is the public one', () => {
+      // THE SCOPE ADDITION, witnessed rather than assumed to fall out.
+      //
+      // On main this classified as `reference`, because `precedingWord` is `as`
+      // and `as` is not a binding keyword — so it was silently REWRITTEN,
+      // renaming the adopter's public export. That is the `re-export-public`
+      // hazard #421 closed, in the statement kind #421 cannot match: its range
+      // function requires a `from` clause.
+      const result = runDurability(
+        `import { other } from '@askturret/mcp-core';\n` +
+          `import { durability } from '@askturret/mcp-core';\n` +
+          `export { other as durability };\n`,
+      );
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toContain('export { other as durability }');
+      expect(out).not.toContain('as durable');
+
+      const manual = result.findings.filter((f) => f.action === 'manual');
+      expect(manual.length).toBeGreaterThan(0);
+      expect(manual.map((f) => f.detail).join('\n')).toContain('the name YOUR module exports');
+    });
+
+    it('rewrites local `export { durability as legacy }` — the public name is `legacy`', () => {
+      // The source position. `as` decides here exactly as it does for a
+      // re-export: the public name is `legacy` either way, so rewriting the
+      // binding preserves the surface exactly.
+      const result = runDurability(
+        `import { durability } from '@askturret/mcp-core';\nexport { durability as legacy };\n`,
+      );
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toContain('export { durable as legacy }');
+      expect(out).toContain('import { durable }');
+    });
+
+    it('leaves #421\'s re-export refusals exactly as they were', () => {
+      // THE BOUNDARY. Refusing these IS self-contained — each statement stays
+      // valid as written — so "your judgement, not mine" is honest, and #421's
+      // behaviour must be untouched by the new range function. The `from`
+      // lookahead in `localExportRanges` is what keeps the two disjoint.
+      const both = runDurability(`export { durability } from '@askturret/mcp-core';\n`);
+      expect(both.files[0]?.contents ?? '').toContain(
+        `export { durability } from '@askturret/mcp-core'`,
+      );
+      expect(both.findings.some((f) => f.action === 'manual')).toBe(true);
+
+      const asPublic = runDurability(`export { other as durability } from '@askturret/mcp-core';\n`);
+      expect(asPublic.files[0]?.contents ?? '').toContain('export { other as durability }');
+
+      // ...and the source position of a re-export is still REWRITTEN.
+      const asSource = runDurability(`export { durability as legacy } from '@askturret/mcp-core';\n`);
+      expect(asSource.files[0]?.contents ?? '').toContain('export { durable as legacy }');
+    });
+
+    it('no longer calls an export specifier "object shorthand"', () => {
+      // The third acceptance item: every remaining refusal's reason must be
+      // TRUE of that occurrence.
+      const result = runDurability(`export { durability } from '@askturret/mcp-core';\n`);
+      const detail = result.findings.map((f) => f.detail).join('\n');
+
+      expect(detail).not.toContain('object shorthand');
+      expect(detail).toContain('re-export');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // The destructuring half of the same split (#425, subsumed by #424)
+  //
+  // `const { durability } = obj` was reported as "object shorthand — renaming
+  // it changes the emitted key". There is no emitted key: this READS a property
+  // and binds a local name. The reason was wrong because the CATEGORY was.
+  // -------------------------------------------------------------------------
+  describe('destructuring is not object shorthand (#425)', () => {
+    it('refuses a destructuring pattern for a reason that is true of it', () => {
+      // The destructured binding is deliberately unused: this fixture isolates
+      // how the POSITION is classified, and referencing it would also drag in
+      // the shadowing gap the engine documents as out of remit.
+      const result = runDurability(
+        `import { durability } from '@askturret/mcp-core';\n` +
+          `durability();\n` +
+          `function read(cfg) {\n  const { durability } = cfg;\n  return 0;\n}\n`,
+      );
+      const detail = result.findings.map((f) => f.detail).join('\n');
+
+      expect(result.files[0]?.contents ?? '').toContain('const { durability } = cfg');
+      expect(detail).toContain('destructuring pattern');
+      expect(detail).not.toContain('object shorthand');
+    });
+
+    it('still calls a genuine object literal "object shorthand"', () => {
+      // The control. Without it the split passes by relabelling EVERYTHING as
+      // destructuring, which would make the reason false in the one place it
+      // was true.
+      const result = runDurability(
+        `import { durability } from '@askturret/mcp-core';\nconst o = { durability };\n`,
+      );
+      const detail = result.findings.map((f) => f.detail).join('\n');
+
+      expect(result.files[0]?.contents ?? '').toContain('const o = { durability }');
+      expect(detail).toContain('object shorthand');
+      expect(detail).not.toContain('destructuring pattern');
+    });
+  });
 });
 
 describe('overlay rules', () => {

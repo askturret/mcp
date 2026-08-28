@@ -141,15 +141,28 @@ type OccurrenceKind =
   | 'property-access'
   | 'object-key'
   | 'shorthand'
+  | 'destructuring'
   | 'binding'
   | 're-export-public'
-  | 're-export-both';
+  | 're-export-both'
+  | 'local-export-public';
 
 const REFUSAL_REASON: Readonly<Record<string, string>> = {
   'property-access': 'property access — the object may be the adopter\'s own',
   'object-key': 'object key — renaming it changes the emitted data shape',
+  // Now true of every occurrence it covers, because the category no longer
+  // spans four statement kinds (#424, subsuming #425). It used to be emitted
+  // for destructuring patterns and for export specifiers, neither of which has
+  // an emitted key at all.
   shorthand: 'object shorthand — renaming it changes the emitted key',
+  destructuring:
+    'destructuring pattern — this name is both the property read from the object and the local binding it creates, so renaming it would read a property that does not exist (#425)',
   binding: 'local binding — the tool does not edit adopter logic',
+  // The local-export twin of `re-export-public`. Same hazard, different
+  // statement kind: #421 closed it for `export … from`, which by construction
+  // cannot match a local `export { … }` (#424).
+  'local-export-public':
+    'export alias — this is the name YOUR module exports, so renaming it would change what your consumers import (#424)',
   // TWO REASONS, NOT ONE, because they are true of different code (#284 QA).
   // A single reason was false of `export { oldName as legacy }`, where the
   // public name is `legacy` and is untouched by the rename — that shape is now
@@ -169,6 +182,29 @@ function bracketContexts(masked: string): readonly (string | null)[] {
     out[k] = stack.length > 0 ? (stack[stack.length - 1] as string) : null;
     const c = masked[k];
     if (c === '{' || c === '(' || c === '[') stack.push(c);
+    else if (c === '}' || c === ')' || c === ']') stack.pop();
+  }
+
+  return out;
+}
+
+/**
+ * Index of the innermost unclosed bracket at each position, or `-1` (#424).
+ *
+ * The sibling of `bracketContexts`, which answers *which* bracket encloses this
+ * position. This answers *where it opened*, which is what lets a classifier ask
+ * a question about the enclosing construct — `const {` is a destructuring
+ * pattern, `= {` is an object literal, and the occurrence inside them looks
+ * identical without this.
+ */
+function braceOpeners(masked: string): readonly number[] {
+  const out: number[] = new Array(masked.length).fill(-1);
+  const stack: number[] = [];
+
+  for (let k = 0; k < masked.length; k += 1) {
+    out[k] = stack.length > 0 ? (stack[stack.length - 1] as number) : -1;
+    const c = masked[k];
+    if (c === '{' || c === '(' || c === '[') stack.push(k);
     else if (c === '}' || c === ')' || c === ']') stack.pop();
   }
 
@@ -375,11 +411,57 @@ function reExportRanges(contents: string, masked: string): ReadonlyArray<readonl
   return ranges;
 }
 
+/**
+ * Byte ranges of LOCAL `export { … }` statements — no `from` clause (#424).
+ *
+ * ## The third statement kind with the shape, and the only one that had no
+ * range function
+ *
+ * `importRanges` exists because `import { durability }` has the SHAPE of object
+ * shorthand and would otherwise be refused. `reExportRanges` (#284) exists for
+ * the same reason one statement kind over. A local `export { durability }` has
+ * that shape too, and had neither — so `classifyOccurrence` decided it from
+ * pure local syntax (brace context, previous char, next char) and returned
+ * `shorthand`, whose reason names an emitted key that an export specifier does
+ * not have.
+ *
+ * One category was doing four jobs and its reason was true of exactly one of
+ * them. This is the missing third range, and adding it is what lets the
+ * existing `as`-decides rule apply here rather than a parallel ruleset.
+ *
+ * ## The `from` lookahead is load-bearing
+ *
+ * Without it this matches the PREFIX of every re-export, `export { a }` inside
+ * `export { a } from 'mod'`, and would capture occurrences `reExportRanges`
+ * owns — silently rewriting the adopter's public export names, which is the
+ * exact hazard #421 closed. The two range sets must be disjoint, and this is
+ * what makes them so.
+ */
+function localExportRanges(
+  contents: string,
+  masked: string,
+): ReadonlyArray<readonly [number, number]> {
+  const ranges: [number, number][] = [];
+  const gap = String.raw`(?:\s+|(?=\{))`;
+  // `export type { x }` is a local type-only export and belongs here too; the
+  // inner form (`export { type x }`) needs no case, since it lives inside `{…}`.
+  const re = new RegExp(String.raw`\bexport\b${gap}(?:type${gap})?\{[^{}]*\}(?!\s*\bfrom\b)`, 'g');
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(contents)) !== null) {
+    if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
+    ranges.push([m.index, m.index + m[0].length]);
+  }
+
+  return ranges;
+}
+
 function classifyOccurrence(
   masked: string,
   index: number,
   length: number,
   brackets: readonly (string | null)[],
+  openers: readonly number[],
   imports: ReadonlyArray<readonly [number, number]>,
 ): OccurrenceKind {
   // The import specifier is the one occurrence we can positively identify, and
@@ -403,6 +485,12 @@ function classifyOccurrence(
   // the identifier itself. The bracket context is what separates this from
   // `f(a, durability, b)` and `[a, durability, b]`, which are plain references.
   if (brackets[index] === '{' && (prev === '{' || prev === ',') && (next === '}' || next === ',')) {
+    // ...but an object literal and a destructuring PATTERN are identical at
+    // this position, and only the literal has an emitted key (#425). What tells
+    // them apart is the word before the brace opened — which is a question
+    // about the enclosing statement, the same question `importRanges` asks.
+    const open = openers[index] ?? -1;
+    if (open >= 0 && BINDING_KEYWORDS.has(precedingWord(masked, open))) return 'destructuring';
     return 'shorthand';
   }
 
@@ -521,11 +609,24 @@ function rewriteSource(
   if (indices.length === 0) return { contents, findings: [], changed: false };
 
   const brackets = bracketContexts(masked);
+  const openers = braceOpeners(masked);
   const imports = importRanges(contents, masked);
   const reExports = reExportRanges(contents, masked);
+  const localExports = localExportRanges(contents, masked);
   const lineOf = (index: number): number => contents.slice(0, index).split('\n').length;
 
-  const rewritable: number[] = [];
+  // Carries the replacement TEXT rather than just the index (#424).
+  //
+  // The old shape was `number[]` and the loop below substituted `rule.to` at
+  // each one, so the entire repair vocabulary was "swap one token for another
+  // at an index". An edit that must INSERT — ` as oldName` — was not
+  // expressible in it, and the classifier's only escape hatch for an
+  // inexpressible edit was to refuse. That made the classifier answer "can I
+  // fix this by substituting one token?" while reporting the answer as if it
+  // were a safety judgement. Widening the vocabulary is what separates the two
+  // questions again.
+  const rewritable: { index: number; text: string }[] = [];
+  const aliased: number[] = [];
   const refused: { line: number; kind: OccurrenceKind }[] = [];
 
   for (const index of indices) {
@@ -538,19 +639,58 @@ function rewriteSource(
     // exactly; the other two are refused because they ARE that surface.
     if (reExports.some(([start, end]) => index >= start && index < end)) {
       const role = reExportRole(masked, index, rule.from.length);
-      if (role === 'source') rewritable.push(index);
+      if (role === 'source') rewritable.push({ index, text: rule.to });
       else refused.push({ line: lineOf(index), kind: role === 'public' ? 're-export-public' : 're-export-both' });
       continue;
     }
-    const kind = classifyOccurrence(masked, index, rule.from.length, brackets, imports);
-    if (kind === 'import-specifier' || kind === 'reference') rewritable.push(index);
+
+    // A LOCAL `export { … }` — no `from` (#424). The same `as`-decides rule as
+    // the re-export above, because which name the occurrence IS is the same
+    // question in both statement kinds. Only the coincident case resolves
+    // differently, and the discriminator is whether refusing is self-contained:
+    //
+    //   export { oldName } from 'mod'   refusing leaves this statement exactly
+    //                                   as written, so "your judgement, not
+    //                                   mine" is an honest thing to say.
+    //
+    //   export { oldName }              references a binding this tool has
+    //                                   ALREADY renamed. There is no outcome
+    //                                   that leaves the file alone, so refusing
+    //                                   is not deferral — it just emits a file
+    //                                   that does not compile.
+    if (localExports.some(([start, end]) => index >= start && index < end)) {
+      const role = reExportRole(masked, index, rule.from.length);
+      if (role === 'source') {
+        // `export { oldName as legacy }` — public name is `legacy` either way.
+        rewritable.push({ index, text: rule.to });
+      } else if (role === 'public') {
+        // `export { other as oldName }` — this IS the public name. Rewriting it
+        // renames what the adopter's consumers import.
+        refused.push({ line: lineOf(index), kind: 'local-export-public' });
+      } else {
+        // `export { oldName }` — one token doing both jobs. SPLIT the
+        // coincidence rather than refuse it, so the rule applies normally:
+        // `export { newName as oldName }`. Blast radius is zero — same exported
+        // name, same consumers — and unlike every other option, it compiles.
+        //
+        // The alias is not an invention. `export { oldName }` already meant
+        // "binding oldName, exported as oldName"; the alias was implicit, and
+        // renaming the binding is what made it no longer so.
+        rewritable.push({ index, text: `${rule.to} as ${rule.from}` });
+        aliased.push(lineOf(index));
+      }
+      continue;
+    }
+
+    const kind = classifyOccurrence(masked, index, rule.from.length, brackets, openers, imports);
+    if (kind === 'import-specifier' || kind === 'reference') rewritable.push({ index, text: rule.to });
     else refused.push({ line: lineOf(index), kind });
   }
 
   // Reverse order so an earlier replacement cannot shift a later index.
   let out = contents;
-  for (const index of [...rewritable].reverse()) {
-    out = out.slice(0, index) + rule.to + out.slice(index + rule.from.length);
+  for (const { index, text } of [...rewritable].reverse()) {
+    out = out.slice(0, index) + text + out.slice(index + rule.from.length);
   }
 
   const findings: Finding[] = [];
@@ -562,6 +702,28 @@ function rewriteSource(
       file,
       action: 'rewrite',
       detail: `${String(rewritable.length)} occurrence(s) of '${rule.from}' → '${rule.to}'. ${rule.reason}`,
+    });
+  }
+
+  if (aliased.length > 0) {
+    // Its OWN finding, naming the alias (#424).
+    //
+    // The tool made a judgement here — it kept the adopter's public export name
+    // rather than propagating the rename to it — and a judgement made on
+    // someone's behalf has to be visible and reversible, or it is just a silent
+    // edit with better intentions. So: say what was written, say the
+    // preservation was deliberate, and say exactly how to undo it.
+    findings.push({
+      ruleId: rule.id,
+      kind: 'source',
+      file,
+      action: 'rewrite',
+      detail:
+        `line(s) ${aliased.join(', ')}: 'export { ${rule.from} }' → ` +
+        `'export { ${rule.to} as ${rule.from} }'. Your module still exports ` +
+        `'${rule.from}', deliberately: the rename is upstream, so preserving the ` +
+        `alias keeps your public surface and your consumers unchanged. If you want ` +
+        `the new name to be your public name too, delete ' as ${rule.from}'.`,
     });
   }
 

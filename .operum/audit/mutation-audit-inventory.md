@@ -21,33 +21,36 @@ which `env: node` fails in child processes — several guards then go
 precondition for reproducing anything below. Re-run with a sane `PATH` before
 treating a difference as a real change.
 
-- measured guards: **18**
-- failure sites: **111**
-- witnessed: **74**
-- unwitnessed: **37**
-- unreachable (no self-test, #431): **24** sites across 7 scripts
+- measured guards: **21**
+- failure sites: **141**
+- witnessed: **98**
+- unwitnessed: **43**
+- unreachable (no self-test, #431): **13** sites across 4 scripts
 - cannot check (non-green baseline): **0** scripts
 
 | script | sites | witnessed | unwitnessed | status |
 |---|---|---|---|---|
 | `check-adr-citations.mjs` | 3 | 3 | 0 | measured |
-| `check-audit-append-only.mjs` | 1 | 0 | 1 | measured |
-| `check-codeowners.mjs` | 2 | 1 | 1 | measured |
+| `check-audit-append-only.mjs` | 4 | 2 | 2 | measured |
+| `check-codeowners.mjs` | 5 | 4 | 1 | measured |
 | `check-concealment-captures.mjs` | 14 | 12 | 2 | measured |
 | `check-concealment-templates.mjs` | 42 | 27 | 15 | measured |
 | `check-dashboard-metrics.mjs` | 12 | 7 | 5 | measured |
-| `check-doc-types.mjs` | 1 | 0 | 1 | measured |
+| `check-doc-types.mjs` | 3 | 2 | 1 | measured |
 | `check-jest-flag-forwarding.mjs` | 1 | 1 | 0 | measured |
 | `check-licenses.mjs` | 4 | 0 | 4 | measured |
 | `check-markdown-links.mjs` | 2 | 2 | 0 | measured |
 | `check-mutation-audit.mjs` | 8 | 4 | 4 | measured |
+| `check-network-imports.mjs` | 5 | 5 | 0 | measured |
+| `check-nul-bytes.mjs` | 5 | 5 | 0 | measured |
 | `check-path-filters.mjs` | 2 | 2 | 0 | measured |
+| `check-placeholder-tests.mjs` | 4 | 4 | 0 | measured |
 | `check-readiness-matrix.mjs` | 4 | 4 | 0 | measured |
 | `check-runners.mjs` | 3 | 3 | 0 | measured |
 | `check-runtime-marker-ignored.mjs` | 2 | 2 | 0 | measured |
-| `check-sdk-boundary.mjs` | 1 | 0 | 1 | measured |
+| `check-sdk-boundary.mjs` | 3 | 2 | 1 | measured |
 | `ci-coverage-status.mjs` | 7 | 6 | 1 | measured |
-| `sdk-upgrade-drill.mjs` | 2 | 0 | 2 | measured |
+| `sdk-upgrade-drill.mjs` | 8 | 1 | 7 | measured |
 
 ## Unwitnessed sites
 
@@ -55,6 +58,7 @@ Neutralising these changed nothing their self-test could see.
 
 | script | line | kind |
 |---|---|---|
+| `check-audit-append-only.mjs` | 108 | result-code |
 | `check-audit-append-only.mjs` | 199 | process-exit |
 | `check-codeowners.mjs` | 206 | process-exit |
 | `check-concealment-captures.mjs` | 310 | errors-push |
@@ -84,13 +88,18 @@ Neutralising these changed nothing their self-test could see.
 | `check-licenses.mjs` | 110 | process-exit |
 | `check-licenses.mjs` | 145 | process-exit |
 | `check-licenses.mjs` | 183 | process-exit |
-| `check-mutation-audit.mjs` | 434 | throw |
-| `check-mutation-audit.mjs` | 621 | errors-push |
-| `check-mutation-audit.mjs` | 665 | return-code |
-| `check-mutation-audit.mjs` | 677 | process-exit |
+| `check-mutation-audit.mjs` | 469 | throw |
+| `check-mutation-audit.mjs` | 656 | errors-push |
+| `check-mutation-audit.mjs` | 700 | return-code |
+| `check-mutation-audit.mjs` | 712 | process-exit |
 | `check-sdk-boundary.mjs` | 215 | process-exit |
 | `ci-coverage-status.mjs` | 74 | errors-push |
+| `sdk-upgrade-drill.mjs` | 132 | result-code |
+| `sdk-upgrade-drill.mjs` | 143 | result-code |
 | `sdk-upgrade-drill.mjs` | 165 | process-exit |
+| `sdk-upgrade-drill.mjs` | 178 | result-code |
+| `sdk-upgrade-drill.mjs` | 199 | result-code |
+| `sdk-upgrade-drill.mjs` | 212 | result-code |
 | `sdk-upgrade-drill.mjs` | 257 | process-exit |
 
 ## Self-tests that observe no failure at all
@@ -100,11 +109,7 @@ nothing in it depends on the guard failing. This is the aggregate of "every
 site here is unwitnessed", reported rather than failed, because it is the
 measurement and not an integrity fault.
 
-- `check-audit-append-only.mjs`
-- `check-doc-types.mjs`
 - `check-licenses.mjs`
-- `check-sdk-boundary.mjs`
-- `sdk-upgrade-drill.mjs`
 
 ## Unreachable — failure sites with no self-test (#431)
 
@@ -114,10 +119,7 @@ re-keying of this audit reaches them. Separately owned by #431.
 | script | sites |
 |---|---|
 | `check-metric-cardinality.mjs` | 4 |
-| `check-network-imports.mjs` | 4 |
-| `check-nul-bytes.mjs` | 4 |
-| `check-placeholder-tests.mjs` | 4 |
-| `check-test-execution.mjs` | 2 |
+| `check-test-execution.mjs` | 3 |
 | `generate-notice.mjs` | 2 |
 | `generate-sbom.mjs` | 4 |
 

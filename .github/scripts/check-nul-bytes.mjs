@@ -43,23 +43,8 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, resolve, relative, sep } from 'node:path';
 
-const args = process.argv.slice(2);
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
-/**
- * Turn a missing REQUIRED scan root from a warning into a failure.
- *
- * Off by default, and the default is not laziness. Pointed at a synthetic
- * directory — which is exactly what this guard's own tests do — demanding the
- * full repository layout would mean every fixture had to mock up four
- * directories to test one byte. That conflates "scan this tree" with "verify
- * this is the repository", which are different jobs.
- *
- * CI passes the flag, because there the tree really is the repository and a
- * missing root really does mean coverage was lost. So the strictness lands
- * where it is meaningful and stays out of the way where it is not.
- */
-const REQUIRE_ROOTS = args.includes('--require-roots');
-const repoRoot = resolve(args.find((a) => !a.startsWith('--')) ?? '.');
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage', 'build']);
 
 /**
@@ -169,28 +154,74 @@ function locate(buffer) {
   return { index, line: lines.length, column: (lines[lines.length - 1] ?? '').length + 1 };
 }
 
-const files = topLevelFiles(repoRoot);
-const missingRoots = [];
-for (const root of SCAN_ROOTS) {
-  const full = join(repoRoot, root.path);
-  if (existsSync(full)) walk(full, files);
-  else missingRoots.push(root);
-}
+/**
+ * Scan `rootDir` for NUL bytes in text sources.
+ *
+ * Exported so the self-test can reach the failure sites (#455). Before this the
+ * guard was top-level statements ending in `process.exit`, so none of its four
+ * failure paths could be executed by a test.
+ *
+ * @param {string} rootDir - tree to scan.
+ * @param {object} [options]
+ * @param {boolean} [options.requireRoots=false] - turn a missing REQUIRED scan
+ *   root from a warning into a failure (#121).
+ *
+ *   Off by default, and the default is not laziness. Pointed at a synthetic
+ *   directory — which is exactly what this guard's own tests do — demanding the
+ *   full repository layout would mean every fixture had to mock up four
+ *   directories to test one byte. That conflates "scan this tree" with "verify
+ *   this is the repository", which are different jobs.
+ *
+ *   CI passes the flag, because there the tree really is the repository and a
+ *   missing root really does mean coverage was lost.
+ * @param {(path: string) => Buffer} [options.readFile=readFileSync] - injectable
+ *   reader. The unreadable-file branch is otherwise unwitnessable: provoking a
+ *   real read error needs `chmod 000`, which is a no-op when the test runs as
+ *   root and would make the witness silently vacuous on exactly the CI images
+ *   most likely to run it. Injecting the failure keeps the branch under test
+ *   deterministically — #349's fixture-parameter technique.
+ * @returns {{code: number, message: string, offenders: object[], missingRoots: object[], scanned: number}}
+ */
+export function check(rootDir = '.', options = {}) {
+  const { requireRoots = false, readFile = readFileSync } = options;
+  const repoRoot = resolve(rootDir);
+  const out = [];
 
-// A missing root is reported BEFORE anything else, because it is the one
-// failure that makes every number below it a smaller truth than it appears:
-// the guard would go on cheerfully reporting how many files it scanned without
-// mentioning the ones it no longer can.
-if (missingRoots.length > 0) {
-  console.error('\nDeclared scan roots that do not exist:\n');
-  for (const root of missingRoots) {
-    const why = root.required ? 'REQUIRED' : `optional — ${root.note ?? 'absence is expected'}`;
-    console.error(`  ${root.path}/  (${why})`);
+  const files = topLevelFiles(repoRoot);
+  const missingRoots = [];
+  for (const root of SCAN_ROOTS) {
+    const full = join(repoRoot, root.path);
+    if (existsSync(full)) walk(full, files);
+    else missingRoots.push(root);
   }
 
-  const missingRequired = missingRoots.filter((r) => r.required);
-  if (missingRequired.length > 0 && REQUIRE_ROOTS) {
-    console.error(`
+  // Each failure path below writes its own `code: 1` rather than routing through
+  // a shared `fail()` helper. That is deliberate and costs a little repetition:
+  // the mutation audit neutralises a literal, so one shared helper would make
+  // three distinct failure paths share ONE mutation point, and the audit could
+  // no longer show that each is independently witnessed. Per-site witnessing is
+  // the whole subject of #431 — granularity wins over DRY here.
+  const failure = (message) => ({
+    message: [...out, message].join('\n'),
+    offenders: [],
+    missingRoots,
+    scanned: files.length,
+  });
+
+  // A missing root is reported BEFORE anything else, because it is the one
+  // failure that makes every number below it a smaller truth than it appears:
+  // the guard would go on cheerfully reporting how many files it scanned without
+  // mentioning the ones it no longer can.
+  if (missingRoots.length > 0) {
+    out.push('\nDeclared scan roots that do not exist:\n');
+    for (const root of missingRoots) {
+      const why = root.required ? 'REQUIRED' : `optional — ${root.note ?? 'absence is expected'}`;
+      out.push(`  ${root.path}/  (${why})`);
+    }
+
+    const missingRequired = missingRoots.filter((r) => r.required);
+    if (missingRequired.length > 0 && requireRoots) {
+      return { code: 1, ...failure(`
 A required scan root is missing, so this guard is no longer looking at code it
 is supposed to cover. It has NOT reported success on the remainder, because a
 guard that silently narrows its own scope is the failure it exists to prevent.
@@ -199,53 +230,57 @@ If the directory was renamed or removed on purpose, update SCAN_ROOTS in this
 file so the declaration matches the repository again.
 
 ::error::${missingRequired.length} required scan root(s) missing: ${missingRequired
-      .map((r) => r.path)
-      .join(', ')}.`);
-    process.exit(1);
+        .map((r) => r.path)
+        .join(', ')}.`) };
+    }
+
+    // Only reachable when nothing missing was required, so say that rather than
+    // implying the run was lenient about something it would have failed on.
+    out.push(
+      requireRoots
+        ? '  (none of these are required, so the scan continues)\n'
+        : '  (warning only — pass --require-roots to make missing REQUIRED roots fatal)\n',
+    );
   }
 
-  // Only reachable when nothing missing was required, so say that rather than
-  // implying the run was lenient about something it would have failed on.
-  console.error(
-    REQUIRE_ROOTS
-      ? '  (none of these are required, so the scan continues)\n'
-      : '  (warning only — pass --require-roots to make missing REQUIRED roots fatal)\n',
-  );
-}
-
-// Reporting success on a scan that examined nothing is the failure mode that
-// would make this guard worthless while looking healthy — the same reasoning as
-// the network-import guard's empty-scan check.
-if (files.length === 0) {
-  console.error(`No source files found under ${repoRoot}.`);
-  console.error('Refusing to report success on a scan that examined nothing.');
-  process.exit(1);
-}
-
-const offenders = [];
-for (const file of files) {
-  let buffer;
-  try {
-    buffer = readFileSync(file);
-  } catch (err) {
-    console.error(`Could not read ${relative(repoRoot, file)}: ${err.message}`);
-    process.exit(1);
+  // Reporting success on a scan that examined nothing is the failure mode that
+  // would make this guard worthless while looking healthy — the same reasoning as
+  // the network-import guard's empty-scan check.
+  if (files.length === 0) {
+    out.push(`No source files found under ${repoRoot}.`);
+    return { code: 1, ...failure('Refusing to report success on a scan that examined nothing.') };
   }
 
-  const found = locate(buffer);
-  if (found !== null) {
-    offenders.push({ file: relative(repoRoot, file).split(sep).join('/'), ...found });
-  }
-}
+  const offenders = [];
+  for (const file of files) {
+    let buffer;
+    try {
+      buffer = readFile(file);
+    } catch (err) {
+      return { code: 1, ...failure(`Could not read ${relative(repoRoot, file)}: ${err.message}`) };
+    }
 
-console.log(`Scanned ${files.length} source file(s) for NUL bytes.`);
-
-if (offenders.length > 0) {
-  console.error('\nNUL bytes in source:\n');
-  for (const o of offenders) {
-    console.error(`  ${o.file}:${o.line}:${o.column} (byte offset ${o.index})`);
+    const found = locate(buffer);
+    if (found !== null) {
+      offenders.push({ file: relative(repoRoot, file).split(sep).join('/'), ...found });
+    }
   }
-  console.error(`
+
+  out.push(`Scanned ${files.length} source file(s) for NUL bytes.`);
+
+  if (offenders.length > 0) {
+    out.push('\nNUL bytes in source:\n');
+    for (const o of offenders) {
+      out.push(`  ${o.file}:${o.line}:${o.column} (byte offset ${o.index})`);
+    }
+    return {
+      code: 1,
+      offenders,
+      missingRoots,
+      scanned: files.length,
+      message: [
+        ...out,
+        `
 A NUL byte never belongs in a text source file. It is almost always corruption
 from a tool that did string surgery on bytes it did not understand — a patch, a
 merge, or a script.
@@ -254,9 +289,21 @@ Note that tsc, jest and the other guards all PASS with a NUL present: they read
 source as decoded text, where a stray NUL inside a string literal is just
 another character. That is why this check exists at the byte level.
 
-::error::${offenders.length} file(s) contain a NUL byte.`);
-  process.exit(1);
+::error::${offenders.length} file(s) contain a NUL byte.`,
+      ].join('\n'),
+    };
+  }
+
+  out.push('\nNo NUL bytes found.');
+  return { code: 0, message: out.join('\n'), offenders, missingRoots, scanned: files.length };
 }
 
-console.log('\nNo NUL bytes found.');
-process.exit(0);
+if (isProcessEntryPoint(import.meta.url)) {
+  const args = process.argv.slice(2);
+  const result = check(args.find((a) => !a.startsWith('--')) ?? '.', {
+    requireRoots: args.includes('--require-roots'),
+  });
+  if (result.code === 0) console.log(result.message);
+  else console.error(result.message);
+  process.exit(result.code);
+}

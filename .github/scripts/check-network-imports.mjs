@@ -51,7 +51,8 @@
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, resolve, relative, sep } from 'node:path';
 
-const repoRoot = resolve(process.argv[2] ?? '.');
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
+
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage', 'build']);
 const SOURCE_EXT = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/;
 
@@ -330,84 +331,113 @@ function walk(dir, acc = []) {
 
 // ---------------------------------------------------------------------------
 
-const packagesDir = join(repoRoot, 'packages');
-if (!existsSync(packagesDir)) {
-  console.error(`No packages/ directory under ${repoRoot} — nothing to check.`);
-  console.error('If the layout moved, this guard needs updating, not deleting.');
-  process.exit(1);
-}
+/**
+ * Scan `rootDir` for network access outside the allowlist.
+ *
+ * Exported so the self-test can reach the failure sites (#455). Before this the
+ * guard was top-level statements ending in `process.exit`, so none of its four
+ * failure paths could be executed by a test.
+ *
+ * @param {string} rootDir - tree to scan.
+ * @param {object} [options]
+ * @param {(path: string, enc: string) => string} [options.readFile=readFileSync]
+ *   injectable reader. The unreadable-file branch is otherwise unwitnessable:
+ *   provoking a real read error needs `chmod 000`, which is a no-op as root and
+ *   would make the witness silently vacuous on exactly the CI images most
+ *   likely to run it (#349's fixture-parameter technique).
+ * @returns {{code: number, message: string, violations: object[], notes: object[], filesScanned: number}}
+ */
+export function check(rootDir = '.', options = {}) {
+  const { readFile = readFileSync } = options;
+  const repoRoot = resolve(rootDir);
 
-const srcRoots = readdirSync(packagesDir)
-  .map((pkg) => join(packagesDir, pkg, 'src'))
-  .filter((p) => existsSync(p));
+  const empty = { violations: [], notes: [], filesScanned: 0 };
 
-if (srcRoots.length === 0) {
-  console.error('Found packages/ but no packages/*/src directories.');
-  console.error('Refusing to report success on a scan that examined nothing.');
-  process.exit(1);
-}
+  const packagesDir = join(repoRoot, 'packages');
+  if (!existsSync(packagesDir)) {
+    return {
+      ...empty,
+      code: 1,
+      message:
+        `No packages/ directory under ${repoRoot} — nothing to check.\n` +
+        'If the layout moved, this guard needs updating, not deleting.',
+    };
+  }
 
-const violations = [];
-const notes = [];
-let filesScanned = 0;
-let testFilesSkipped = 0;
+  const srcRoots = readdirSync(packagesDir)
+    .map((pkg) => join(packagesDir, pkg, 'src'))
+    .filter((p) => existsSync(p));
 
-for (const root of srcRoots) {
-  for (const file of walk(root)) {
-    const relPosix = relative(repoRoot, file).split(sep).join('/');
-    if (isTestFile(relPosix)) {
-      testFilesSkipped++;
-      continue;
-    }
-    filesScanned++;
+  if (srcRoots.length === 0) {
+    return {
+      ...empty,
+      code: 1,
+      message:
+        'Found packages/ but no packages/*/src directories.\n' +
+        'Refusing to report success on a scan that examined nothing.',
+    };
+  }
 
-    let contents;
-    try {
-      contents = readFileSync(file, 'utf-8');
-    } catch (err) {
-      console.error(`Could not read ${relPosix}: ${err.message}`);
-      process.exit(1);
-    }
+  const violations = [];
+  const notes = [];
+  let filesScanned = 0;
+  let testFilesSkipped = 0;
 
-    const allowed = isAllowlisted(relPosix);
+  for (const root of srcRoots) {
+    for (const file of walk(root)) {
+      const relPosix = relative(repoRoot, file).split(sep).join('/');
+      if (isTestFile(relPosix)) {
+        testFilesSkipped++;
+        continue;
+      }
+      filesScanned++;
 
-    for (const hit of findSpecifiers(contents)) {
-      const base = baseModule(hit.specifier);
-      if (!base || !NETWORK_MODULES.has(base)) continue;
-      const record = { file: relPosix, line: hit.line, statement: hit.statement, what: `imports '${base}'` };
-      if (hit.typeOnly) notes.push({ ...record, why: 'type-only, erased at compile time' });
-      else if (!allowed) violations.push(record);
-    }
+      let contents;
+      try {
+        contents = readFile(file, 'utf-8');
+      } catch (err) {
+        return { ...empty, code: 1, message: `Could not read ${relPosix}: ${err.message}` };
+      }
 
-    if (!allowed) {
-      for (const hit of findFetchCalls(contents)) {
-        violations.push({
-          file: relPosix,
-          line: hit.line,
-          statement: hit.statement,
-          what: 'calls global fetch()',
-        });
+      const allowed = isAllowlisted(relPosix);
+
+      for (const hit of findSpecifiers(contents)) {
+        const base = baseModule(hit.specifier);
+        if (!base || !NETWORK_MODULES.has(base)) continue;
+        const record = { file: relPosix, line: hit.line, statement: hit.statement, what: `imports '${base}'` };
+        if (hit.typeOnly) notes.push({ ...record, why: 'type-only, erased at compile time' });
+        else if (!allowed) violations.push(record);
+      }
+
+      if (!allowed) {
+        for (const hit of findFetchCalls(contents)) {
+          violations.push({
+            file: relPosix,
+            line: hit.line,
+            statement: hit.statement,
+            what: 'calls global fetch()',
+          });
+        }
       }
     }
   }
-}
 
-console.log(
-  `Scanned ${filesScanned} source file(s) across ${srcRoots.length} package(s); ` +
-    `skipped ${testFilesSkipped} test file(s).`,
-);
-for (const n of notes) {
-  console.log(`  note - ${n.file}:${n.line} ${n.what} (${n.why})`);
-}
-
-if (violations.length > 0) {
-  violations.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
-  console.error('\nNetwork access outside the allowlist:\n');
-  for (const v of violations) {
-    console.error(`  ${v.file}:${v.line} — ${v.what}`);
-    console.error(`      ${v.statement}`);
+  const out = [
+    `Scanned ${filesScanned} source file(s) across ${srcRoots.length} package(s); ` +
+      `skipped ${testFilesSkipped} test file(s).`,
+  ];
+  for (const n of notes) {
+    out.push(`  note - ${n.file}:${n.line} ${n.what} (${n.why})`);
   }
-  console.error(`
+
+  if (violations.length > 0) {
+    violations.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+    out.push('\nNetwork access outside the allowlist:\n');
+    for (const v of violations) {
+      out.push(`  ${v.file}:${v.line} — ${v.what}`);
+      out.push(`      ${v.statement}`);
+    }
+    out.push(`
 docs/telemetry-policy.md promises this package makes no outbound network call
 unless the adopter configured one. Code here is how that promise gets broken by
 accident.
@@ -421,8 +451,16 @@ If you hit this on a type-only import, write it as \`import type { X } from ...\
 so it is erased at compile time — then it is not network access at all.
 
 ::error::${violations.length} network access point(s) outside the allowlist.`);
-  process.exit(1);
+    return { code: 1, violations, notes, filesScanned, message: out.join('\n') };
+  }
+
+  out.push(`\nNo network access outside the allowlist. ${notes.length} type-only import(s) noted.`);
+  return { code: 0, violations, notes, filesScanned, message: out.join('\n') };
 }
 
-console.log(`\nNo network access outside the allowlist. ${notes.length} type-only import(s) noted.`);
-process.exit(0);
+if (isProcessEntryPoint(import.meta.url)) {
+  const result = check(process.argv[2] ?? '.');
+  if (result.code === 0) console.log(result.message);
+  else console.error(result.message);
+  process.exit(result.code);
+}

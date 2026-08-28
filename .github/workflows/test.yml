@@ -518,6 +518,13 @@ jobs:
       - name: Concealment captures satisfy their schema and stated invariant
         run: node .github/scripts/check-concealment-captures.mjs . "origin/${{ github.base_ref || github.event.repository.default_branch }}"
 
+      # #431/#455: this guard ran here for months with no self-test at all, so
+      # none of its three error paths was ever executed. Its own subject is
+      # tests that cannot fail — a guard nothing can redden is the same claim
+      # one level up. Self-tested first, like the guards below it.
+      - name: Self-test the placeholder-test guard
+        run: node .github/scripts/check-placeholder-tests.test.mjs
+
       - name: No placeholder or assertion-free tests
         run: node .github/scripts/check-placeholder-tests.mjs
 
@@ -533,6 +540,12 @@ jobs:
 
       - name: Agent-runtime markers stay ignored by git
         run: node .github/scripts/check-runtime-marker-ignored.mjs .
+
+      # #431/#455: self-tested first. Half this guard's value is in the false
+      # positives it must NOT raise — the allowlist and the type-only carve-out
+      # — and a guard that fails on correct code is one someone switches off.
+      - name: Self-test the network-import guard
+        run: node .github/scripts/check-network-imports.test.mjs
 
       # #26: docs/telemetry-policy.md promises no outbound call unless the
       # adopter configured one. Reads source only, so it runs before the build.
@@ -565,6 +578,12 @@ jobs:
       # #121: --require-roots because HERE the tree really is the repository, so
       # a declared scan root that has gone missing means coverage was lost —
       # not that someone pointed the guard at a fixture.
+      # #431/#455: self-tested first. This guard is the ONLY thing in CI reading
+      # bytes, so a silent failure here has no second line of defence — every
+      # other check passes with a NUL present, which is why it exists.
+      - name: Self-test the NUL-byte guard
+        run: node .github/scripts/check-nul-bytes.test.mjs
+
       - name: No NUL bytes in source
         run: node .github/scripts/check-nul-bytes.mjs . --require-roots
 

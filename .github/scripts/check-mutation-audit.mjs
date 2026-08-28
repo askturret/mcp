@@ -67,7 +67,13 @@ export const SCRIPTS_REL = '.github/scripts';
 export const INVENTORY_REL = '.operum/audit/mutation-audit-inventory.md';
 
 /** Where a site's neutralisation is spliced, and what it becomes. */
-export const SITE_KINDS = Object.freeze(['errors-push', 'throw', 'process-exit', 'return-code']);
+export const SITE_KINDS = Object.freeze([
+  'errors-push',
+  'throw',
+  'process-exit',
+  'return-code',
+  'result-code',
+]);
 
 /* -------------------------------------------------------------------------
  * Masking — the whole defence against trap 2
@@ -210,6 +216,35 @@ export function enumerateSites(src) {
     const numStart = m.index + m[0].indexOf(m[1]);
     sites.push({
       kind: 'return-code',
+      start: numStart,
+      end: numStart + m[1].length,
+      token: m[1],
+      replacement: '0',
+      line: lineOf(src, numStart),
+    });
+  }
+
+  // `code: <non-zero>` in a returned result object (#455).
+  //
+  // The fifth route, and by now the DOMINANT one among the guards that are
+  // testable at all: the `check()` seam returns `{ code, message }` and the
+  // entry point passes `result.code` to `process.exit`. Without this kind, such
+  // a guard's real failure sites are invisible to the audit and only the single
+  // `process.exit(result.code)` in its entry point is enumerated.
+  //
+  // That is not hypothetical and it is not new. It is why `check-doc-types`,
+  // `check-sdk-boundary` and `check-audit-append-only` each measured as exactly
+  // one site, unwitnessed: their only enumerated route was an exit call their
+  // in-process self-tests never execute, while the `return { code: 1 }` that
+  // actually reports failure was never counted. The audit was reporting a
+  // silent subset of its own input — #428's defect shape, inside #428.
+  //
+  // Neutralising the number to 0 turns "report failure" into "report success",
+  // which is the same semantics as every other kind here.
+  for (const m of masked.matchAll(/\bcode:\s*([1-9]\d*)\b/g)) {
+    const numStart = m.index + m[0].indexOf(m[1]);
+    sites.push({
+      kind: 'result-code',
       start: numStart,
       end: numStart + m[1].length,
       token: m[1],

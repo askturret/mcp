@@ -287,8 +287,95 @@ const WINDOWS_RUN = new RegExp(
   String.raw`(?:(?<![A-Za-z])[A-Za-z]:${WIN_SEP}+|\\{2,})(?:${WIN_SEG}${WIN_SEP}+)+(?:[^\s\\/'"<>]+)?`,
 );
 
+/**
+ * A run must START a path token. Refuse to half-match (#305).
+ *
+ * `POSIX_RUN` anchors on `/` because a leading `/` is a ROOT. On a RELATIVE
+ * path there is no root, so it anchored on the first INTERIOR separator
+ * instead — consuming the tail, reducing that to its basename, and stranding
+ * everything before it:
+ *
+ *   SECRETDIRA/SECRETDIRB/spec.yaml   ->  "SECRETDIRAspec.yaml"
+ *
+ * Worse than the input in two ways at once: a directory still leaks, AND the
+ * filename a support engineer needs is destroyed. The README's LIMITS section
+ * promises an unrecognised shape "may survive with its directory layout
+ * intact", which a reader takes as "no worse than the input" — and this is
+ * worse. Same leak-and-corrupt signature as #50 round 3, #163, #286 and #293.
+ *
+ * Refusing turns that into the outcome the docs already describe: the path
+ * survives intact. It does NOT stop relative paths leaking — nothing here
+ * claims to handle them — so their `KNOWN_GAPS` entries stay. What changes is
+ * that the leak is no longer accompanied by corruption.
+ *
+ * ## Why a delimiter list rather than "not a segment character"
+ *
+ * The obvious rule — refuse when the preceding character is a segment
+ * character — is too strict, because `SEG` is `[^\s\\/'"<>]` and therefore
+ * admits punctuation. A path in ordinary prose is routinely abutted by it:
+ *
+ *   (/srv/SECRETDIR/spec.yaml)      parenthesised
+ *   path=/srv/SECRETDIR/spec.yaml   key=value output
+ *
+ * Under the strict rule both would be REFUSED and would leak in full — a
+ * security regression traded for a corruption fix. The permissiveness of `SEG`
+ * is deliberate (it is what catches directory names containing odd
+ * characters), so the narrowing has to happen here instead.
+ *
+ * The list below is therefore characters that may ABUT the start of a path
+ * without being part of it. Every entry is asserted in the self-test rather
+ * than assumed, because an unfalsifiable allowlist in a redaction path is the
+ * thing this file has been bitten by before.
+ *
+ * ## The list fails in BOTH directions, and only one of them is safe
+ *
+ * An earlier version of this comment claimed the residual was one-directional
+ * — that a character missing from the list could only cause a refusal, and a
+ * refusal leaves input untouched. Half of that is right, and the half that is
+ * wrong named its own counterexample as an illustration:
+ *
+ *   character ABSENT from the list
+ *     -> lookbehind fails -> refusal -> survives intact.  SAFE.
+ *     Measured: `|/srv/DIR/spec.yaml`, `*\/srv/DIR/spec.yaml` pass through.
+ *
+ *   character PRESENT, but sitting at the END OF A DIRECTORY NAME
+ *     -> lookbehind PASSES -> the run matches mid-token after all.  CORRUPTION.
+ *     Measured: `Program Files (x86)/SECRETDIR/spec.yaml`
+ *                 -> `Program Files (x86)spec.yaml`
+ *               `build[1]/SECRETDIR/spec.yaml` -> `build[1]spec.yaml`
+ *
+ * So `foo(` is the COUNTEREXAMPLE, not an example of the safe direction.
+ * `Program Files (x86)` is not contrived — it is on every Windows machine —
+ * and the outcome is the #305 signature itself, directory leaked AND filename
+ * destroyed, produced by the guard written to stop producing it.
+ *
+ * It is ANY segment, not merely the first:
+ * `deep/nested/bar(/DIR/spec.yaml` -> `deep/nested/bar(spec.yaml`.
+ *
+ * The root cause is that a lookbehind cannot distinguish a delimiter that
+ * PRECEDES a path from one that ENDS a directory name. They are the same
+ * character in the same position.
+ *
+ * ## Why the list is NOT extended to cover it
+ *
+ * The instinct is to add characters. That is backwards: every character added
+ * is a new way for a directory name to END, so extending the list WIDENS the
+ * corruption surface while narrowing the refusal one. The residual is
+ * therefore documented and ASSERTED — see the `Program Files (x86)` case in
+ * the self-test — rather than argued away. A residual nobody can test is a
+ * residual nobody can disprove, which is how the wrong claim above survived
+ * review in the first place.
+ *
+ * Separators are absent from the list for a different reason. Admitting `/`
+ * would let a doubled separator supply the anchor this fix removes:
+ * `SECRETDIRA//SECRETDIRB//spec.yaml` would match at the SECOND slash and
+ * reproduce the defect one character along.
+ */
+const PATH_DELIM = String.raw`\s'"<>()\[\]{},;:=`;
+const AT_PATH_START = String.raw`(?<![^${PATH_DELIM}])`;
+
 const UNQUOTED = new RegExp(
-  `(${URL_RUN.source})|(${POSIX_RUN.source})|(${WINDOWS_RUN.source})`,
+  `${AT_PATH_START}(?:(${URL_RUN.source})|(${POSIX_RUN.source})|(${WINDOWS_RUN.source}))`,
   'g',
 );
 
@@ -552,11 +639,25 @@ export function bundleReadme(inputs: BundleInputs, filenames: readonly string[] 
     '  with no recognisable name and no recognisable shape (for example a short',
     '  opaque token under a field called `note`) may NOT be detected.',
     '- Path reduction is pattern-based, over the shapes listed above. A path',
-    '  written in some other notation may survive with its directory layout',
-    '  intact. This was stated as an unconditional guarantee until such shapes',
-    '  were found — UNC, tab-separated names, and mixed `/` and `\\` separators,',
-    '  all now covered. The wording is scoped so the claim matches what the code',
-    '  can actually do, and each round of scoping followed a real finding.',
+    '  written in some other notation is USUALLY passed through unchanged —',
+    '  unreduced, but not altered either. This was stated as an unconditional',
+    '  guarantee until such shapes were found — UNC, tab-separated names, and',
+    '  mixed `/` and `\\` separators, all now covered. The wording is scoped so',
+    '  the claim matches what the code can actually do, and each round of',
+    '  scoping followed a real finding.',
+    '- "Usually", and here is the exception, because it is common on Windows.',
+    '  If one of the path\'s own directory names ENDS in a bracket, quote,',
+    '  comma, semicolon, colon or equals sign, the reduction can still start in',
+    '  the middle of the path. The everyday case is a Program Files (x86)',
+    '  path, which comes back as `Program Files (x86)spec.yaml` — a directory',
+    '  fragment joined straight onto the filename. Deeper names do the same:',
+    '  `build[1]/private/spec.yaml` becomes `build[1]spec.yaml`.',
+    '- Two consequences, stated separately because they are different risks.',
+    '  An unrecognised path LEAKS its directory names whether or not it is',
+    '  reduced — none of this section is a redaction guarantee. And in the',
+    '  exception above the filename is DESTROYED as well, so if a bundle shows',
+    '  you a filename that looks glued to a directory fragment, that is what',
+    '  happened and the real filename is not recoverable from the bundle.',
     '- A bare host reference with no path (`\\\\SERVER` on its own) is NOT',
     '  reduced. Basename reduction cannot help: the host IS the last segment, so',
     '  redacting it needs a different rule than the one this section describes.',

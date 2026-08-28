@@ -114,6 +114,87 @@ npx tsc -b --force
 - Look for issues labeled `good first issue` or `help wanted`
 - If you're planning significant changes, open an issue first to discuss
 
+### Recording a Finding
+
+While working on one thing you will notice another — a bug next door, a stale
+comment, a check that cannot fail. **A finding that is not about the issue you
+are working on gets its own issue.**
+
+Not a comment on someone else's issue, not a PR body, not a handoff note. Those
+three are where findings go to become invisible.
+
+**Note it in passing where you found it — that part is good.** Mention it in the
+review, in the PR, in the issue thread. The distinction that matters:
+
+> The note is a **pointer**. The issue is the **record**.
+> What fails is the note *being* the record.
+
+**Why a comment cannot carry a finding.** A comment is bound to *its issue's*
+lifecycle. When that issue closes, a finding recorded in its thread closes with
+it — not resolved, just no longer anywhere a reader will look. The corpus of
+open issues, which is the thing people actually search, never contained it.
+
+That is worse than not writing it down at all, and the reason is worth stating
+plainly:
+
+> A description in the wrong place and no description at all fail identically —
+> and the second is at least **visible as a gap.**
+
+A missing record looks missing. A misplaced one looks handled.
+
+**Reference findings by number, not by description.** In a handoff, a review, or
+a PR body, write `#390`. *"The compatibility-policy defect you are already
+filing"* is not checkable — a reader cannot tell whether the filing exists. A
+number either resolves or it does not.
+
+This applies to asserting that something *is* filed, as much as to asking for
+it. If you cannot cite a number, the honest sentence is "I have not filed this
+yet," not a description that implies you have.
+
+**There is deliberately no automated check for this, and that is a decision
+rather than an omission.** *"Is this comment a finding about something else?"* is
+a semantic judgement with many shapes. A check that caught one syntactic form
+would read as covering the class, and reviewers would trust it for the cases it
+cannot see — the same reason this repository declined a guard on
+[#378](https://github.com/askturret/mcp/issues/378). If you find yourself
+wanting to add one here, that is this rule's own argument telling you not to.
+
+<details>
+<summary>Where this came from</summary>
+
+[#392](https://github.com/askturret/mcp/issues/392). A defect in the
+compatibility policy was recorded clearly and accurately — in a comment on
+[#347](https://github.com/askturret/mcp/issues/347), an issue about
+`deserializeSnapshot`. It surfaced only because someone referred to it by name
+in a handoff, went looking for the filing that reference implied, and found
+none. Two coincidences deep.
+
+That issue noted its own limit honestly: the argument was structural, and it
+could not cite anyone actually misled. Four findings raised in review in a
+single day since then are the empirical half it was missing — each one raised
+against a pull request it was not about, and each filed instead of left there:
+
+| filed | raised during | would have closed with |
+|---|---|---|
+| [#454](https://github.com/askturret/mcp/issues/454) | QA of PR #453 | that PR, merged hours later |
+| [#461](https://github.com/askturret/mcp/issues/461) | QA of PR #459 | that PR |
+| [#462](https://github.com/askturret/mcp/issues/462) | QA of PR #460 | that PR |
+| [#464](https://github.com/askturret/mcp/issues/464) | QA of PR #463 | that PR |
+
+#464 is the sharpest, because it is the case where leaving it in place would
+have looked most reasonable. It is **not a defect in the PR it was found
+under** — the file it concerns is untouched by that PR and the bug predates it.
+As a review note it would have read as an aside about unrelated code and closed
+with the PR. Filed and read on its own, it is a `priority:high` compliance bug:
+a non-starting `npm ls` collapses the dependency set to empty, so
+`generate-notice` rewrites NOTICE to claim *"no third-party dependencies"* and
+exits 0.
+
+Three of the four cite #392 by number as their reason for existing — the
+practice was being followed, and referenced, before it was written down here.
+
+</details>
+
 ### Writing Code
 
 1. Make your changes in your feature branch

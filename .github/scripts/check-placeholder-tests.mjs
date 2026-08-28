@@ -55,7 +55,8 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 
-const repoRoot = resolve(process.argv[2] ?? '.');
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
+
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage']);
 
 /**
@@ -140,84 +141,109 @@ function extractBody(src, from) {
 
 const lineOf = (src, index) => src.slice(0, index).split('\n').length;
 
-const errors = [];
-const warnings = [];
+/**
+ * Scan `rootDir` for tests that cannot fail.
+ *
+ * Exported so the self-test can reach the failure sites (#455). Before this the
+ * whole guard was top-level statements ending in `process.exit`, so there was
+ * nothing a test could call and no way to redden any of its three error paths.
+ *
+ * @returns {{code: number, errors: object[], warnings: object[], message: string}}
+ *   `code` is 1 when any error was found, matching the exit code CI reads.
+ */
+export function check(rootDir = '.') {
+  const repoRoot = resolve(rootDir);
+  const errors = [];
+  const warnings = [];
 
-for (const file of testFiles(repoRoot)) {
-  if (statSync(file).isDirectory()) continue;
-  const raw = readFileSync(file, 'utf-8');
-  const src = blankCommentsAndStrings(raw);
-  const rel = relative(repoRoot, file);
+  for (const file of testFiles(repoRoot)) {
+    if (statSync(file).isDirectory()) continue;
+    const raw = readFileSync(file, 'utf-8');
+    const src = blankCommentsAndStrings(raw);
+    const rel = relative(repoRoot, file);
 
-  // `.only` disables every other test in the file — the loudest possible way
-  // for tests to silently stop running.
-  for (const m of src.matchAll(/(?<![.\w$])(describe|it|test)\.only\s*\(/g)) {
-    errors.push({
-      file: rel,
-      line: lineOf(src, m.index),
-      message: `${m[1]}.only() disables every other test in this file`,
-    });
-  }
-
-  for (const m of src.matchAll(/(?<![.\w$])(it|test)\.skip\s*\(/g)) {
-    warnings.push({
-      file: rel,
-      line: lineOf(src, m.index),
-      message: `${m[1]}.skip() — hidden test; confirm it is still needed`,
-    });
-  }
-
-  // Test declarations: it('...', fn) / test('...', fn), including .each/.failing.
-  for (const m of src.matchAll(/(?<![.\w$])(it|test)(?:\.\w+)?\s*\(\s*['"`]/g)) {
-    if (/\.(skip|todo)\s*\($/.test(m[0])) continue;
-
-    const body = extractBody(src, m.index + m[0].length);
-    if (!body) continue;
-
-    const line = lineOf(src, m.index);
-    const text = body.text;
-
-    const tautology = text.match(
-      /expect\(\s*(true|false|null|undefined|-?\d+(?:\.\d+)?)\s*\)\s*\.\s*(?:to(?:Be|Equal|StrictEqual))\(\s*\1\s*\)/,
-    );
-    if (tautology) {
+    // `.only` disables every other test in the file — the loudest possible way
+    // for tests to silently stop running.
+    for (const m of src.matchAll(/(?<![.\w$])(describe|it|test)\.only\s*\(/g)) {
       errors.push({
         file: rel,
-        line: line + lineOf(text, tautology.index) - 1,
-        message: `assertion cannot fail: ${tautology[0].replace(/\s+/g, '')}`,
+        line: lineOf(src, m.index),
+        message: `${m[1]}.only() disables every other test in this file`,
       });
-      continue;
     }
 
-    if (!/\bexpect\s*\(/.test(text)) {
-      // A body that awaits something and asserts nothing still passes when the
-      // thing it exercises is broken.
-      errors.push({ file: rel, line, message: 'test body contains no assertion' });
-      continue;
-    }
-
-    const assertions = [...text.matchAll(/\.\s*(to[A-Z]\w*)\s*\(/g)].map((a) => a[1]);
-    const weak = new Set(['toBeDefined', 'toBeTruthy']);
-    if (assertions.length > 0 && assertions.every((a) => weak.has(a))) {
+    for (const m of src.matchAll(/(?<![.\w$])(it|test)\.skip\s*\(/g)) {
       warnings.push({
         file: rel,
-        line,
-        message: `only weak assertions (${[...new Set(assertions)].join(', ')})`,
+        line: lineOf(src, m.index),
+        message: `${m[1]}.skip() — hidden test; confirm it is still needed`,
       });
     }
+
+    // Test declarations: it('...', fn) / test('...', fn), including .each/.failing.
+    for (const m of src.matchAll(/(?<![.\w$])(it|test)(?:\.\w+)?\s*\(\s*['"`]/g)) {
+      if (/\.(skip|todo)\s*\($/.test(m[0])) continue;
+
+      const body = extractBody(src, m.index + m[0].length);
+      if (!body) continue;
+
+      const line = lineOf(src, m.index);
+      const text = body.text;
+
+      const tautology = text.match(
+        /expect\(\s*(true|false|null|undefined|-?\d+(?:\.\d+)?)\s*\)\s*\.\s*(?:to(?:Be|Equal|StrictEqual))\(\s*\1\s*\)/,
+      );
+      if (tautology) {
+        errors.push({
+          file: rel,
+          line: line + lineOf(text, tautology.index) - 1,
+          message: `assertion cannot fail: ${tautology[0].replace(/\s+/g, '')}`,
+        });
+        continue;
+      }
+
+      if (!/\bexpect\s*\(/.test(text)) {
+        // A body that awaits something and asserts nothing still passes when the
+        // thing it exercises is broken.
+        errors.push({ file: rel, line, message: 'test body contains no assertion' });
+        continue;
+      }
+
+      const assertions = [...text.matchAll(/\.\s*(to[A-Z]\w*)\s*\(/g)].map((a) => a[1]);
+      const weak = new Set(['toBeDefined', 'toBeTruthy']);
+      if (assertions.length > 0 && assertions.every((a) => weak.has(a))) {
+        warnings.push({
+          file: rel,
+          line,
+          message: `only weak assertions (${[...new Set(assertions)].join(', ')})`,
+        });
+      }
+    }
   }
+
+  const lines = [];
+  for (const w of warnings) lines.push(`  warn  ${w.file}:${w.line}  ${w.message}`);
+  for (const e of errors) lines.push(`  FAIL  ${e.file}:${e.line}  ${e.message}`);
+  lines.push(`\n${errors.length} error(s), ${warnings.length} warning(s).`);
+
+  return { code: errors.length > 0 ? 1 : 0, errors, warnings, message: lines.join('\n') };
 }
 
-for (const w of warnings) console.log(`  warn  ${w.file}:${w.line}  ${w.message}`);
-for (const e of errors) console.log(`  FAIL  ${e.file}:${e.line}  ${e.message}`);
+/**
+ * The text CI shows when this guard fails. Exported so the self-test asserts on
+ * the same string the workflow annotation carries, rather than a paraphrase of
+ * it that is free to drift.
+ */
+export const FAILURE_ANNOTATION =
+  '::error::Found tests that cannot fail. A test that asserts nothing is worse than no ' +
+  'test: it reports coverage that does not exist, and it is why two defects reached final ' +
+  'QA in this repository.';
 
-console.log(`\n${errors.length} error(s), ${warnings.length} warning(s).`);
-
-if (errors.length > 0) {
-  console.error(
-    '\n::error::Found tests that cannot fail. A test that asserts nothing is worse than no ' +
-      'test: it reports coverage that does not exist, and it is why two defects reached final ' +
-      'QA in this repository.',
-  );
-  process.exit(1);
+if (isProcessEntryPoint(import.meta.url)) {
+  const result = check(process.argv[2] ?? '.');
+  console.log(result.message);
+  if (result.code !== 0) {
+    console.error(`\n${FAILURE_ANNOTATION}`);
+    process.exit(result.code);
+  }
 }

@@ -18,11 +18,36 @@
  * there), `check-test-execution` (a suite that ran nothing),
  * `check-placeholder-tests` (a test that cannot fail).
  *
- * ## Scope
+ * ## Scope — every tracked file, including `docs/adr/` (#321)
  *
- * Every tracked file EXCEPT `docs/adr/` itself, which is allowed to name a
- * number in prose — the index lists them all, and an ADR may discuss a number
+ * `docs/adr/` used to be exempt wholesale, and the rationale was reasonable:
+ * the index names every number by design, and an ADR may discuss a number
  * whose original allocation is disputed (see ADR-014, ADR-020).
+ *
+ * **But that is where the citations are densest.** Measured at the time this
+ * changed: 99 of them inside `docs/adr/`, because the backfilled records
+ * cross-reference each other constantly. So an intra-ADR typo — a number
+ * written for its neighbour, or one resolving to nothing — was the single
+ * dangling-citation class this guard could not catch, which is precisely the
+ * class it exists to catch. A blind spot is worst exactly where the subject is
+ * concentrated.
+ *
+ * The directory exemption is therefore gone, replaced by a per-LINE opt-out.
+ * Of those 99 citations, exactly ONE did not resolve: the deliberate
+ * hypothetical in `docs/adr/README.md`. One marker was the entire cost of
+ * checking the other 98.
+ *
+ * ## The opt-out, and why it is per line rather than per file
+ *
+ * A line containing `adr-citation-exempt` has its citations skipped. Use it for
+ * a number that is deliberately unresolvable — a hypothetical, or one whose
+ * original allocation is disputed.
+ *
+ * Per line, because a file-level exemption is indistinguishable from an
+ * oversight once it exists: it silently covers every citation added to that
+ * file afterwards, including the typos. A marker sits on the one line it
+ * excuses, is visible in review, and cannot grow while nobody is looking. The
+ * exempted count is reported on every run for the same reason.
  *
  * Usage:
  *   node .github/scripts/check-adr-citations.mjs [rootDir]
@@ -41,6 +66,17 @@ const ADR_DIR = join(repoRoot, 'docs', 'adr');
 
 /** `ADR-014`. Three digits, so a bare `ADR` or `ADR-7` is not a citation. */
 const CITATION = /ADR-(\d{3})/g;
+
+/**
+ * Per-line opt-out for a deliberately unresolvable number (#321).
+ *
+ * Written as a concatenation so this declaration does not itself count as a
+ * marker — otherwise this line would be exempt, which is harmless here but
+ * makes the mechanism confusing to read. The same trick the file already uses
+ * for the NUL byte, and for the same reason: a guard's source is scanned by
+ * the guard.
+ */
+const EXEMPT_MARKER = `adr-citation${'-'}exempt`;
 
 const posix = (p) => p.split(sep).join('/');
 
@@ -71,10 +107,10 @@ if (adrFiles.length === 0) {
 const written = new Set(adrFiles.map((f) => f.slice(4, 7)));
 const dangling = [];
 let citations = 0;
+let exempted = 0;
 
 for (const file of walk(repoRoot)) {
   const rel = posix(relative(repoRoot, file));
-  if (rel.startsWith('docs/adr/')) continue;
 
   let text;
   try {
@@ -96,7 +132,14 @@ for (const file of walk(repoRoot)) {
   if (text.includes('\0')) continue;
 
   text.split('\n').forEach((line, i) => {
+    const exempt = line.includes(EXEMPT_MARKER);
     for (const m of line.matchAll(CITATION)) {
+      // Counted either way. An exemption that vanished from the totals would
+      // be a silent narrowing of the check's own scope.
+      if (exempt) {
+        exempted += 1;
+        continue;
+      }
       citations += 1;
       if (!written.has(m[1])) dangling.push({ file: rel, line: i + 1, number: m[1] });
     }
@@ -106,6 +149,9 @@ for (const file of walk(repoRoot)) {
 console.log(
   `Checked ${citations} ADR citation(s) against ${adrFiles.length} record(s) in docs/adr/.`,
 );
+if (exempted > 0) {
+  console.log(`${exempted} citation(s) skipped by an explicit ${EXEMPT_MARKER} marker.`);
+}
 
 if (dangling.length === 0) {
   console.log('\nEvery cited ADR resolves to a file.');

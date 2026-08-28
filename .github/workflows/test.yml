@@ -587,6 +587,14 @@ jobs:
       - name: No NUL bytes in source
         run: node .github/scripts/check-nul-bytes.mjs . --require-roots
 
+      # #431/#456: self-tested first. Three of this guard's four failure sites
+      # are exit(2) — cannot-check — and nothing observed any of them. The
+      # sharpest is an empty denylist, which matches no label and so reports
+      # "0 violations" on every metric: a green result meaning the opposite of
+      # what a reader assumes.
+      - name: Self-test the metric-cardinality guard
+        run: node .github/scripts/check-metric-cardinality.test.mjs
+
       # #39 / §9.2: an unbounded metric label creates one time series per
       # distinct value. Parses source rather than importing dist, so it still
       # runs when the build is broken — which is exactly when a bad label is

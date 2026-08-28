@@ -120,23 +120,42 @@ import type { Migration } from './types.js';
  * `PresetConfiguration` is a core public type that is *returned* to adopters,
  * and moving a field is removal plus addition however it is described.
  *
- * That makes it the one breaking change in this project whose shape, direction
- * and version impact are all already decided by something other than this file.
- * The migration is derived from those decisions rather than invented to fill a
- * slot, which is the whole difference between a reference and a placeholder.
+ * That made it the FIRST breaking change in this project whose shape, direction
+ * and version impact were all already decided by something other than this
+ * file. The migration is derived from those decisions rather than invented to
+ * fill a slot, which is the whole difference between a reference and a
+ * placeholder.
+ *
+ * ## Why the `migrate --json` rule is in THIS entry (#432)
+ *
+ * A second rule was added when `migrate --json` moved advisory entries out of
+ * `findings[]` into a new `advisories[]`. That is a shape change in
+ * machine-readable output that a consumer parses — an `output` rule by this
+ * registry's own definition — so recording it here is the same discipline
+ * `migrate` asks of everyone else, applied to `migrate`.
+ *
+ * It belongs in this entry rather than a new one because **a version pair
+ * identifies a migration.** `selectMigrations` matches on exact `from`/`to`
+ * labels, so a second `0.x → 1.0` entry would be indistinguishable from this
+ * one to every query, and would print the pair twice in `--help`. One entry per
+ * pair; a release with two breaking changes is one migration with two rules.
+ *
+ * The `summary` is the guide snippet's heading and now names both, because a
+ * heading that covers one of two rules is the same kind of partial label this
+ * issue is about.
  *
  * ## It is PROSPECTIVE, and the engine acts on that
  *
- * The reshape has not happened. `migrate` will not apply this unless asked with
+ * Neither change has shipped. `migrate` will not apply this unless asked with
  * `--include-prospective`, and `--check` reports it separately from work that is
- * actually due. When the reshape lands, this entry's status changes to
- * `published` and its `to` becomes the real release — the rules do not.
+ * actually due. When they land, this entry's status changes to `published` and
+ * its `to` becomes the real release — the rules do not.
  */
 const PRESET_AUDIT_RESHAPE: Migration = {
   from: '0.x',
   to: '1.0',
   status: 'prospective',
-  summary: 'Preset audit durability moves under `sink`',
+  summary: 'Preset audit durability moves under `sink`; `migrate --json` gains `advisories`',
   reference: 'https://github.com/askturret/mcp/issues/59',
   rules: [
     {
@@ -163,6 +182,20 @@ const PRESET_AUDIT_RESHAPE: Migration = {
         'asserting on its shape — a config test, a compliance export — reads this path. ' +
         'Reported rather than rewritten: the consumer is the adopter’s code, and §62 ' +
         'is explicit that adopter logic is not ours to edit.',
+    },
+    {
+      kind: 'output',
+      id: 'migrate-json-advisories',
+      surface: 'migrate --json',
+      from: 'findings[]',
+      to: 'advisories[]',
+      reason:
+        'Entries for `output` rules moved out of `findings[]` into a new `advisories[]` ' +
+        '(#432). A script filtering `.findings` for work to do no longer sees them — ' +
+        'which is the point, since they were never found in the project — but a script ' +
+        'COUNTING `.findings` will see a smaller number. Their `file` field also carried ' +
+        'a surface name such as `describePreset()` where the type documents a ' +
+        'repo-relative path; the replacement field is `surface`, which says what it is.',
     },
   ],
 };

@@ -14,7 +14,7 @@ import { join, relative, sep, resolve } from 'node:path';
 import { applyMigrations, type ProjectFile } from './engine.js';
 import { renderSnippet } from './guide.js';
 import { knownPairs, selectMigrations } from './registry.js';
-import type { Finding, Migration } from './types.js';
+import type { Finding } from './types.js';
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage']);
 const CANDIDATE = /\.(ts|tsx|mts|cts|js|jsx|mjs|cjs|json|ya?ml)$/;
@@ -103,47 +103,34 @@ function group(findings: readonly Finding[]): { rewrite: Finding[]; manual: Find
  * `--check` never writes. It is the same engine call as a real run; only the
  * write is skipped, so a preview cannot disagree with what it previews.
  *
- * ## The `migrations` seam — PROVISIONAL, and slated for removal under #432
+ * ## The `migrations` seam is GONE (#432) — do not reintroduce it
  *
- * `migrations` REPLACES what `selectMigrations` would have chosen. Not narrows,
- * not intersects — `migrations ?? selectMigrations(...)`, so a caller can pass a
- * migration absent from the registry entirely.
+ * This function briefly took a second parameter that REPLACED what
+ * `selectMigrations` chose, so a test could inject a migration carrying no
+ * `output` rule. It existed for exactly one reason: the no-changes branch below
+ * was unreachable through the shipped registry, because `output` rules pushed a
+ * finding unconditionally and the only registry migration carries one.
  *
- * It exists because the no-changes branch below is unreachable through the
- * shipped registry: `output` rules push a finding UNCONDITIONALLY, and the only
- * migration there carries one, so `rewrite.length === 0 && manual.length === 0`
- * is never true. #432 makes the branch reachable for real, at which point this
- * parameter has nothing left to justify it and should be DELETED rather than
- * re-documented. Do not build on it.
+ * Separating advisories from findings removed that reason. The branch is now
+ * reachable with the real registry — `--include-prospective` against a project
+ * without `audit.durability` — so the test that needed the seam uses the
+ * registry instead, and the parameter is deleted rather than re-documented.
  *
- * ## What contains it — three things, none of them a property of the parameter
+ * It is worth recording WHY deletion rather than a better comment. The seam's
+ * docblock claimed it "can only ever NARROW what runs … a wrong value produces
+ * a wrong REPORT, never a wrong WRITE". Both halves were false: `migrations ??
+ * selectMigrations(...)` replaces rather than intersects, so a caller could
+ * pass a migration absent from the registry entirely, and QA reached a real
+ * write through it in three hops — `applyMigrations` -> `result.files` -> the
+ * `if (!options.check)` loop below — by writing `HIJACKED` into a fixture file
+ * with `--check` omitted. The containments that DID hold were facts about the
+ * callers, not properties of the parameter.
  *
- * An earlier version of this comment claimed the seam "can only ever NARROW
- * what runs … a wrong value produces a wrong REPORT, never a wrong WRITE."
- * **Both halves are false**, and QA falsified them by writing `HIJACKED` into an
- * adopter file through this parameter with no `--check`. The injected value
- * reaches `applyMigrations` -> `result.files` -> the `if (!options.check)` write
- * loop below in three hops. Recorded rather than quietly replaced, because a
- * justification stated wider than it holds is the defect this PR is about, and
- * this was its third instance.
- *
- * The real containments are stronger than the one claimed, and are facts about
- * the CALLERS rather than about this parameter:
- *
- *   1. `cli.ts` calls `migrateCommand(args.slice(1))` — production passes
- *      nothing, so the default path is the only one an adopter runs.
- *   2. `src/index.ts` does not export `migrateCommand`, and `package.json`'s
- *      `exports` map declares only `"."`. Deep subpath imports are blocked, so
- *      **no consumer of the published package can reach this parameter at all.**
- *      This one survives refactoring of the other two.
- *   3. The only in-repo caller passes `--check`, so the write path is never
- *      exercised through the seam. **That `--check` is load-bearing — see the
- *      note at the call site.**
+ * That gap between the claim and the shape is the #419 pattern, and this
+ * sentence was its fourth iteration. A seam whose containment claim needs
+ * careful wording is worse than one that does not exist.
  */
-export async function migrateCommand(
-  args: readonly string[],
-  migrations?: readonly Migration[],
-): Promise<void> {
+export async function migrateCommand(args: readonly string[]): Promise<void> {
   let options;
   try {
     const parsed = parseMigrateArgs(args);
@@ -163,13 +150,11 @@ export async function migrateCommand(
     process.exit(2);
   }
 
-  const selected =
-    migrations ??
-    selectMigrations({
-      ...(options.from === undefined ? {} : { from: options.from }),
-      ...(options.to === undefined ? {} : { to: options.to }),
-      includeProspective: options.includeProspective,
-    });
+  const selected = selectMigrations({
+    ...(options.from === undefined ? {} : { from: options.from }),
+    ...(options.to === undefined ? {} : { to: options.to }),
+    includeProspective: options.includeProspective,
+  });
 
   if (selected.length === 0) {
     // Not an error. "No migration is published for this range" is the correct
@@ -180,7 +165,12 @@ export async function migrateCommand(
         ? 'this project'
         : `${options.from ?? '(any)'} → ${options.to ?? '(any)'}`;
     if (options.json) {
-      console.log(JSON.stringify({ migrations: [], findings: [], changesNeeded: false }, null, 2));
+      // `advisories: []` is present rather than omitted so the key set does not
+      // depend on which branch produced it — a consumer reading `.advisories`
+      // should not have to special-case the nothing-selected case (#432).
+      console.log(
+        JSON.stringify({ migrations: [], findings: [], advisories: [], changesNeeded: false }, null, 2),
+      );
     } else {
       console.log(`No migrations apply to ${scope}.`);
       const pairs = knownPairs();
@@ -218,6 +208,7 @@ export async function migrateCommand(
         {
           migrations: selected.map((m) => ({ from: m.from, to: m.to, status: m.status })),
           findings: result.findings,
+          advisories: result.advisories,
           changed: result.changed,
           changesNeeded: result.changesNeeded,
           applied: !options.check,
@@ -249,6 +240,10 @@ export async function migrateCommand(
       //
       // What it says now is the true statement — nothing MATCHED — plus the
       // scope, so a reader with an unusual construct knows whether to look.
+      // Reachable through the shipped registry since #432. It used to be
+      // unreachable — `output` rules pushed findings unconditionally, so this
+      // predicate could never be true — and the seam that made it testable is
+      // gone precisely because separating advisories made it true instead.
       console.log('No changes needed: nothing matched these rules.');
       console.log(
         '  This is not a certificate that the project is migrated. It means nothing the tool',
@@ -265,6 +260,23 @@ export async function migrateCommand(
     }
     for (const finding of manual) {
       console.log(`NEEDS YOU     ${finding.file}: ${finding.detail}`);
+    }
+
+    // Advisories print in their OWN section, under a heading that says what
+    // they are (#432). Under `NEEDS YOU` they read as work located in the
+    // adopter's project, which is the false implication this issue removes: an
+    // `output` rule is advice about the adopter's CONSUMERS, and it fires
+    // whether or not anything in their project matched.
+    //
+    // Nothing is lost by moving it. `renderSnippet` above already prints the
+    // same surface, from, to and reason for every rule, so the old line's only
+    // unique contribution was its position among the findings.
+    if (result.advisories.length > 0) {
+      console.log('');
+      console.log('Advisories — not found in your project; true of this migration either way:');
+      for (const advisory of result.advisories) {
+        console.log(`  ${advisory.surface}: ${advisory.detail}`);
+      }
     }
   }
 

@@ -47,9 +47,13 @@ function automation(migration: Migration): string {
   if (manual === 0) {
     return `\`migrate\` applies all ${String(automatic)} of these for you.`;
   }
+  // Pluralised because the count can now exceed one. It read correctly only
+  // while every migration had exactly one manual rule — the registry gained a
+  // second under #432 and the sentence became "the other 2 is reported".
   return (
     `\`migrate\` applies ${String(automatic)} of these; the other ${String(manual)} ` +
-    `is reported for you to handle, because it touches code or config that is yours rather than ours.`
+    `${manual === 1 ? 'is' : 'are'} reported for you to handle, because ` +
+    `${manual === 1 ? 'it touches' : 'they touch'} code or config that is yours rather than ours.`
   );
 }
 

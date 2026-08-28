@@ -21,11 +21,11 @@ which `env: node` fails in child processes — several guards then go
 precondition for reproducing anything below. Re-run with a sane `PATH` before
 treating a difference as a real change.
 
-- measured guards: **21**
-- failure sites: **141**
-- witnessed: **98**
+- measured guards: **23**
+- failure sites: **149**
+- witnessed: **106**
 - unwitnessed: **43**
-- unreachable (no self-test, #431): **13** sites across 4 scripts
+- unreachable (no self-test, #431): **7** sites across 2 scripts
 - cannot check (non-green baseline): **0** scripts
 
 | script | sites | witnessed | unwitnessed | status |
@@ -40,6 +40,7 @@ treating a difference as a real change.
 | `check-jest-flag-forwarding.mjs` | 1 | 1 | 0 | measured |
 | `check-licenses.mjs` | 4 | 0 | 4 | measured |
 | `check-markdown-links.mjs` | 2 | 2 | 0 | measured |
+| `check-metric-cardinality.mjs` | 5 | 5 | 0 | measured |
 | `check-mutation-audit.mjs` | 8 | 4 | 4 | measured |
 | `check-network-imports.mjs` | 5 | 5 | 0 | measured |
 | `check-nul-bytes.mjs` | 5 | 5 | 0 | measured |
@@ -50,6 +51,7 @@ treating a difference as a real change.
 | `check-runtime-marker-ignored.mjs` | 2 | 2 | 0 | measured |
 | `check-sdk-boundary.mjs` | 3 | 2 | 1 | measured |
 | `ci-coverage-status.mjs` | 7 | 6 | 1 | measured |
+| `generate-notice.mjs` | 3 | 3 | 0 | measured |
 | `sdk-upgrade-drill.mjs` | 8 | 1 | 7 | measured |
 
 ## Unwitnessed sites
@@ -118,9 +120,7 @@ re-keying of this audit reaches them. Separately owned by #431.
 
 | script | sites |
 |---|---|
-| `check-metric-cardinality.mjs` | 4 |
 | `check-test-execution.mjs` | 3 |
-| `generate-notice.mjs` | 2 |
 | `generate-sbom.mjs` | 4 |
 
 ---

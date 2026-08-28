@@ -298,3 +298,123 @@ describe('paths abutted by a delimiter are still reduced (#305 controls)', () =>
     expect(sanitizeErrorText(input)).toBe(input);
   });
 });
+
+/**
+ * The RESIDUAL of the #305 delimiter allowlist — asserted, not argued.
+ *
+ * The block is MIXED, and each assertion says which it is. Three are true
+ * CONTROLS — a first segment ending in a delimiter was matched mid-token
+ * before the fix and still is, so their output is identical on both trees and
+ * they witness nothing. Three are WITNESSES, and all three were written as
+ * CONTROLS and corrected only after being run against a reverted tree.
+ *
+ * That mislabelling is worth leaving on the record here rather than quietly
+ * fixing, because it is the same error one level down as the one this block
+ * exists to correct: a claim about behaviour, asserted from reasoning instead
+ * of from a measurement, in a change whose whole subject is a residual that
+ * was asserted rather than measured.
+ *
+ * What the controls buy is a documented limitation that is FALSIFIABLE, which
+ * is why the block exists at all.
+ *
+ * ## What the residual is
+ *
+ * A lookbehind cannot distinguish a delimiter that PRECEDES a path from one
+ * that ENDS a directory name — same character, same position. So the allowlist
+ * fails in two directions and only one of them is safe:
+ *
+ *   ABSENT from the list  -> refusal -> survives intact.            SAFE.
+ *   PRESENT, at the end of a directory name -> matches mid-token.   CORRUPTION.
+ *
+ * The change that introduced the allowlist claimed only the first, and offered
+ * `foo(` as an illustration of it. `foo(` is the COUNTEREXAMPLE. QA caught it;
+ * these assertions are what stop the claim being re-made, because a residual
+ * nobody can test is a residual nobody can disprove — the same "unfalsifiable
+ * allowlist in a redaction path" this file's header warns about, one level up.
+ *
+ * Extending the allowlist would make this WORSE: each character added is
+ * another way for a directory name to end.
+ *
+ * If one of these ever stops corrupting, that is a genuine improvement — and
+ * the assertion will fail, which is the point. Update it and re-scope the
+ * README LIMITS wording in the same change; the two are a pair, and #305 was
+ * filed because they had drifted apart.
+ */
+describe('#305 residual — a directory name ending in a delimiter still corrupts', () => {
+  const DIR = 'SECRETDIR';
+
+  /**
+   * These three are TRUE CONTROLS — verified by running them against a
+   * reverted tree, where all three pass unchanged. Their output is identical
+   * before and after the fix, because a first segment ending in a delimiter
+   * was matched mid-token either way.
+   */
+  const residual: Array<[string, string, string]> = [
+    // The one that matters: on every Windows machine in existence.
+    ['Program Files (x86)', `Program Files (x86)/${DIR}/spec.yaml`, 'Program Files (x86)spec.yaml'],
+    ['a build number in brackets', `build[1]/${DIR}/spec.yaml`, 'build[1]spec.yaml'],
+    ['a bare trailing paren', `foo(/${DIR}/spec.yaml`, 'foo(spec.yaml'],
+  ];
+
+  it.each(residual)(
+    'CONTROL: %s still leaks a fragment AND destroys the filename',
+    (_name, input, expected) => {
+      const out = sanitizeErrorText(input);
+
+      // Pinned exactly, so a change in either direction is visible.
+      expect(out).toBe(expected);
+
+      // Spelled out so the assertion states the HARM rather than only a
+      // string: the directory is gone, and the filename did not survive.
+      expect(out).not.toContain(DIR);
+      expect(out).not.toContain('/spec.yaml');
+    },
+  );
+
+  /**
+   * WITNESS, despite sitting in a block about the residual — and it was
+   * mislabelled a CONTROL until it was actually run against a reverted tree.
+   *
+   * Both trees corrupt this input, so it looks like a control. They corrupt it
+   * DIFFERENTLY: before the fix the run anchored at the FIRST interior
+   * separator and produced `deepspec.yaml`; now it anchors at the delimiter
+   * and produces `deep/nested/bar(spec.yaml`. Same verdict, different output,
+   * so the assertion reddens on the pre-fix tree.
+   *
+   * Worth keeping distinct from the three above rather than folded in with
+   * them: "still corrupts" and "corrupts in the same way" are different
+   * claims, and only the second can witness anything.
+   */
+  it('WITNESS: the residual bites the deepest delimiter segment, not the first', () => {
+    expect(sanitizeErrorText(`deep/nested/bar(/${DIR}/spec.yaml`)).toBe(
+      'deep/nested/bar(spec.yaml',
+    );
+  });
+
+  /**
+   * WITNESS — also mislabelled a CONTROL on first writing.
+   *
+   * This is the half of the original residual claim that WAS correct, and it
+   * is a genuine witness: before the fix there was no lookbehind at all, so
+   * `|/srv/DIR/spec.yaml` reduced to `|spec.yaml`. Refusal is new behaviour.
+   */
+  it('WITNESS: a character ABSENT from the list causes a refusal, not a reduction', () => {
+    for (const input of [`|/srv/${DIR}/spec.yaml`, `*/srv/${DIR}/spec.yaml`]) {
+      expect(sanitizeErrorText(input)).toBe(input);
+    }
+  });
+
+  /**
+   * WITNESS — the third mislabelling, and the one that matters most.
+   *
+   * This bounds the residual: it needs a delimiter at the END of a name, not
+   * merely a relative path. Without it the block above would be equally
+   * consistent with "all relative paths corrupt", which is the state #305
+   * fixed. It reddens pre-fix, where `plainfoo/DIR/spec.yaml` became
+   * `plainfoospec.yaml`.
+   */
+  it('WITNESS: an ordinary directory name is NOT caught by the residual', () => {
+    const input = `plainfoo/${DIR}/spec.yaml`;
+    expect(sanitizeErrorText(input)).toBe(input);
+  });
+});

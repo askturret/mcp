@@ -48,6 +48,13 @@ jobs:
       - name: Review dependency licences
         run: node .github/scripts/check-licenses.mjs
 
+      # #431/#456: self-tested first. In --check mode this IS a guard, and what
+      # it guards is a licence obligation — a silent failure here does not break
+      # a build, it ships a compliance problem. Its cannot-check path (the
+      # inventory could not be built) must never render as "up to date".
+      - name: Self-test the NOTICE generator
+        run: node .github/scripts/generate-notice.test.mjs
+
       # Attribution is a licence obligation, so a stale NOTICE is a build
       # failure rather than a tidiness warning.
       - name: Check NOTICE is current

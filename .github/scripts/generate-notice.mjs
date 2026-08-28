@@ -22,11 +22,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { inventory } from './lib/dependencies.mjs';
-
-const args = process.argv.slice(2);
-const checkOnly = args.includes('--check');
-const repoRoot = resolve(args.find((a) => !a.startsWith('--')) ?? '.');
-const NOTICE_PATH = join(repoRoot, 'NOTICE');
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 const BEGIN = '<!-- BEGIN GENERATED THIRD-PARTY NOTICES -->';
 const END = '<!-- END GENERATED THIRD-PARTY NOTICES -->';
@@ -98,19 +94,50 @@ function renderSection(deps) {
   return lines.join('\n');
 }
 
-function main() {
+/**
+ * Compute what NOTICE should contain, and whether the current file matches.
+ *
+ * Exported so the self-test can reach both failure sites (#456). Before this,
+ * `main()` was invoked at module scope, so importing this file ran the whole
+ * generator — including its `writeFileSync` — as an import side effect. There
+ * was no way to test it without rewriting the real NOTICE.
+ *
+ * Deliberately does NOT write. The caller decides, which is what lets the
+ * self-test exercise the stale-detection logic without touching any file.
+ *
+ * @param {string} rootDir - repository root.
+ * @param {object} [options]
+ * @param {boolean} [options.checkOnly=false] - fail on stale rather than rewrite.
+ * @param {(root: string) => object[]} [options.inventory] - injectable dependency
+ *   inventory. This is the #349 fixture parameter, and it is the ONLY way to
+ *   reach the cannot-check path: the real `inventory()` throws on a broken
+ *   dependency tree, a state no fixture directory can reliably produce.
+ * @returns {{code: number, message: string, next: string, changed: boolean, runtimeCount: number}}
+ *   `code` is 2 for cannot-check, 1 for stale under --check, 0 otherwise.
+ *   `next` is the desired NOTICE content; the caller writes it when `changed`.
+ */
+export function generateNotice(rootDir = '.', options = {}) {
+  const { checkOnly = false, inventory: buildInventory = inventory } = options;
+  const repoRoot = resolve(rootDir);
+  const noticePath = join(repoRoot, 'NOTICE');
+
   let deps;
   try {
-    deps = inventory(repoRoot);
+    deps = buildInventory(repoRoot);
   } catch (err) {
-    console.error(`::error::could not build the dependency inventory: ${err.message}`);
-    process.exit(2);
+    return {
+      code: 2,
+      message: `::error::could not build the dependency inventory: ${err.message}`,
+      next: '',
+      changed: false,
+      runtimeCount: 0,
+    };
   }
 
   const runtime = deps.filter((d) => d.scope === 'runtime' && !d.firstParty);
   const section = renderSection(runtime);
 
-  const existing = existsSync(NOTICE_PATH) ? readFileSync(NOTICE_PATH, 'utf-8') : '';
+  const existing = existsSync(noticePath) ? readFileSync(noticePath, 'utf-8') : '';
   let next;
 
   if (existing.includes(BEGIN) && existing.includes(END)) {
@@ -128,24 +155,49 @@ function main() {
   }
 
   if (next === existing) {
-    console.log(`NOTICE is up to date (${runtime.length} runtime dependencies).`);
-    return;
+    return {
+      code: 0,
+      message: `NOTICE is up to date (${runtime.length} runtime dependencies).`,
+      next,
+      changed: false,
+      runtimeCount: runtime.length,
+    };
   }
 
   if (checkOnly) {
-    console.error(
-      '::error::NOTICE is out of date with the installed runtime dependencies.\n' +
+    return {
+      code: 1,
+      message:
+        '::error::NOTICE is out of date with the installed runtime dependencies.\n' +
         'Regenerate it and commit the result:\n' +
         '  node .github/scripts/generate-notice.mjs\n\n' +
         'Attribution is a licence obligation, so this is a build failure rather ' +
         'than a warning: shipping without it is a compliance problem, not an ' +
         'untidy file.',
-    );
-    process.exit(1);
+      next,
+      changed: true,
+      runtimeCount: runtime.length,
+    };
   }
 
-  writeFileSync(NOTICE_PATH, next);
-  console.log(`NOTICE regenerated with ${runtime.length} runtime dependencies.`);
+  return {
+    code: 0,
+    message: `NOTICE regenerated with ${runtime.length} runtime dependencies.`,
+    next,
+    changed: true,
+    runtimeCount: runtime.length,
+  };
 }
 
-main();
+if (isProcessEntryPoint(import.meta.url)) {
+  const args = process.argv.slice(2);
+  const rootDir = args.find((a) => !a.startsWith('--')) ?? '.';
+  const result = generateNotice(rootDir, { checkOnly: args.includes('--check') });
+
+  if (result.code === 0 && result.changed) {
+    writeFileSync(join(resolve(rootDir), 'NOTICE'), result.next);
+  }
+  if (result.code === 0) console.log(result.message);
+  else console.error(result.message);
+  process.exit(result.code);
+}

@@ -96,12 +96,47 @@ describe('changesNeeded drives the --check exit code', () => {
   });
 
   it('is FALSE when only manual findings exist', () => {
-    // The distinction that keeps `--check` usable in CI. An `output` rule always
-    // reports and never rewrites, so a project that heeded it would otherwise
-    // fail its build for ever.
-    const result = run([{ path: 'unrelated.ts', contents: 'export const x = 1;\n' }]);
+    // The distinction that keeps `--check` usable in CI: a finding that needs a
+    // human is not something `migrate` would have written, so a project that
+    // heeded it would otherwise fail its build for ever.
+    //
+    // The fixture is a config rule with `to` OMITTED — a key that was removed,
+    // which the engine reports and never rewrites. It used to be the registry's
+    // `output` rule, but that now yields an advisory rather than a finding
+    // (#432), which would have made this assert on the wrong thing. A removal
+    // rule is the same shape and is still genuinely a finding.
+    const removed: Migration = {
+      from: '1.0',
+      to: '2.0',
+      status: 'published',
+      summary: 'test',
+      reference: 'test',
+      rules: [
+        {
+          kind: 'config',
+          id: 'removed-key',
+          from: 'audit.durability',
+          reason: 'Removed; deleting a setting an adopter wrote is their call.',
+        },
+      ],
+    };
+    const result = run(
+      [{ path: 'askturret.config.json', contents: '{"audit":{"durability":"required"}}' }],
+      [removed],
+    );
 
     expect(result.findings.some((f) => f.action === 'manual')).toBe(true);
+    expect(result.changesNeeded).toBe(false);
+  });
+
+  it('is FALSE when only an advisory exists (#432)', () => {
+    // The advisory half of the same guarantee. An `output` rule fires on every
+    // run regardless of the project, so if it could set `changesNeeded` then
+    // `--check` would exit 1 for ever against the shipped registry.
+    const result = run([{ path: 'unrelated.ts', contents: 'export const x = 1;\n' }]);
+
+    expect(result.findings).toHaveLength(0);
+    expect(result.advisories.length).toBeGreaterThan(0);
     expect(result.changesNeeded).toBe(false);
   });
 
@@ -1012,27 +1047,6 @@ describe('argument parsing', () => {
 // already imports from that module; capturing console.log is the whole harness.
 // ---------------------------------------------------------------------------
 describe('the no-changes report (#284)', () => {
-  // Source rules ONLY, deliberately. An `output` rule would push a finding
-  // unconditionally and the branch would never be reached — which is exactly
-  // why the shipped registry cannot exercise it.
-  const sourceOnly: Migration = {
-    from: '1.0',
-    to: '2.0',
-    status: 'published',
-    summary: 'test',
-    reference: 'test',
-    rules: [
-      {
-        kind: 'source',
-        id: 'renamed',
-        from: 'oldName',
-        to: 'newName',
-        module: '@askturret/mcp-core',
-        reason: 'Renamed.',
-      },
-    ],
-  };
-
   const spies: { mockRestore: () => void }[] = [];
 
   afterEach(() => {
@@ -1048,7 +1062,7 @@ describe('the no-changes report (#284)', () => {
    * throw is caught and discarded — the exit code is not what these cases are
    * about, the printed text is.
    */
-  async function reportFor(files: Record<string, string>): Promise<string> {
+  async function reportFor(files: Record<string, string>, extraArgs: string[] = []): Promise<string> {
     const dir = mkdtempSync(join(tmpdir(), 'migrate-report-'));
     for (const [name, contents] of Object.entries(files)) {
       writeFileSync(join(dir, name), contents);
@@ -1064,26 +1078,24 @@ describe('the no-changes report (#284)', () => {
     spies.push(log, exit);
 
     try {
-      // The migration is injected rather than selected, because the branch
-      // under test is UNREACHABLE through the shipped registry — see the seam's
-      // docblock. `sourceOnly` carries a source rule and nothing else, so a
-      // project with no matching code produces no findings at all, which is the
-      // only state in which this branch runs.
+      // THE REAL REGISTRY, with no injection (#432).
       //
-      // `--check` IS LOAD-BEARING. DO NOT REMOVE IT AS TIDYING.
+      // This used to pass a hand-built migration through a `migrations` seam,
+      // because the branch under test was unreachable through the shipped
+      // registry: `output` rules pushed findings unconditionally and the only
+      // registry migration carries one. Separating advisories from findings
+      // made the branch reachable for real, so the seam was deleted and this
+      // exercises what an adopter actually runs.
       //
-      // It is not here to make the test faster or to express intent — it is the
-      // only thing standing between the injected migration and the write loop.
-      // An injected migration REPLACES the registry selection and reaches
-      // `applyMigrations` -> `result.files` -> `if (!options.check)` in three
-      // hops; QA proved it by writing `HIJACKED` into a fixture file through
-      // this parameter with `--check` omitted.
+      // `--include-prospective` IS LOAD-BEARING: the sole registry migration is
+      // prospective, so without it `selectMigrations` returns `[]` and the
+      // command takes the "No migrations apply" path above — a different branch
+      // that would pass a `not.toContain` assertion for the wrong reason.
       //
-      // The seam's docblock previously claimed the parameter could never cause
-      // a write, which would have made this flag look redundant to anyone
-      // tidying the file. That claim was false and is gone. Removing `--check`
-      // here is removing a guard.
-      await migrateCommand(['--dir', dir, '--check'], [sourceOnly]);
+      // `--check` is kept because these cases are about printed text, and a
+      // real run would write to the fixture. It is no longer load-bearing for
+      // containment — there is no injected migration left to contain.
+      await migrateCommand(['--dir', dir, '--check', '--include-prospective', ...extraArgs]);
     } catch (e) {
       if (!(e instanceof Error) || e.message !== '__exit__') throw e;
     } finally {
@@ -1123,11 +1135,69 @@ describe('the no-changes report (#284)', () => {
     // The paired positive. Without it every assertion above is satisfied by a
     // command that prints the scope disclaimer unconditionally, including on
     // runs that did find work — which would be its own kind of false report.
+    //
+    // The fixture is a config carrying `audit.durability`, which is what the
+    // registry's config rule actually matches. This is the Architect's shape
+    // (b) to the no-changes case's shape (c): same command, same registry, one
+    // differing file.
     const out = await reportFor({
-      'app.ts': `export { other as oldName } from '@askturret/mcp-core';\n`,
+      'askturret.json': `${JSON.stringify({ audit: { durability: 'required' } }, null, 2)}\n`,
     });
 
     expect(out).not.toContain('No changes needed: nothing matched these rules.');
+    // Positively anchored too, so the assertion cannot pass because the run
+    // failed to produce any report at all.
+    expect(out).toContain('WOULD REWRITE');
+  });
+
+  // -------------------------------------------------------------------------
+  // The separation itself (#432)
+  //
+  // The three cases above are about the no-changes SENTENCE. These are about
+  // the thing that makes it true: an `output` rule is no longer counted as
+  // something found in the adopter's project.
+  //
+  // RED ON REVERT: put `advise(rule)` back into `findings` and the first two
+  // fail — `findings` becomes non-empty, so the no-changes branch stops firing
+  // and the `NEEDS YOU` line returns.
+  // -------------------------------------------------------------------------
+  it('reaches the no-changes branch through the REAL registry, with an advisory present', async () => {
+    // Shape (c): `--include-prospective` on a project without `audit.durability`.
+    // Nothing in the project matches, but the migration still has something to
+    // say — which is precisely the state that was unrepresentable before.
+    const out = await reportFor({ 'app.ts': `export const x = 1;\n` });
+
+    expect(out).toContain('No changes needed: nothing matched these rules.');
+
+    // The advisory is still reported — separating it must not lose it.
+    expect(out).toContain('Advisories');
+    expect(out).toContain('describePreset()');
+
+    // ...and it is NOT dressed as work located in the project. This is the
+    // assertion that goes red if advisories are folded back into findings,
+    // because the manual-findings loop prefixes exactly this string.
+    expect(out).not.toContain('NEEDS YOU');
+  });
+
+  it('keeps advisories out of --json findings[], where a surface name is not a path', async () => {
+    const out = await reportFor({ 'app.ts': `export const x = 1;\n` }, ['--json']);
+    const report = JSON.parse(out) as {
+      findings: { file: string }[];
+      advisories: { surface: string; kind: string }[];
+    };
+
+    // Nothing matched in the project, so `findings` is empty — the machine
+    // -readable half of the sentence the human report prints.
+    expect(report.findings).toHaveLength(0);
+
+    // The advisory is present, keyed by `surface` rather than `file`.
+    expect(report.advisories.length).toBeGreaterThan(0);
+    expect(report.advisories.map((a) => a.surface)).toContain('describePreset()');
+    expect(report.advisories.every((a) => a.kind === 'output')).toBe(true);
+
+    // The defect stated as an assertion: no `findings[].file` may carry a
+    // surface name, because that field is documented as a repo-relative path.
+    expect(report.findings.map((f) => f.file)).not.toContain('describePreset()');
   });
 });
 

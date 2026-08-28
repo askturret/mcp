@@ -10,6 +10,7 @@
  */
 
 import type {
+  Advisory,
   ConfigRule,
   Finding,
   Migration,
@@ -596,18 +597,30 @@ function rewriteSource(
 /**
  * Report a machine-readable output whose shape moved.
  *
- * Always `manual`. The consumer is the adopter's own script or dashboard —
+ * Never a rewrite. The consumer is the adopter's own script or dashboard —
  * §62 puts adopter logic explicitly out of scope, and a tool that edited a
  * jq expression it found in a YAML file would be guessing at intent.
+ *
+ * ## Why this returns an `Advisory` and not a `Finding` (#432)
+ *
+ * This is the only rule kind the engine handles WITHOUT opening an adopter
+ * file — see the loop in `applyMigrations`. So there is no file it was "found
+ * in", and it is not evidence that anything in the project matched: it holds
+ * for every run of the migration.
+ *
+ * It used to return a `Finding` with `file: rule.surface`, which put
+ * `describePreset()` into a field documented as a repo-relative path and made
+ * the no-changes branch unreachable, since every registry migration carries an
+ * `output` rule. Both were the same modelling error, and separating the two
+ * result kinds fixes them together.
  */
-function reportOutput(rule: OutputRule): Finding {
+function advise(rule: OutputRule): Advisory {
   return {
     ruleId: rule.id,
     kind: 'output',
-    file: rule.surface,
-    action: 'manual',
-    // `file` already carries the surface, and the printer prefixes it — so the
-    // detail must not repeat it or the line reads "describePreset():
+    surface: rule.surface,
+    // `surface` already carries it and the printer prefixes it — so the detail
+    // must not repeat it, or the line reads "describePreset():
     // describePreset(): …".
     detail:
       rule.to === undefined
@@ -712,13 +725,17 @@ export function applyMigrations(options: ApplyOptions): MigrationResult & {
   readonly files: readonly ProjectFile[];
 } {
   const findings: Finding[] = [];
+  const advisories: Advisory[] = [];
   const changed = new Set<string>();
   const files = options.files.map((f) => ({ ...f }));
 
   for (const migration of options.migrations) {
     for (const rule of migration.rules) {
+      // Handled here rather than in the per-file loop below, because an
+      // `output` rule is not about the adopter's files at all — which is
+      // exactly why it yields an advisory rather than a finding (#432).
       if (rule.kind === 'output') {
-        findings.push(reportOutput(rule));
+        advisories.push(advise(rule));
         continue;
       }
 
@@ -833,6 +850,7 @@ export function applyMigrations(options: ApplyOptions): MigrationResult & {
   return {
     migrations: options.migrations,
     findings,
+    advisories,
     changed: [...changed],
     // Only a rewrite counts. A `manual` finding needs a human but is not
     // something `migrate` would have written, so it must not make an

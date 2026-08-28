@@ -20,7 +20,7 @@ Decided but unshipped. Written now so the migration comes from the people making
 
 ## 0.x → 1.0
 
-**Preset audit durability moves under `sink`**
+**Preset audit durability moves under `sink`; `migrate --json` gains `advisories`**
 
 > ⚠️ **Prospective — this release does not exist yet.** These changes are decided but unshipped, published early so the migration is written by the people making the change rather than reconstructed later. `migrate` will not apply it without `--include-prospective`.
 
@@ -30,8 +30,9 @@ Reference: https://github.com/askturret/mcp/issues/59
 
 - **Config** — `audit.durability` → `audit.sink.durable`. §10.2 describes this as `sink: { durable: … }`. The flat `audit.durability` field was a deviation recorded in #52 and classified MAJOR by #59, because `PresetConfiguration` is returned to adopters and moving a field is a removal plus an addition.
 - **Output** — `describePreset()`: `configuration.audit.durability` → `configuration.audit.sink.durable`. `describePreset` is how ADR-007 makes a preset inspectable, so anything asserting on its shape — a config test, a compliance export — reads this path. Reported rather than rewritten: the consumer is the adopter’s code, and §62 is explicit that adopter logic is not ours to edit.
+- **Output** — `migrate --json`: `findings[]` → `advisories[]`. Entries for `output` rules moved out of `findings[]` into a new `advisories[]` (#432). A script filtering `.findings` for work to do no longer sees them — which is the point, since they were never found in the project — but a script COUNTING `.findings` will see a smaller number. Their `file` field also carried a surface name such as `describePreset()` where the type documents a repo-relative path; the replacement field is `surface`, which says what it is.
 
-`migrate` applies 1 of these; the other 1 is reported for you to handle, because it touches code or config that is yours rather than ours.
+`migrate` applies 1 of these; the other 2 are reported for you to handle, because they touch code or config that is yours rather than ours.
 
 ```bash
 npx @askturret/mcp migrate --from 0.x --to 1.0 --check

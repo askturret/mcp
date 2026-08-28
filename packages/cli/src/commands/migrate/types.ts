@@ -105,10 +105,33 @@ export interface Migration {
   readonly rules: readonly MigrationRule[];
 }
 
-/** One thing the engine found, whether or not it changed anything. */
+/**
+ * The rule kinds that can produce a `Finding` — every kind except `output`.
+ *
+ * `output` is excluded BY THE TYPE rather than by a convention the engine is
+ * trusted to follow, because that convention is what failed (#432). An
+ * `output` rule is handled outside the per-file loop and never opens an
+ * adopter file, so it has no `file` to report; pushing one into `findings` put
+ * a surface name like `describePreset()` into `Finding.file`, a field
+ * documented as a repo-relative path.
+ *
+ * With the kind narrowed here that state is unrepresentable rather than merely
+ * avoided, and the no-changes predicate — which keys on `findings` — becomes
+ * correct by construction instead of by care.
+ */
+export type FindingKind = Exclude<RuleKind, 'output'>;
+
+/**
+ * One thing the engine found IN THE ADOPTER'S PROJECT, whether or not it
+ * changed anything.
+ *
+ * A finding is always a project observation: it exists because a rule matched
+ * while scanning a file. A notice that holds regardless of what the project
+ * contains is an {@link Advisory}, not a finding.
+ */
 export interface Finding {
   readonly ruleId: string;
-  readonly kind: RuleKind;
+  readonly kind: FindingKind;
   /** File it was found in, repo-relative. */
   readonly file: string;
   /** What the engine did, or would do. */
@@ -116,9 +139,40 @@ export interface Finding {
   readonly detail: string;
 }
 
+/**
+ * A project-independent notice, derived from the migration alone (#432).
+ *
+ * `output` rules warn that a machine-readable surface moved. The engine cannot
+ * find one in an adopter's project — it does not know what parses that output —
+ * so an advisory holds for every run of the migration whatever the project
+ * contains. That is the difference from a {@link Finding}, and it is why an
+ * advisory carries a `surface` rather than a `file`.
+ *
+ * `guide.ts` already drew this line for its automation count. This is the same
+ * distinction, in the engine's result.
+ */
+export interface Advisory {
+  readonly ruleId: string;
+  readonly kind: 'output';
+  /** Which output moved, e.g. `describePreset()`. NOT a path — see above. */
+  readonly surface: string;
+  readonly detail: string;
+}
+
 export interface MigrationResult {
   readonly migrations: readonly Migration[];
+  /** What matched in the adopter's project. Empty means nothing matched. */
   readonly findings: readonly Finding[];
+  /**
+   * Project-independent notices (#432).
+   *
+   * Kept OUT of `findings` because they are not evidence that anything in the
+   * project matched: an advisory fires whether or not the adopter has anything
+   * to change. Folding them in made the no-changes branch unreachable through
+   * the shipped registry, since every registry migration carries an `output`
+   * rule.
+   */
+  readonly advisories: readonly Advisory[];
   /** Files whose contents the engine changed (empty in `--check`). */
   readonly changed: readonly string[];
   /**

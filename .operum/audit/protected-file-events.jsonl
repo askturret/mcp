@@ -78,3 +78,4 @@
 {"ts":"2026-08-28T16:51:25Z","branch":"fix/issue-424-statement-aware-classification","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-28T17:13:05Z","branch":"fix/issue-424-statement-aware-classification","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-28T20:11:13Z","branch":"fix/issue-305-refuse-half-match","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-08-29T12:09:36Z","branch":"docs/issue-468-factor-1-read-order","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

@@ -327,6 +327,12 @@ Entries predating the field carry neither `factor_1` nor `channel`; they are not
 backfilled, so any tally must scope itself to rows that carry them. Absence
 means *"predates the field"*, which is a different fact from `unknown`.
 
+**The "checkable" claim in that paragraph is true only at the `unknown`
+boundary, and the section below is where it stops.** Read it as scoped, not as
+a property of the field in general: `unknown` against everything else is
+checkable because it is the definitional Factor 1 axis restated, while the
+distinctions *among* the PASSES values are a recorded judgement.
+
 ### The carrier observation, and why `channel` cannot measure it (#468)
 
 The section above makes two claims that a reader has to take on the text's word:
@@ -459,6 +465,79 @@ covers.
 **No mechanism is claimed.** Two were asserted from reasoning and withdrawn;
 snapshot-staleness is the trigger, not an explanation of the observed ratios.
 
+#### State the denominator with the ratio, or the ratio cannot be checked (#494)
+
+**"Two clean instances" above is denominator-relative, and the denominator was
+never stated.** Two agents re-derived the same four instances from artifacts and
+reached different tallies — not because either miscounted, but because
+*"changed file"* has two defensible readings and each picked one silently.
+
+Measured with `--name-status`. **Both endpoints are as-of the capture's own
+timestamp**, and naming only one of them is what makes such a table
+unreproducible — so both are given per row:
+
+- **base** — `main` as it stood when the capture was taken.
+- **branch** — the feature branch's HEAD at that same moment, which is **not**
+  its eventual tip. These branches kept receiving commits afterwards, in one
+  case including the very captures being counted.
+
+| capture | base | branch HEAD then | **M**odified | **A**dded | messages |
+|---|---|---|---|---|---|
+| `195421Z` -a/-b | `78a7eb1` | `eb25089` | **2** | 1 | 2 |
+| `201644Z` | `1054825` | `9a141fa` | 3 | 1 | 1 |
+| `202937Z` -a/-b | `fcac8ba` | `92ff9d1` | **2** | 0 | 2 |
+| `204750Z` -b | `bfc0037` | `5db509d` | 4 | 0 | 2 |
+
+Each row is `git diff --name-status <base> <branch>`.
+
+**Row 1 is the one that needs its branch endpoint named, and it is also the row
+the whole argument rests on.** Taken from the branch's eventual tip instead, it
+reads `M=3 A=3`: that branch went on to commit the two `195421Z` captures
+themselves, and `protected-file-events.jsonl` was first touched seventeen
+minutes *after* the checkout. Rows 2–4 happen to reproduce from their tips, so
+the omission survives a spot-check and fails only where it matters.
+
+Recorded rather than quietly fixed, because it is this subsection's own thesis
+turned on itself — a table asserting *"state the denominator"* that could not be
+re-derived under an unstated convention. It was caught only because the reviewer
+re-derived the numbers **before** reading the reasoning; read in order, the gap
+is invisible.
+
+- Counting **modified** paths: `195421Z` is clean, and the tally is **two clean,
+  two counter** — the reading recorded above.
+- Counting **all differing** paths: `195421Z` is 3-against-2 and the tally is
+  **one clean, three non-clean**.
+
+Both are computable, both are honest, and they disagree. So the ratio is not a
+fact about the harness until the denominator is named beside it — the same
+correction this ADR already made once for the eleven-hyphen count: *state the
+predicate with the count, or the count cannot be checked.*
+
+**The divergence has a single cause, and it is itself an observation.** The
+third `195421Z` path is `A`, not `M`: the branch **added** that capture
+`.jsonl`, so returning to the home branch **deleted** it rather than modifying
+it — and **no message was emitted for it.** The agent had written that file, so
+a snapshot plausibly existed. That is the only add-versus-modify case among the
+four, and it is exactly where the two readings come apart.
+
+It also suggests the modified-files reading may be *correct* rather than merely
+convenient — a deletion may not be a "change on disk" for this purpose. Stated
+as a candidate, not a finding: one instance is not a rule, and the section above
+is right that no mechanism is established.
+
+**And the `main`-based proxy is not a measurement either.** Every base in the
+table assumes the agent's home branch stood at `main`'s tip when the checkout
+ran. **Nothing records where it stood** — Step 0 sync time is not logged, in the
+team log or anywhere else. A home branch synced earlier would have reverted more
+files than the table shows, so each row is an *upper bound on agreement*, not a
+count.
+
+Which sharpens the section above rather than contradicting it. The denominator
+we would actually want — snapshot-staleness — is not recoverable from git; the
+two proxies that *are* computable disagree with each other; and neither is
+pinned to the state the checkout actually left. **Three independent reasons the
+ratio cannot be settled by counting**, and only the first was recorded before.
+
 #### Provenance
 
 The carrier pair, the counter-instances and the T2 control were each re-derived
@@ -468,6 +547,14 @@ Tester is sole QA-stamp owner and authored it; the structural gap is #489). It
 is recorded because a second reader found the argument sound, and the
 sufficiency limit above is that reader's amendment to it, not the original
 claim.
+
+The denominator subsection (#494) was added afterwards, from a second Architect
+session that had measured the same four instances independently and reached a
+different tally. **It reported that as a contradiction and was wrong to.**
+`--name-status` showed both readings were sound and the denominator had simply
+never been named — so the correction landed on the newer claim, not on the one
+recorded here. The add-versus-modify observation and the unrecorded home-branch
+position came out of settling it.
 
 ## Retirement trigger
 

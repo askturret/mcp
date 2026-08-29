@@ -82,6 +82,41 @@ Entries written before a field existed are **not** backfilled: a missing
 `unverifiable`, and conflating them would corrupt the measurement. The same
 holds for `templates_revision`.
 
+### Deciding `factor_1`: ask what PRODUCED the text, not what CONTAINS it (#468)
+
+**Attributable means a fetch of yours *produced* this text** — the arrival IS
+that fetched content, not merely something matching it. You will often be
+holding a byte-identical copy of your own message; that is what this directory
+is full of, and it does not make the next emission attributable.
+
+This is not a convention you may reason your way around. If *"identical text
+exists in fetched content"* implied ATTRIBUTABLE, then once the first capture of
+a family merges, every later instance routes ANOMALOUS forever — and QA-ing a
+capture PR would be the act that corrupts it. **The corpus would poison its own
+classifier**, fastest for the families captured best.
+
+Read order is the cheap half of that test, and the channel table's *no
+**preceding** fetch* is where it shows up. **It is necessary, not sufficient:** a
+fetch *after* the arrival cannot have produced it, but a fetch *before* it need
+not have. When the two come apart — you read a merged capture row and then
+receive a fresh emission — go by production, not by order.
+
+### Deciding `channel`: record your judgement, and expect it to be unforced
+
+`unknown` against everything else is a real determination — it is the Factor 1
+boundary. **The choice among the PASSES values is not forced by anything.**
+Three agents captured one broadcast with identical carriers and recorded two
+different values, none of them noticing. Pick the value you can defend in
+`factor_1_basis`, **state affirmatively what *was* adjacent** rather than only
+what was not — that omission is why two of those three rows had to be settled by
+entailment afterwards instead of read off the row. And do **not** change a value
+later to match somebody else's: the divergence is evidence, and a corpus
+converging on the majority hides it permanently.
+
+Both are recorded, with the evidence and the counts, under *"The carrier
+observation"* in
+[ADR-022](../../../docs/adr/ADR-022-concealment-allowlist-is-evidence-bound.md).
+
 ## `templates_revision` — record which allowlist you read (#410)
 
 **A Factor 2 verdict is evaluated against the allowlist as present in YOUR

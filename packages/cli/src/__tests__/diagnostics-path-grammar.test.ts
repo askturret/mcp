@@ -443,11 +443,19 @@ describe('#305 residual — a directory name ending in a delimiter still corrupt
  *
  * ## Why a test and not only a comment
  *
- * The three residual CONTROLs above already assert `not.toContain(DIR)`, so a
- * narrowing does redden them. But their NAME says "still leaks a fragment AND
- * destroys the filename" — they are framed as pinning a defect, so the natural
- * reading of that red is *"good, the corruption is gone"*, and the natural
- * repair is to update the expectation, deleting the safety clause with it.
+ * The residual CONTROLs above assert `not.toContain(DIR)`, so a narrowing does
+ * redden them — but only TWO of the three, and which two is the argument.
+ * `Program Files (x86)` and `build[1]` end in the characters a narrowing
+ * removes; `foo(` ends in `(`, which STAYS, so it corrupts exactly as before
+ * and stays green. The count is the paragraph above restated as a measurement:
+ * narrowing does not remove the corruption class, it only converts the closing
+ * half of it into leaks.
+ *
+ * The two that do redden are still the wrong instrument, because their NAME
+ * says "still leaks a fragment AND destroys the filename" — they are framed as
+ * pinning a defect, so the natural reading of that red is *"good, the
+ * corruption is gone"*, and the natural repair is to update the expectation,
+ * deleting the safety clause with it.
  *
  * These are named for the property instead. If one of them reddens, the
  * message is: you have introduced a leak. That is the #431 lesson applied to a

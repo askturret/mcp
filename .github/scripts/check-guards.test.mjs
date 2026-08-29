@@ -1999,6 +1999,33 @@ const wfStep = (script) => `jobs:\n  a:\n    steps:\n      - run: node .github/s
 // So a script counts as WITNESSED only when its output shows the spawn actually
 // failed. Anything else is NOT REACHED and must be declared below, never
 // silently passed.
+//
+// ## WHAT THIS DOES NOT COVER — the ENOENT row only, on real scripts
+//
+// The assertion names below read stronger than the coverage is, so the bound
+// belongs here rather than in a completion report nobody reads twice.
+//
+// An unresolvable PATH produces exactly ONE of the two `status === null` rows:
+// the child never STARTS, and `error` is set. The other row — killed by a
+// signal, `error` UNDEFINED — is the one #443 finding 2 is actually about, and
+// NO PATH MANIPULATION PRODUCES IT. It is reachable only in the fixtures below,
+// where a child SIGKILLs itself.
+//
+// Two consequences, both of which were reported as stronger than they are:
+//
+//   1. **This does not replace the per-file source assertions from #443.** Those
+//      remain the only thing pinning the signal row on the real scripts.
+//   2. **A tenth spawning script is ENUMERATED here, but its keying is not
+//      verified.** The derivation finds it, and an unprobeable one must be
+//      declared or `undeclared` fails — but if the probe DOES reach it, all that
+//      is exercised is the ENOENT row, where the finding-2 defect is harmless.
+//      QA demonstrated this end-to-end: a fixture script carrying the defect,
+//      once wired, passes this suite 147/0.
+//
+// The earlier claim that #381's wiring guard catches such a script is true and
+// beside the point: it catches an UNWIRED script, and #381 requires wiring
+// anyway. That is a missing STEP being detected, not a missing keying — so once
+// the author does the thing they were going to do, nothing here objects.
 // ---------------------------------------------------------------------------
 
 /** Scripts that spawn a child, derived rather than listed. */
@@ -2024,6 +2051,19 @@ export function spawningScripts(scriptsDir) {
  * change it. Bidirectional, like `WIRING_EXEMPT`: a declaration that turns out
  * to be witnessable is STALE and fails, so this cannot quietly outlive its
  * cause.
+ *
+ * WHAT THE STALENESS CHECK DOES NOT CHECK — read this before adding an entry.
+ * It tests two things: that the script still spawns, and that the probe still
+ * cannot reach it. It does NOT test whether the stated REASON is true, and it
+ * cannot: the reason is a claim about WHY the probe stops, which is exactly what
+ * a run that never reaches the spawn produces no evidence about.
+ *
+ * So a wrong reason survives here indefinitely, in the one artifact carrying
+ * this knowledge forward — and it has already happened once. The first
+ * `check-test-execution.mjs` entry asserted a manifest-only verdict and proposed
+ * a remedy that would not have worked, while the correct explanation sat in a
+ * comment one file away. QA caught it by RUNNING the script under the probe's
+ * conditions. Do the same before you write an entry: the ledger will not.
  */
 const PROBE_UNREACHABLE = Object.freeze({
   'check-mutation-audit.mjs':
@@ -2037,8 +2077,13 @@ const PROBE_UNREACHABLE = Object.freeze({
     'only diffs when a PR payload is present, so outside Actions it exits before reaching the spawn. ' +
     'Witnessable by running it with a fixture GITHUB_EVENT_PATH.',
   'check-test-execution.mjs':
-    'reaches its verdict from package manifests and does not surface a spawn failure in output, so the probe ' +
-    'cannot tell that it reached the child. Witnessable by having it report the cause it observed.',
+    'builds its CHILD\'S PATH itself — CHILD_PATH prepends dirname(process.execPath), which is where npm lives ' +
+    '— so an emptied parent PATH never reaches the child and the suites genuinely run. Verified by running it ' +
+    'under the probe\'s exact conditions: exit 0 in ~24s, "16 package(s): 12 running tests, 4 declared exempt", ' +
+    '874 tests executed. There is no spawn failure to surface, because nothing failed to spawn: that is #429\'s ' +
+    'fix working as designed, and the script says so itself at the CANNOT-CHECK backstop ("CHILD_PATH above ' +
+    'should make this unreachable for the PATH case"). Witnessable only by injecting a spawn seam — the same ' +
+    'class of remedy as the two execPath scripts above, not a reporting change.',
 });
 
 /**
@@ -2114,8 +2159,13 @@ function probeSpawnSafety(scriptPath, cwd) {
     witnessed.push(name);
     // THE PROPERTY. A child that cannot start must not crash the guard, and
     // must not be reported as success.
-    check(`spawn: ${name} does not crash when its child cannot start`, r.crashed, false);
-    check(`spawn: ${name} refuses rather than passing`, r.exit !== 0, true);
+    //
+    // The row is named IN THE ASSERTION, not only in the header: an unresolvable
+    // PATH reaches the never-started row and no other, so a name reading "when
+    // its child cannot start" would claim both rows in the one place a reader
+    // meets first — the output.
+    check(`spawn: ${name} does not crash when its child cannot start (ENOENT row)`, r.crashed, false);
+    check(`spawn: ${name} refuses rather than passing (ENOENT row)`, r.exit !== 0, true);
   }
 
   check('spawn: every unprobeable script is declared', undeclared.join(',') || 'none', 'none');

@@ -369,8 +369,16 @@ export async function auditGuard({ guardPath, testPath, rootDir, onProgress = ()
 
   // AN INTERRUPTED RUN MUST NOT LEAVE A DISARMED GUARD ON DISK (#428 QA).
   //
-  // A mutated guard is on disk for roughly 28% of this audit's ~197s runtime —
-  // QA measured 17 of 60 polls. Node runs no `finally` on an unhandled signal,
+  // A mutated guard is on disk for roughly 28% of this audit's runtime — QA
+  // measured 17 of 60 polls. The run is minutes long (322s on this machine at
+  // 151 sites; the ~197s figure this comment used to carry predates #435 and no
+  // longer describes it), so Ctrl-C inside that window is the expected
+  // interaction.
+  //
+  // WHERE THAT TIME GOES IS NOT WHERE THE PR THAT ADDED IT SAID. Read the COST
+  // note at the yield below before optimising anything in this loop.
+  //
+  // Node runs no `finally` on an unhandled signal,
   // so Ctrl-C inside that window left, for example:
   //
   //   M .github/scripts/check-adr-citations.mjs   process.exit(1) -> process.exit(0)
@@ -413,6 +421,29 @@ export async function auditGuard({ guardPath, testPath, rootDir, onProgress = ()
       //
       // Safe file, uncancellable tool is a worse trade than the defect. One
       // yield per site costs nothing and makes the handler genuinely reachable.
+      //
+      // COST — MEASURED, BECAUSE THIS LINE WAS BILLED FOR SOMETHING IT DID NOT
+      // DO (#437). PR #435 reported the audit slowing 197s -> 266s and
+      // attributed it here. That attribution is WRONG, and this is the line a
+      // reader reclaiming runtime would delete first, so the correction lives
+      // where the temptation is rather than only in an issue nobody reads.
+      //
+      //   this yield, 151 sites   ~3 ms      (measured directly: 113 setImmediate
+      //                                       round-trips took 2.51 ms)
+      //   the audit's own self-test   ~113 s (11.3 s x 10 runs — see below)
+      //   whole audit                 322 s
+      //
+      // Roughly one part in a hundred thousand. QA reached the same conclusion
+      // from the other direction, differencing two ~99 s runs at 99.0 vs 98.8;
+      // that method can only ever bound the cost from above, since nothing
+      // below about a second survives the noise. Measuring the primitive is
+      // what shows the true figure is three milliseconds rather than 0.2 s.
+      //
+      // DELETING THIS LINE BUYS NOTHING AND COSTS CANCELLABILITY. The guard
+      // catches it — the assertion pinning exit on the re-raised signal goes
+      // red — but a wasted attempt the prose actively invited is cheaper to
+      // prevent than to detect. The real bill is the self-test multiplier
+      // documented in `check-mutation-audit.test.mjs`.
       await new Promise((resolve) => setImmediate(resolve));
 
       onProgress(`${name} ${i + 1}/${sites.length} (line ${site.line}, ${site.kind})`);

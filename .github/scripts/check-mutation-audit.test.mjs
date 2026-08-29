@@ -14,6 +14,35 @@
  * synthetic guards with synthetic self-tests. So auditing the audit runs this
  * file, which never invokes the audit on the real tree, and it terminates.
  *
+ * ## EVERY SECOND YOU ADD HERE IS CHARGED ABOUT TEN TIMES (#437)
+ *
+ * The self-application above has a cost that is invisible from inside this
+ * file, and it is the reason a fixture here is not priced like a fixture
+ * anywhere else. Because the audit is in its own target list, a full run
+ * executes THIS file once per mutation site in `check-mutation-audit.mjs`,
+ * plus once for the baseline, plus once for the completeness probe:
+ *
+ *   8 sites + 1 baseline + 1 probe = 10 runs
+ *
+ * The three call sites are `baseline`, the per-site run inside the loop, and
+ * the `all`-neutralised probe — all in `auditGuard`. The site count comes from
+ * the inventory and moves as the audit's own source changes; the shape does
+ * not.
+ *
+ * Measured on this machine: this file takes 11.3 s, so it accounts for about
+ * 113 s of a 322 s audit — roughly a THIRD of the whole run, spent auditing
+ * the auditor.
+ *
+ * That is not an argument for spending less. The fixtures that cost the time
+ * spawn real child processes and send real SIGINTs, and they are what gave the
+ * #435 signal-handler fix a witness — the right way to test a signal handler,
+ * and worth every second. It is an argument for spending it KNOWINGLY: a
+ * fixture that sleeps 700 ms here adds 7 s to the audit, not 700 ms.
+ *
+ * The cost was misattributed once already, to the per-site `yield` in
+ * `check-mutation-audit.mjs`, which measures ~3 ms across all 151 sites. If
+ * the audit is slow, this file is where to look first.
+ *
  * ## Observed failing, on a real historical case
  *
  * `unwitnessed-slot-boolean` reproduces PR #420's defect: a check whose only
@@ -735,6 +764,11 @@ process.exit(0);
 
 // ---------------------------------------------------------------------------
 // SELF-APPLICATION — the audit is in its own target list (#428 Q4)
+//
+// This property is also what makes THIS FILE cost about ten times its own
+// runtime on every full audit — 8 sites + baseline + probe. See the header
+// section "EVERY SECOND YOU ADD HERE IS CHARGED ABOUT TEN TIMES" (#437) before
+// adding a fixture that sleeps.
 // ---------------------------------------------------------------------------
 {
   const names = discoverGuards(join(process.cwd())).map((g) => g.name);

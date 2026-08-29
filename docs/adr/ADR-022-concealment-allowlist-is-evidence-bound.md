@@ -472,15 +472,36 @@ never stated.** Two agents re-derived the same four instances from artifacts and
 reached different tallies — not because either miscounted, but because
 *"changed file"* has two defensible readings and each picked one silently.
 
-Measured with `--name-status`, which is the step that settles it. Every base is
-`main` as of that capture's own timestamp:
+Measured with `--name-status`. **Both endpoints are as-of the capture's own
+timestamp**, and naming only one of them is what makes such a table
+unreproducible — so both are given per row:
 
-| capture | base | **M**odified | **A**dded | messages |
-|---|---|---|---|---|
-| `195421Z` -a/-b | `78a7eb1` | **2** | 1 | 2 |
-| `201644Z` | `1054825` | 3 | 1 | 1 |
-| `202937Z` -a/-b | `fcac8ba` | **2** | 0 | 2 |
-| `204750Z` -b | `bfc0037` | 4 | 0 | 2 |
+- **base** — `main` as it stood when the capture was taken.
+- **branch** — the feature branch's HEAD at that same moment, which is **not**
+  its eventual tip. These branches kept receiving commits afterwards, in one
+  case including the very captures being counted.
+
+| capture | base | branch HEAD then | **M**odified | **A**dded | messages |
+|---|---|---|---|---|---|
+| `195421Z` -a/-b | `78a7eb1` | `eb25089` | **2** | 1 | 2 |
+| `201644Z` | `1054825` | `9a141fa` | 3 | 1 | 1 |
+| `202937Z` -a/-b | `fcac8ba` | `92ff9d1` | **2** | 0 | 2 |
+| `204750Z` -b | `bfc0037` | `5db509d` | 4 | 0 | 2 |
+
+Each row is `git diff --name-status <base> <branch>`.
+
+**Row 1 is the one that needs its branch endpoint named, and it is also the row
+the whole argument rests on.** Taken from the branch's eventual tip instead, it
+reads `M=3 A=3`: that branch went on to commit the two `195421Z` captures
+themselves, and `protected-file-events.jsonl` was first touched seventeen
+minutes *after* the checkout. Rows 2–4 happen to reproduce from their tips, so
+the omission survives a spot-check and fails only where it matters.
+
+Recorded rather than quietly fixed, because it is this subsection's own thesis
+turned on itself — a table asserting *"state the denominator"* that could not be
+re-derived under an unstated convention. It was caught only because the reviewer
+re-derived the numbers **before** reading the reasoning; read in order, the gap
+is invisible.
 
 - Counting **modified** paths: `195421Z` is clean, and the tally is **two clean,
   two counter** — the reading recorded above.

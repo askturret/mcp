@@ -94,6 +94,32 @@ export function didNotStart(result) {
   return result.status === null;
 }
 
+/**
+ * Why a spawn produced no usable result, as a string that is always safe to
+ * embed in a message.
+ *
+ * `status === null` has TWO causes, and only one of them sets `error`:
+ *
+ *   - the process never started      -> `error` is set (ENOENT, EACCES, ...)
+ *   - the process was killed by a signal -> `error` is UNDEFINED, `signal` is set
+ *
+ * The second row is why this is a function rather than an inline ternary at each
+ * call site. `didNotStart()` is true for both, so any caller that tests the
+ * condition and then reaches for `result.error.message` dereferences `undefined`
+ * on a SIGKILLed run — the guard crashes in exactly the degraded environment it
+ * exists to report on. That is #443 finding 2: an inlined copy kept this
+ * condition and dropped its defence.
+ *
+ * Reporting the signal rather than "(none reported)" also keeps the cause
+ * visible: an OOM-killed `npm ls` is a different operator action from a missing
+ * binary, and collapsing both to "(none reported)" throws that away.
+ */
+export function spawnFailureDetail(result) {
+  if (result?.error?.message) return result.error.message;
+  if (result?.signal) return `killed by signal ${result.signal}`;
+  return '(none reported)';
+}
+
 /** CANNOT CHECK (2) for a build that never ran. Reports the cause, not a verdict. */
 export function couldNotRun(result, phase) {
   return {
@@ -101,7 +127,7 @@ export function couldNotRun(result, phase) {
     message:
       `The ${phase} build COULD NOT RUN, so this drill has not measured anything.\n` +
       `It is reporting that it could not check — which is never the same as a pass.\n\n` +
-      `spawn error: ${result.error ? result.error.message : '(none reported)'}\n\n` +
+      `spawn error: ${spawnFailureDetail(result)}\n\n` +
       `The compiler process never started, so there is no output to interpret. Had\n` +
       `this fallen through to the normal path it would have found no failing\n` +
       `packages and reported PASS with an empty blast radius.`,

@@ -418,3 +418,124 @@ describe('#305 residual — a directory name ending in a delimiter still corrupt
     expect(sanitizeErrorText(input)).toBe(input);
   });
 });
+
+/**
+ * NARROWING the delimiter list is a LEAK, not a fix (#470).
+ *
+ * #470 proposed removing `)` and `]`, on the reading that it would move
+ * `Program Files (x86)` from silent corruption to safe refusal. Measured
+ * end-to-end through `sanitizeErrorText` with the two characters removed —
+ * both directions, on the real code rather than a rebuilt regex:
+ *
+ *   Program Files (x86)/SECRETDIR/spec.yaml   -> UNCHANGED. SECRETDIR leaks.
+ *   build[1]/SECRETDIR/spec.yaml              -> UNCHANGED. SECRETDIR leaks.
+ *   [INFO]/srv/SECRETDIR/spec.yaml            -> UNCHANGED. SECRETDIR leaks.
+ *   deep/nested/bar)/SECRETDIR/spec.yaml      -> UNCHANGED. SECRETDIR leaks.
+ *   see (foo)/srv/SECRETDIR/spec.yaml         -> UNCHANGED. SECRETDIR leaks.
+ *
+ * Every row the issue counted as a GAIN leaks the secret directory in full.
+ * The issue coded them as "refusal -> survives intact" and read that as good;
+ * for a redaction tool, what survives intact is the secret.
+ *
+ * And it does not even remove the corruption class it targets: `(` and `[`
+ * stay in the list, so `foo(/SECRETDIR/spec.yaml` corrupts exactly as before.
+ * You would pay in leaks and keep the defect.
+ *
+ * ## Why a test and not only a comment
+ *
+ * The residual CONTROLs above assert `not.toContain(DIR)`, so a narrowing does
+ * redden them — but only TWO of the three, and which two is the argument.
+ * `Program Files (x86)` and `build[1]` end in the characters a narrowing
+ * removes; `foo(` ends in `(`, which STAYS, so it corrupts exactly as before
+ * and stays green. The count is the paragraph above restated as a measurement:
+ * narrowing does not remove the corruption class, it only converts the closing
+ * half of it into leaks.
+ *
+ * The two that do redden are still the wrong instrument, because their NAME
+ * says "still leaks a fragment AND destroys the filename" — they are framed as
+ * pinning a defect, so the natural reading of that red is *"good, the
+ * corruption is gone"*, and the natural repair is to update the expectation,
+ * deleting the safety clause with it.
+ *
+ * These are named for the property instead. If one of them reddens, the
+ * message is: you have introduced a leak. That is the #431 lesson applied to a
+ * ruling — prose is skimmable, and this ruling has now been derived twice.
+ */
+describe('narrowing the delimiter list would leak (#470)', () => {
+  const DIR = 'SECRETDIR';
+
+  // Rows the residual CONTROLs above do NOT cover, so this adds coverage
+  // rather than restating theirs.
+  const wouldLeak: Array<[string, string, string]> = [
+    ['a log-level prefix', `[INFO]/srv/${DIR}/spec.yaml`, '[INFO]spec.yaml'],
+    ['a parenthesised aside in prose', `see (foo)/srv/${DIR}/spec.yaml`, 'see (foo)spec.yaml'],
+    ['a closing paren on a DEEP segment', `deep/nested/bar)/${DIR}/spec.yaml`, 'deep/nested/bar)spec.yaml'],
+  ];
+
+  it.each(wouldLeak)(
+    'the secret directory is removed today: %s',
+    (_name, input, expected) => {
+      const out = sanitizeErrorText(input);
+
+      // THE SAFETY PROPERTY, stated first because it is the one that matters.
+      // Removing `)` or `]` from PATH_DELIM turns each of these into the input
+      // verbatim, secret included.
+      expect(out).not.toContain(DIR);
+      expect(out).toBe(expected);
+    },
+  );
+
+  /**
+   * WHY NO PATTERN CAN DECIDE THIS — the two rows that settle it.
+   *
+   * A discriminator would have to tell a `)` that ENDS a directory name from
+   * one that PRECEDES a path. These two are byte-identical in shape —
+   * `<word><space>(<token>)/<path>` — and require OPPOSITE readings:
+   *
+   *   Program Files (x86)/DIR/spec.yaml   `(x86)` is IN the path
+   *   see (foo)/srv/DIR/spec.yaml         `(foo)` is prose BEFORE the path
+   *
+   * Bracket balance does not separate them (both balanced), and neither does
+   * "is the prefix path-like" (both are a word then a space). The difference
+   * is knowing that `Program Files (x86)` is a directory name and `see (foo)`
+   * is English — which is not in the input.
+   *
+   * That is the whole answer to "should this be a pattern rather than a list".
+   * It is the OPPOSITE of #454, where the engine already computed the view
+   * that answered the question and simply was not consulting it. Same question,
+   * and the two answers are worth holding side by side.
+   *
+   * The current design does not need to tell them apart — it treats both
+   * safely, which is exactly what this asserts. Narrowing forces a distinction
+   * the input cannot support, which is why it loses on both.
+   */
+  it('the two shapes are INDISTINGUISHABLE, and both are safe today', () => {
+    const asPath = sanitizeErrorText(`Program Files (x86)/${DIR}/spec.yaml`);
+    const asProse = sanitizeErrorText(`see (foo)/srv/${DIR}/spec.yaml`);
+
+    expect(asPath).not.toContain(DIR);
+    expect(asProse).not.toContain(DIR);
+
+    // Same treatment, from the same rule, with no attempt to tell them apart:
+    // prefix kept verbatim, secret removed, basename intact, separator lost.
+    expect(asPath).toBe('Program Files (x86)spec.yaml');
+    expect(asProse).toBe('see (foo)spec.yaml');
+  });
+
+  /**
+   * The corrupting case needs a path with NO drive letter — narrower than the
+   * issue's "on every Windows machine", and narrower than the ruling too.
+   *
+   * `WINDOWS_RUN` anchors on the drive letter and never consults the
+   * lookbehind, so BOTH the native and the mixed-separator forms reduce
+   * correctly. The ruling said the mixed form was the corrupting case; it is
+   * not. Measured, then asserted here so the corrected premise cannot decay
+   * back into the original claim.
+   */
+  it.each([
+    ['native separators', `C:\\Program Files (x86)\\${DIR}\\spec.yaml`],
+    ['mixed separators, as WSL and Node produce', `C:/Program Files (x86)/${DIR}/spec.yaml`],
+  ])('a drive-letter path reduces cleanly — %s', (_name, input) => {
+    expect(sanitizeErrorText(input)).toBe('spec.yaml');
+  });
+});

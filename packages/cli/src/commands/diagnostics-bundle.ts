@@ -370,6 +370,71 @@ const WINDOWS_RUN = new RegExp(
  * would let a doubled separator supply the anchor this fix removes:
  * `SECRETDIRA//SECRETDIRB//spec.yaml` would match at the SECOND slash and
  * reproduce the defect one character along.
+ *
+ * ## Nor is it NARROWED — ruled twice, and it is the more attractive mistake (#470)
+ *
+ * The section above argues only against ADDING characters. A reader meets that,
+ * correctly infers it does not bar a REMOVAL, and re-derives the question from
+ * scratch — which is what happened, so the answer now lives here too.
+ *
+ * Removing `)` and `]` was proposed to move `Program Files (x86)` from silent
+ * corruption to safe refusal. Measured end-to-end through `sanitizeErrorText`
+ * with the two characters removed, rather than reasoned about:
+ *
+ *   Program Files (x86)/SECRETDIR/spec.yaml   -> UNCHANGED. SECRETDIR leaks.
+ *   build[1]/SECRETDIR/spec.yaml              -> UNCHANGED. SECRETDIR leaks.
+ *   [INFO]/srv/SECRETDIR/spec.yaml            -> UNCHANGED. SECRETDIR leaks.
+ *   deep/nested/bar)/SECRETDIR/spec.yaml      -> UNCHANGED. SECRETDIR leaks.
+ *   see (foo)/srv/SECRETDIR/spec.yaml         -> UNCHANGED. SECRETDIR leaks.
+ *
+ * Every row counted as a GAIN leaks the secret directory in full. "Refusal ->
+ * survives intact" reads as the good outcome until you remember what survives.
+ * And it does not even remove the corruption class it targets: `(` and `[` stay,
+ * so `foo(/SECRETDIR/spec.yaml` corrupts exactly as before. Leaks paid for, and
+ * the defect kept.
+ *
+ * WHY BOTH DIRECTIONS LOSE, which is the part worth carrying: this list gates
+ * WHETHER a run matches, never HOW WELL it reduces. Remove a character and
+ * matches become non-matches -> strictly more disclosure. Add one and
+ * non-matches become matches at wrong offsets -> strictly more corruption. The
+ * current set is not a happy balance point; it is the only lever here, and it
+ * does not point at the defect.
+ *
+ * TWO PREMISES THAT DID NOT SURVIVE MEASUREMENT, recorded so they are not
+ * revived:
+ *
+ *   1. The comment above says `Program Files (x86)` is "on every Windows
+ *      machine". It is — but a Windows path carries a DRIVE LETTER, and
+ *      `WINDOWS_RUN` anchors on that and never consults this lookbehind. Both
+ *      `C:\Program Files (x86)\...` AND the mixed-separator `C:/Program Files
+ *      (x86)/...` reduce cleanly to `spec.yaml` today. The corrupting case needs
+ *      the fragment with no drive letter, which is narrower than either the
+ *      filing or the ruling claimed. Asserted in the self-test.
+ *   2. The corruption is milder than "leak plus destroyed filename": SECRETDIR
+ *      IS removed and `spec.yaml` IS intact. What is lost is the separator. That
+ *      is a readability defect, not a disclosure one — which is why it is not
+ *      the #305 signature, where the leaked prefix WAS the secret.
+ *
+ * AND WHY NO PATTERN CAN REPLACE THE LIST. A discriminator would have to tell a
+ * `)` that ends a directory name from one that precedes a path. These are
+ * byte-identical in shape and need opposite readings:
+ *
+ *   Program Files (x86)/DIR/spec.yaml    `(x86)` is IN the path
+ *   see (foo)/srv/DIR/spec.yaml          `(foo)` is prose BEFORE the path
+ *
+ * Bracket balance separates nothing (both balanced); neither does "is the prefix
+ * path-like" (both are a word then a space). The difference is knowing that one
+ * is a directory name and the other is English, and that is not in the input.
+ * Note this design does not NEED to tell them apart — it treats both safely.
+ * Narrowing is what would force a distinction the input cannot support.
+ *
+ * THE DEFECT IS ON THE OUTPUT SIDE, and this list cannot reach it from either
+ * direction: `lastPathSegment` returns a bare basename, so a reduction leaves no
+ * trace and cannot be told from a corruption. Marking it instead removes the
+ * whole class with ZERO change to what is disclosed — and it is the convention
+ * this file already applies to userinfo. Filed as #519; deliberately not done
+ * here, because it moves every reduced path in every bundle and needs its own
+ * witness and the README's LIMITS wording revisited with it.
  */
 const PATH_DELIM = String.raw`\s'"<>()\[\]{},;:=`;
 const AT_PATH_START = String.raw`(?<![^${PATH_DELIM}])`;

@@ -27,7 +27,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { didNotStart, couldNotRun } from './sdk-upgrade-drill.mjs';
+import { didNotStart, couldNotRun, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DRILL = join(here, 'sdk-upgrade-drill.mjs');
@@ -99,6 +99,42 @@ check(
     true,
   );
 }
+
+// ---------------------------------------------------------------------------
+// The shared failure detail (#464)
+//
+// `didNotStart()` is true for TWO shapes, and only one of them sets `error`. A
+// caller that tests the condition and then reads `result.error.message` crashes
+// on the other — #443 finding 2. This is the one place that knows the
+// difference, so `lib/dependencies.mjs` imports it rather than re-deriving it.
+// ---------------------------------------------------------------------------
+
+check(
+  'a failed spawn reports its error message',
+  spawnFailureDetail(NEVER_STARTED),
+  'spawnSync node ENOENT',
+);
+
+// The row that has no `error` at all. Reading `.error.message` here throws.
+const SIGNAL_KILLED = { status: null, stdout: null, stderr: null, signal: 'SIGKILL' };
+
+check(
+  'a signal-killed spawn names the signal rather than dereferencing undefined',
+  spawnFailureDetail(SIGNAL_KILLED),
+  'killed by signal SIGKILL',
+);
+
+check(
+  'a spawn with neither error nor signal degrades to a stated absence',
+  spawnFailureDetail({ status: null, stdout: null, stderr: null }),
+  '(none reported)',
+);
+
+check(
+  'the signal row still reaches CANNOT CHECK (2) rather than crashing the drill',
+  couldNotRun(SIGNAL_KILLED, 'baseline').code,
+  2,
+);
 
 // ---------------------------------------------------------------------------
 // The routing — asserted against the production source

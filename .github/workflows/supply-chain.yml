@@ -38,6 +38,16 @@ jobs:
           node-version: '20'
       - run: npm ci
 
+      # Runs FIRST because every check below it reads the same inventory: the
+      # licence gate, the NOTICE generator and the SBOM scope tagger all call
+      # `inventory()`. What it pins is the cannot-check discipline — an
+      # `npm ls` that never STARTS must report that the dependency set is
+      # unknown, never an empty one. An empty runtime set marks every package
+      # `development`, and the NOTICE generator then rewrites the file to say
+      # the product bundles nothing third-party and exits 0 (#464).
+      - name: Self-test the dependency inventory
+        run: node .github/scripts/lib/dependencies.test.mjs
+
       # The policy evaluator decides what ships, so verify it before trusting
       # its verdict on the real tree.
       - name: Self-test the licence policy

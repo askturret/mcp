@@ -30,8 +30,9 @@ The forces that make this a decision rather than an obvious step:
 - Widening it is **cheap and quiet**. Adding one permissive template is a
   one-line diff that reads like configuration.
 - The corpus shows **silent textual corruption in practice**: an em dash was
-  transcribed as an ASCII hyphen in eleven entries, all from a single agent's
-  capture style. A reviewer cannot see that difference at a glance.
+  transcribed as an ASCII hyphen in eleven entries as of `e901fc2`, all from a
+  single agent's capture style. A reviewer cannot see that difference at a
+  glance.
 
 ## Decision
 
@@ -106,17 +107,30 @@ parser is a feature.
 
 Recorded so nobody re-derives them as obvious simplifications.
 
-**The ASCII-hyphen variant of T1 was not seeded.** Eleven entries render the
-clause with a hyphen rather than an em dash — and those eleven are *exactly*
-the eleven that also redacted the path, a perfect correlation with one agent's
-transcription style. All thirty-four unredacted captures use U+2014. Seeding
-the hyphen form would widen the allowlist on the strength of a transcription
-slip.
+**The ASCII-hyphen variant of T1 was not seeded.** As of `e901fc2`, 130 captures
+carry the clause: **11 render it with an ASCII hyphen and 119 with U+2014.**
+Partition them by the character immediately preceding `otherwise no need to call
+it out`; that is the whole method, and the two figures account for all 130.
 
-**The `Note: `-prefixed variant of T2 was not seeded.** One capture records it;
-four record the unprefixed form. TOML optionality is not available in this
-schema by design, and adding the prefix as an alternative would be widening on
-one observation.
+Those eleven are exactly the captures whose `verbatim` begins
+`Note: <redacted-abs-path>` — 11 of 11 in both directions. **That is a
+correlation with one agent's placeholder string, not with redaction in
+general.** The distinction is load-bearing: read "redacted" more broadly, as
+*carries no absolute path in the `Note:` slot* (`verbatim` not matching
+`Note: /`), and 31 captures redact, of which 20 still use U+2014.
+
+An earlier draft of this paragraph called that a perfect correlation without
+saying which reading it meant. It holds under the first and fails under the
+second, so the reading was silently doing work the evidence was credited with.
+State the predicate with the count, or the count cannot be checked.
+
+Seeding the hyphen form would widen the allowlist on the strength of one agent's
+transcription slip.
+
+**The `Note: `-prefixed variant of T2 was not seeded.** As of `e901fc2`, of the
+eight captures carrying T2's clause, **one** begins `Note: ` and **seven** do
+not. TOML optionality is not available in this schema by design, and adding the
+prefix as an alternative would be widening on one observation.
 
 If either form is genuinely emitted upstream, it fails Factor 2, routes
 ANOMALOUS **once**, a human confirms it, and it is added with its own citation.
@@ -201,30 +215,32 @@ method, or the message is involved. An agent working predominantly through
 working through MCP tools, and a per-author tally of `classification` measures
 **tool mix**, not message risk.
 
-Measured against the corpus rather than asserted — of the 39 entries carrying
-`factor_1` at the time of writing, **every** `unverifiable` row also carries
+Measured against the corpus rather than asserted — of the 87 entries carrying
+`factor_1` as of `e901fc2`, **every** `unverifiable` row also carries
 `channel: unknown`, across two different agents. The correlation is total
 because it is definitional.
 
 **A second confounder, which weighting by `channel` alone does not remove.**
-ANOMALOUS and `unverifiable` are not the same population. At the time of writing
-the corpus holds 90 entries, of which **only 39 carry `factor_1` at all** — and
-**within that 39-entry subset**, 31 are anomalous: 14 by the carrier path above,
-and **17 that passed Factor 1**, anomalous because Factor 2 found no
+ANOMALOUS and `unverifiable` are not the same population. As of `e901fc2`
+the corpus holds 140 entries, of which **only 87 carry `factor_1` at all** — and
+**within that 87-entry subset**, 46 are anomalous: 25 by the carrier path above,
+and **21 that passed Factor 1**, anomalous because Factor 2 found no
 whole-message template match. That second group is a statement about template
 coverage rather than about the carrier or the agent. Read `factor_1` and
 `template_id` as separate axes; collapsing them into `classification` merges two
 unrelated causes into one number.
 
-**That 31 is not the whole-corpus anomalous count, which is 78.** The two differ
-because most entries predate `factor_1` entirely, so only the 39 carrying it can
-be split by cause at all — the split above is silent about the other 51. Mixing
-the two figures compares different populations.
+**That in-subset 46 is not the whole-corpus anomalous count, which is 93.** The
+two differ because many entries predate `factor_1` entirely, so only the 87
+carrying it can be split by cause at all — the split above is silent about the
+other 53. Mixing the two figures compares different populations.
 
-Every count above is a snapshot and will drift as the corpus grows — **recount
-from the artifact rather than citing them.** The artifact is the union of
+Every count above is a snapshot taken at `e901fc2` and will drift as the corpus
+grows — **recount from the artifact rather than citing them, and name the commit
+you counted at.** Without that coordinate a reader who recounts and disagrees
+cannot tell drift from error. The artifact is the union of
 `.operum/audit/concealment-reminders/*.jsonl` and the frozen
-`.operum/audit/concealment-reminders.jsonl`; at the time of writing every entry
+`.operum/audit/concealment-reminders.jsonl`; as of `e901fc2` every entry
 lives in the per-entry directory and the frozen log is not present, but a
 recount must read both, because a tally over one source silently under-counts.
 
@@ -272,15 +288,20 @@ Stated because a reader will otherwise assume the wrong referent:
 > hash of the file as read. It is **not** a claim about `main`'s allowlist at
 > that moment, and the two can differ.
 
-They differ more often than calendar arithmetic suggests. The allowlist was ~14
-hours old when this was written and had already had three revisions, two of them
-two hours apart; agent worktrees routinely outlive that interval. The staleness
-is **bursty rather than rare**, and its bursts fall exactly on periods of active
+They differ more often than calendar arithmetic suggests. As of `e901fc2` the
+allowlist had **five revisions** since it was seeded on 2026-08-25, **two of
+them fourteen minutes apart**, and agent worktrees routinely outlive that
+interval — re-derive with
+`git log -- .operum/audit/concealment-templates.toml`. The staleness is
+**bursty rather than rare**, and its bursts fall exactly on periods of active
 allowlist development — which are also the periods of heaviest capture volume.
 
-**This matters for how the corpus is read.** #388's diff-scoping rests on the
-measurement that *42 of 43 inverse-shaped rows predate T1C's merge, and were
-correctly anomalous against the allowlist of their moment.* That is an
+**This matters for how the corpus is read.** #388's diff-scoping rests on **its
+own** measurement that *42 of 43 inverse-shaped rows predate T1C's merge, and
+were correctly anomalous against the allowlist of their moment.* That figure is
+#388's and is deliberately **not re-derived at this anchor**: "inverse-shaped"
+is defined there and not here, and quoting a count without the predicate that
+produced it is the defect the paragraphs above were just corrected for. It is an
 **inference from timestamps**, because no row recorded what it saw — and it is
 precisely the inference that failed for the one post-merge row, where
 timestamp-versus-merge said *"should have matched"* and the truth was a stale

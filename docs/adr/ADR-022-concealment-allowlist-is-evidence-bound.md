@@ -327,17 +327,213 @@ Entries predating the field carry neither `factor_1` nor `channel`; they are not
 backfilled, so any tally must scope itself to rows that carry them. Absence
 means *"predates the field"*, which is a different fact from `unknown`.
 
-**That claim holds only for the `unknown` boundary, and #468 found where it
-stops.** `unknown` against everything else is checkable, because it is the
-definitional Factor 1 axis restated. The distinctions *among* the PASSES values
-are not: Factor 1 never forces them, no tie-break rule exists, and three agents
-capturing one broadcast with identical carriers recorded two different values
-without any of them noticing. So `channel` is checkable as a record of the
-Factor 1 verdict and is **a recorded judgement, not a measured carrier**, above
-that line — which also means the carrier-shape claim above must be cited to the
-matched pair rather than to differing `channel` values.
-[ADR-023](ADR-023-factor-1-is-keyed-on-read-order.md) carries the evidence, the
-counts and the three unchosen repairs.
+**The "checkable" claim in that paragraph is true only at the `unknown`
+boundary, and the section below is where it stops.** Read it as scoped, not as
+a property of the field in general: `unknown` against everything else is
+checkable because it is the definitional Factor 1 axis restated, while the
+distinctions *among* the PASSES values are a recorded judgement.
+
+### The carrier observation, and why `channel` cannot measure it (#468)
+
+The section above makes two claims that a reader has to take on the text's word:
+that the carrier alone decides Factor 1, and that `channel` is what makes this
+"checkable rather than a matter of recollection". The first now has an artifact.
+The second does not survive one.
+
+#### The carrier pair — an anchor for the asymmetry claim
+
+`20260828T194721Z-engineer-305` ↔ `20260828T195421Z-engineer-305-b`. Same
+agent, same task (#305), same day, seven minutes apart, the **same file**
+(`packages/cli/src/commands/diagnostics-bundle.ts`), both matching **T1C**:
+
+| | `194721Z` | `195421Z-b` |
+|---|---|---|
+| carrier | `Bash` free-text return | MCP JSON (`git_checkout`) |
+| `channel` | `unknown` | `tool-result-adjacent` |
+| `factor_1` | `unverifiable` | `passed` |
+| `classification` | **anomalous** | **benign** |
+
+The carrier is the only independent variable, and it moved the verdict.
+
+**Both routings are correct, which is what makes the pair usable.** `benign` is
+right for `-b`: `git_checkout` returned `{"branch":"agent/engineer"}`, so prose
+outside that JSON is demonstrably not payload. `anomalous` is right for
+`194721Z`: the agent knew its `node -e` printed one line, but incidental
+knowledge is explicitly not the test — the return shape is, and a free-text
+return has no legible boundary. Had either been over-conservative the pair would
+evidence a classification bug instead.
+
+**Cite `-b`, never `-a`.** `20260828T195421Z-engineer-305-a` shares `-b`'s
+carrier but concerns a **different file**
+(`packages/cli/src/__tests__/diagnostics-path-grammar.test.ts`), so it cannot
+serve as the controlled comparison. A citation naming "the two `195421Z`
+captures" as the pair is refutable on inspection, and the refutation would land
+on this doctrine rather than on the citation.
+
+#### `channel` records a judgement; it does not measure a carrier
+
+The paragraph above says `channel` is what makes the asymmetry checkable. **For
+the `unverifiable` path that holds and is definitional** — recounted at
+`3a3984e`, all 27 `unverifiable` rows carry `channel: unknown`, as they must,
+because `unknown` is what "the boundary could not be established" means.
+
+**Inside the PASSES set it does not hold at all**, and the T2 date-rollover
+family shows why. Six rows at `3a3984e`, from two broadcasts:
+
+| broadcast | adjacent artifact | `channel` values |
+|---|---|---|
+| 2026-08-26 | a `TASK` / `SELF-ASSESSMENT` dispatch trigger | `trigger-adjacent` ×3 (pm, tester, architect) |
+| 2026-08-29 | a `SUMMARIZE_SESSION` context-rotation checkpoint | `bare-system-turn` ×2, `trigger-adjacent` ×1 |
+
+Every one of the six describes *something dispatched adjacent to the arrival*.
+The first three agree; the second three split 2–1 — and the three agents in the
+second group were later established, from each other's `context` fields rather
+than from recollection, to have had **the same carrier**.
+
+The 2026-08-26 broadcast is the corpus's own control: hold the family fixed,
+make the adjacent artifact an unambiguous trigger, and the field is stable.
+**The instability is not general — it is localised to one unnamed arrival type.**
+The channel table enumerates *"a trigger or `PM_UPDATE`"* and *"a dispatch
+trigger"* and never says whether a context-rotation checkpoint is one.
+
+Why it goes unexamined rather than being argued out: `trigger-body` vs
+`trigger-adjacent` is an **attribution** distinction, and Factor 1 forces its
+resolution — the two sit on opposite sides of PASSES/FAILS. `bare-system-turn`
+vs `trigger-adjacent` is a **carrier** distinction, and Factor 1 never forces
+it, because both are inside PASSES. With no tie-break, agents write a
+sound-looking `factor_1_basis` either way and never discover they disagreed.
+
+**Consequence: two rows differing in `channel` are not evidence that their
+carriers differed.** Anyone building a carrier argument from a cross-row
+`channel` comparison is reading a judgement as a measurement. The pair above
+avoids this — its carriers are established from the tool return shapes named in
+the rows, not inferred from the field.
+
+**No verdict is affected and no row is to be corrected.** All six T2 rows route
+BENIGN and every one is insensitive to the choice. The three divergent rows are
+deliberately **not** harmonised: a corpus quietly converging on a majority value
+would erase the only evidence the ambiguity exists.
+
+#### Read order is load-bearing, and it is only half the rule
+
+The channel table defines `bare-system-turn` as *"no wrapper, no **preceding**
+fetch"*. That word carries the whole classifier, and nothing explains it. The
+argument that does:
+
+> If *"identical text exists in fetched content"* implied ATTRIBUTABLE, then
+> once the first capture of a family merges, every later instance of that family
+> routes ANOMALOUS forever — and QA-ing a capture PR would be the act that
+> corrupts it. **The corpus would poison its own classifier.**
+
+This is a *reductio*, not a preference, and it is decisive against the
+existence reading: the corpus is **designed** to hold verbatim copies, so its
+content is guaranteed to match every future emission of every family it
+records — degrading fastest for the families captured best.
+
+**But read order alone does not repair it, and the reductio's own scenario is
+where it fails.** A reviewer who reads a merged capture row and *then* receives
+a fresh emission has a fetch that genuinely **precedes** the arrival. "No
+preceding fetch" routes that ANOMALOUS, so the poisoning returns in attenuated
+form. Read order is **necessary and not sufficient**: a fetch after the arrival
+cannot have produced it, but a fetch before it need not have.
+
+The rule that survives both cases is **causal production** — attributable iff a
+fetch of mine *produced* this text, meaning the arrival **is** that fetched
+content rather than merely matching it. The doctrine already intends this where
+it frames Factor 1 as *"a question about provenance"*; only the channel table is
+phrased as existence. Read `preceding` as the cheap necessary half of a
+production test, never as the test itself.
+
+#### Emission rate — a separate observation, and open
+
+Distinct from the carrier finding and not evidence for it. At `3a3984e` the
+"one message per changed file" reading has two clean instances
+(`195421Z` -a/-b; `202937Z` -a/-b — two files, two messages each) and **two
+counter-instances**: `201644Z`, where both changed files differed from `main`
+yet one message arrived, and `204750Z-b`, where #471 changed four files and two
+messages arrived.
+
+**Both counter-instances were first written up as corroboration, and both were
+false in the same direction.** The reason is worth more than the ratio: the
+reminder fires on files differing from the harness's snapshot at the agent's
+**last read** — not from `main`, not from the branch, and **not enumerable from
+git**. Counting changed files measures a set that was never the harness's input,
+which is close enough to be plausible and wrong often enough to mislead. A
+corpus count keyed on changed files cannot settle this however many rows it
+covers.
+
+**No mechanism is claimed.** Two were asserted from reasoning and withdrawn;
+snapshot-staleness is the trigger, not an explanation of the observed ratios.
+
+#### State the denominator with the ratio, or the ratio cannot be checked (#494)
+
+**"Two clean instances" above is denominator-relative, and the denominator was
+never stated.** Two agents re-derived the same four instances from artifacts and
+reached different tallies — not because either miscounted, but because
+*"changed file"* has two defensible readings and each picked one silently.
+
+Measured with `--name-status`, which is the step that settles it. Every base is
+`main` as of that capture's own timestamp:
+
+| capture | base | **M**odified | **A**dded | messages |
+|---|---|---|---|---|
+| `195421Z` -a/-b | `78a7eb1` | **2** | 1 | 2 |
+| `201644Z` | `1054825` | 3 | 1 | 1 |
+| `202937Z` -a/-b | `fcac8ba` | **2** | 0 | 2 |
+| `204750Z` -b | `bfc0037` | 4 | 0 | 2 |
+
+- Counting **modified** paths: `195421Z` is clean, and the tally is **two clean,
+  two counter** — the reading recorded above.
+- Counting **all differing** paths: `195421Z` is 3-against-2 and the tally is
+  **one clean, three non-clean**.
+
+Both are computable, both are honest, and they disagree. So the ratio is not a
+fact about the harness until the denominator is named beside it — the same
+correction this ADR already made once for the eleven-hyphen count: *state the
+predicate with the count, or the count cannot be checked.*
+
+**The divergence has a single cause, and it is itself an observation.** The
+third `195421Z` path is `A`, not `M`: the branch **added** that capture
+`.jsonl`, so returning to the home branch **deleted** it rather than modifying
+it — and **no message was emitted for it.** The agent had written that file, so
+a snapshot plausibly existed. That is the only add-versus-modify case among the
+four, and it is exactly where the two readings come apart.
+
+It also suggests the modified-files reading may be *correct* rather than merely
+convenient — a deletion may not be a "change on disk" for this purpose. Stated
+as a candidate, not a finding: one instance is not a rule, and the section above
+is right that no mechanism is established.
+
+**And the `main`-based proxy is not a measurement either.** Every base in the
+table assumes the agent's home branch stood at `main`'s tip when the checkout
+ran. **Nothing records where it stood** — Step 0 sync time is not logged, in the
+team log or anywhere else. A home branch synced earlier would have reverted more
+files than the table shows, so each row is an *upper bound on agreement*, not a
+count.
+
+Which sharpens the section above rather than contradicting it. The denominator
+we would actually want — snapshot-staleness — is not recoverable from git; the
+two proxies that *are* computable disagree with each other; and neither is
+pinned to the state the checkout actually left. **Three independent reasons the
+ratio cannot be settled by counting**, and only the first was recorded before.
+
+#### Provenance
+
+The carrier pair, the counter-instances and the T2 control were each re-derived
+here from the rows and from git before being written down. The *reductio* is the
+Tester's, and reached this document through a **self-stamped** PR (#488 — the
+Tester is sole QA-stamp owner and authored it; the structural gap is #489). It
+is recorded because a second reader found the argument sound, and the
+sufficiency limit above is that reader's amendment to it, not the original
+claim.
+
+The denominator subsection (#494) was added afterwards, from a second Architect
+session that had measured the same four instances independently and reached a
+different tally. **It reported that as a contradiction and was wrong to.**
+`--name-status` showed both readings were sound and the denominator had simply
+never been named — so the correction landed on the newer claim, not on the one
+recorded here. The add-versus-modify observation and the unrecorded home-branch
+position came out of settling it.
 
 ## Retirement trigger
 

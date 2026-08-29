@@ -131,6 +131,42 @@
  * anything. They are recorded because "16 caught" and "closes the class" are
  * very different claims, and the second one would be false.
  *
+ * ## The empty pass, and the ONE zero worth reporting (#518)
+ *
+ * The diff-scoped conditions apply to files a change ADDS, which means COMMITTED
+ * files. Run before committing, this guard reports `0 corpus file(s) added or
+ * modified` and prints `OK` having examined none of the rows the author came to
+ * ask about. QA reproduced it with the exact violation refused on #513 hours
+ * earlier and the run stayed green — worse, `validated N row(s)` prints FIRST,
+ * so the strongest-sounding line is the one asserting work that did not happen.
+ *
+ * The obvious repair was REJECTED and should not be re-proposed: an unconditional
+ * note whenever the scope is empty. Nearly every PR adds no capture rows, so it
+ * would fire almost always and be irrelevant almost always — trading a SILENT
+ * empty pass for a NOISY ignored one, which is the over-disclosure failure the
+ * doctrine names about its own routing.
+ *
+ * The discriminator is not "did I check zero files". It is "WAS I ASKED ABOUT
+ * ROWS THAT EXIST", and that is observable: an empty diff scope AND uncommitted
+ * or untracked `*.jsonl` under the corpus directory. Any other zero stays silent.
+ *
+ * Two details are load-bearing:
+ *
+ *   - **`*.jsonl`, not the directory.** The PR that documented this defect had an
+ *     uncommitted `README.md` in that very directory. A directory-scoped
+ *     condition would fire on the change that fixes the thing it fires about.
+ *   - **cannot-check, not a note.** A run that did not examine the rows and
+ *     printed `OK` IS the empty pass, one level up. If the signal is advisory the
+ *     defect survives inside the signal built to remove it.
+ *
+ * The honest cost is friction: an author mid-edit with uncommitted rows gets a
+ * non-zero exit. Softening to a printed note is a one-line change and still
+ * strictly better than today, so the strict version is the one to try first.
+ *
+ * SCOPE: the per-entry directory only, matching the diff-scoped conditions this
+ * reports the absence of. The frozen log is never rewritten, and no diff-scoped
+ * check applies to it, so it has no empty pass to report.
+ *
  * ## No tallies
  *
  * Every check here is a RELATION OVER ROWS. There is no hardcoded corpus count
@@ -223,6 +259,13 @@ export const TEMPLATE_MISMATCH_GUIDANCE_KEY = 'NOTE WHAT WAS CHECKED:';
  * (#462). Exported and de-duplicated for the same reasons as the key above.
  */
 export const REVISION_CANNOT_CHECK_KEY = 'templates_revision NOT VERIFIED:';
+
+/**
+ * Opening words of the run-level cannot-check for an empty diff scope with
+ * uncommitted capture rows waiting (#518). Exported for the same reason as the
+ * keys above: the self-test asserts on the signal without transcribing it.
+ */
+export const UNCOMMITTED_ROWS_CANNOT_CHECK_KEY = 'UNCOMMITTED capture rows:';
 
 /**
  * Required on rows a change ADDS, but NOT corpus-wide (#462).
@@ -423,6 +466,47 @@ function changedCorpusFiles(rootDir, base) {
   );
 }
 
+/**
+ * Capture row files in the working tree that no commit contains yet (#518).
+ *
+ * Scoped to `*.jsonl` under the corpus directory, NEVER to the directory: an
+ * uncommitted `README.md` there is not a row, and treating it as one would fire
+ * this on the very change that documents the defect.
+ *
+ * `-z` rather than the default porcelain output, deliberately: without it git
+ * C-quotes any path holding a space or a non-ASCII byte, and a quoted path ends
+ * in `"` — so the `.jsonl` suffix test would silently miss it. A false negative
+ * here is the empty pass again, in the check written to report it.
+ *
+ * Returns `{ files: string[] }` or `{ files: null, reason }`. NEVER an empty
+ * array on failure: "git would not run" is not "nothing is waiting".
+ */
+export function uncommittedCorpusRows(rootDir) {
+  const r = spawnSync('git', ['status', '--porcelain', '-z', '--untracked-files=all', '--', CORPUS_REL], {
+    cwd: rootDir,
+    encoding: 'utf-8',
+  });
+  if (didNotStart(r)) return { files: null, reason: `git could not run: ${spawnFailureDetail(r)}` };
+  if (r.status !== 0) {
+    return { files: null, reason: `git status failed: ${(r.stderr || '').trim() || `exit ${r.status}`}` };
+  }
+
+  const fields = (r.stdout || '').split('\0');
+  const files = [];
+  for (let i = 0; i < fields.length; i++) {
+    const entry = fields[i];
+    if (entry === '') continue;
+    const status = entry.slice(0, 2);
+    const path = entry.slice(3);
+    // A rename or copy emits its ORIGIN as a second NUL-terminated field. Skip
+    // it explicitly rather than letting it parse as an entry with a garbled
+    // status — the origin path is a bare path with no `XY ` prefix.
+    if (status[0] === 'R' || status[0] === 'C') i++;
+    if (path.endsWith('.jsonl')) files.push(path);
+  }
+  return { files: files.sort() };
+}
+
 export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
   const errors = [];
   const notes = [];
@@ -497,6 +581,41 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
       if (added === null) cannotCheck.push(`could not diff against '${diffBase}', so no diff-scoped check ran`);
     } else {
       cannotCheck.push('no diff base supplied, so no diff-scoped check ran');
+    }
+  }
+
+  // CONDITION 7 — the empty pass, made CONDITIONAL (#518).
+  //
+  // Fires only on "empty scope AND rows are waiting". See this file's header
+  // for why the unconditional version was rejected, and why the `*.jsonl`
+  // scoping is load-bearing rather than tidy.
+  //
+  // `main()` reaches an empty non-null `added` only via git, so a git failure
+  // here is a state that invocation cannot produce — reported rather than
+  // swallowed all the same, because this is the one file in the repository that
+  // cannot afford to treat "could not check" as "clean".
+  let uncommittedRows = null;
+  if (added !== null && added.size === 0) {
+    const waiting = uncommittedCorpusRows(rootDir);
+    if (waiting.files === null) {
+      cannotCheck.push(
+        `${UNCOMMITTED_ROWS_CANNOT_CHECK_KEY} the diff scope is empty, and whether the working tree holds ` +
+          `uncommitted capture rows could not be established — ${waiting.reason}. An empty scope is only safe ` +
+          `to pass over when nothing is waiting to be committed, and that is exactly what is unknown here.`,
+      );
+    } else if (waiting.files.length > 0) {
+      uncommittedRows = waiting.files;
+      cannotCheck.push(
+        `${UNCOMMITTED_ROWS_CANNOT_CHECK_KEY} this change adds or modifies NO committed capture file, so every ` +
+          `diff-scoped condition ran on nothing — while the working tree holds ${waiting.files.length} ` +
+          `uncommitted capture row file(s): ${waiting.files.join(', ')}. Those rows were read from disk and ` +
+          `checked by the corpus-wide conditions ONLY. The conditions that catch a redacted path, a missing ` +
+          `\`templates_revision\` and a row claiming no template while one matches are scoped to what a change ` +
+          `ADDS, and an uncommitted file is in no diff. COMMIT THEM AND RE-RUN — that is the whole remedy. ` +
+          `The scoping is NOT the defect and must not be widened: the frozen log is never rewritten and most ` +
+          `existing rows predate these fields, so scoping by what is knowable is right. This is the one zero ` +
+          `worth reporting, because you were asked about rows that exist.`,
+      );
     }
   }
 
@@ -811,7 +930,18 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     }
   }
 
-  notes.push(`validated ${rows.length} row(s) across ${files.length} corpus file(s)`);
+  // The count is an honest figure and a MISLEADING LEDE when the rows the author
+  // came to ask about were not among the ones the diff-scoped checks saw. It
+  // prints first, so unqualified it hands a skimmer reassurance two lines before
+  // the caveat (#518). Qualified only when condition 7 fires — every other run
+  // keeps the plain form, because that is the case where the count is the answer.
+  notes.push(
+    uncommittedRows === null
+      ? `validated ${rows.length} row(s) across ${files.length} corpus file(s)`
+      : `${uncommittedRows.length} uncommitted capture row file(s) were NOT diff-checked — see CANNOT CHECK ` +
+          `below. The ${rows.length} row(s) across ${files.length} corpus file(s) on disk were checked by the ` +
+          `corpus-wide conditions ONLY.`,
+  );
   if (added !== null) notes.push(`${added.size} corpus file(s) added or modified by this change`);
   return { errors, notes, guidance, cannotCheck };
 }

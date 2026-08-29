@@ -24,6 +24,7 @@ import {
   corpusMatcher,
   TEMPLATE_MISMATCH_GUIDANCE_KEY,
   REVISION_CANNOT_CHECK_KEY,
+  UNCOMMITTED_ROWS_CANNOT_CHECK_KEY,
 } from './check-concealment-captures.mjs';
 import { parseStrictToml } from './check-concealment-templates.mjs';
 
@@ -663,6 +664,101 @@ for (const bad of ['', 'nope', 'abc123', 'zzzzzzzz', 42]) {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// ---------------------------------------------------------------------------
+// CONDITION 7 — the empty pass, made conditional (#518)
+//
+// The condition is "empty diff scope AND uncommitted rows waiting", so BOTH
+// directions matter and the quiet one matters more: the rejected alternative
+// was an unconditional note, whose whole defect is firing on runs like the
+// CONTROL below. A version that fires there has become that alternative, and
+// nothing about the message would say so.
+// ---------------------------------------------------------------------------
+
+const UNCOMMITTED = (r) => r.cannotCheck.filter((c) => c.startsWith(UNCOMMITTED_ROWS_CANNOT_CHECK_KEY));
+const PLAIN_COUNT = /^validated \d+ row\(s\) across \d+ corpus file\(s\)$/;
+const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-reminders', name);
+
+// --- the quiet directions: every zero that is NOT worth reporting -----------
+{
+  const { dir } = gitCorpus({ 'a.jsonl': line(row()) });
+  try {
+    const clean = check(dir, { addedFiles: new Set() });
+    is('CONTROL: an empty scope with a CLEAN tree stays silent', UNCOMMITTED(clean).length, 0);
+    is('...and keeps the plain row count, because there the count IS the answer', clean.notes.some((n) => PLAIN_COUNT.test(n)), true);
+
+    // The #517 fixture: that PR carried an uncommitted README.md in this very
+    // directory. Scoping to the directory rather than to `*.jsonl` would fire
+    // on the change that documents the defect.
+    writeFileSync(corpusFile(dir, 'README.md'), '# not a capture row\n');
+    const readme = check(dir, { addedFiles: new Set() });
+    is('an uncommitted NON-.jsonl file in the corpus directory does not trip it', UNCOMMITTED(readme).length, 0);
+    rmSync(corpusFile(dir, 'README.md'));
+
+    // Scope non-empty: the diff-scoped checks ran on something, which is the
+    // state this condition exists to distinguish from.
+    writeFileSync(corpusFile(dir, 'b.jsonl'), line(row()));
+    const scoped = check(dir, { addedFiles: new Set([rel('a.jsonl')]) });
+    is('a NON-empty diff scope does not trip it, even with rows uncommitted', UNCOMMITTED(scoped).length, 0);
+
+    // "Scope unknown" and "scope empty" must not collapse — that conflation is
+    // the shape this whole file exists to refuse.
+    const unknown = check(dir, {});
+    is('an UNKNOWN scope is not reported as an empty one', UNCOMMITTED(unknown).length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --- the loud direction, both shapes of "waiting" ---------------------------
+{
+  const { dir } = gitCorpus({ 'a.jsonl': line(row()) });
+  try {
+    // MODIFIED — QA's reproduction: a committed row edited in place, which git
+    // sees and no diff-scoped check does.
+    const stripped = row({ verbatim: 'Note: <PATH> changed.' });
+    delete stripped.factor_1;
+    delete stripped.template_id;
+    writeFileSync(corpusFile(dir, 'a.jsonl'), line(stripped));
+
+    const modified = check(dir, { addedFiles: new Set() });
+    is('an uncommitted MODIFIED row makes the empty scope a cannot-check', UNCOMMITTED(modified).length, 1);
+    is('...and the message names the file that was not checked', /a\.jsonl/.test(UNCOMMITTED(modified)[0]), true);
+    is('...and the remedy is to commit, not to widen the scoping', /COMMIT THEM AND RE-RUN/.test(UNCOMMITTED(modified)[0]), true);
+
+    // THE HEADLINE. `validated N row(s)` prints first and asserts work that did
+    // not happen, so the plain form must be GONE — not merely followed by a
+    // caveat two lines later.
+    is('the plain row count no longer leads the run', modified.notes.some((n) => PLAIN_COUNT.test(n)), false);
+    const countNote = modified.notes.find((n) => /\d+ row\(s\) across \d+ corpus file\(s\)/.test(n));
+    is('...and the line still carrying the count leads with what was NOT checked', /^\d+ uncommitted capture row file\(s\) were NOT diff-checked/.test(countNote ?? ''), true);
+
+    // UNTRACKED — the more common shape: a capture just written and not yet added.
+    writeFileSync(corpusFile(dir, 'a.jsonl'), line(row()));
+    writeFileSync(corpusFile(dir, 'b.jsonl'), line(row()));
+    const untracked = check(dir, { addedFiles: new Set() });
+    is('an UNTRACKED row does too', UNCOMMITTED(untracked).length, 1);
+    is('...and names it', /b\.jsonl/.test(UNCOMMITTED(untracked)[0]), true);
+
+    // END TO END, through `main()` and the REAL diff rather than the injection
+    // point: `HEAD...HEAD` adds nothing, so this is the shipped path.
+    const e2e = spawnSync(process.execPath, [GUARD, dir, 'HEAD'], { encoding: 'utf-8' });
+    is('the shipped entry point exits 2, not 0', e2e.status, 2);
+    is('...and never prints the OK line', /check-concealment-captures: OK/.test(e2e.stdout ?? ''), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --- "could not establish" is not "nothing is waiting" ---------------------
+{
+  // The fixture root is not a git repository, so the working tree cannot be
+  // inspected. Passing over the empty scope would be the empty pass with an
+  // extra step.
+  const r = run({ 'a.jsonl': line(row()) }, []);
+  is('an unreadable working tree reports cannot-check rather than silence', UNCOMMITTED(r).length, 1);
+  is('...and says what could not be established', /could not be established/.test(UNCOMMITTED(r)[0]), true);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

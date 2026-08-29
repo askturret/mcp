@@ -323,9 +323,7 @@ and describes matching that already ships.
 **Step 3 is the load-bearing one, and step 1 is why.**
 
 `0 corpus file(s) added or modified` means **nothing was checked.** Not "nothing
-was wrong" — nothing was examined. The run still prints
-`OK — every capture row satisfies the schema`, and that green is indistinguishable
-from a real one.
+was wrong" — nothing was examined.
 
 The reason is deliberate and is not a defect: the checks that catch a redacted
 path and a missing `templates_revision` are **diff-scoped to rows a change
@@ -334,8 +332,27 @@ the field. Scoping by what is knowable is correct. What is not obvious is that
 **a run before committing has an empty scope**, so the natural order — validate,
 then commit — is the one order in which the validator can tell you nothing.
 
-Do not widen the checks to fix this. The scoping is right; the silent empty pass
-is the problem, and reading one line of output is the whole remedy.
+Do not widen the checks to fix this. The scoping is right.
+
+### The validator now says so — but only when it can tell (#518)
+
+Since #518 the guard **refuses** — `CANNOT CHECK`, exit 2 — when the diff scope
+is empty *and* the working tree holds uncommitted or untracked `*.jsonl` under
+this directory. That is the state where you asked it about rows that exist and it
+examined none of them, and the run no longer ends in a green `OK`.
+
+**It is deliberately narrow, and the narrowness is the design.** An
+unconditional note on every zero-scope run was considered and rejected: nearly
+every PR adds no capture rows, so it would fire almost always and be irrelevant
+almost always — trading a silent empty pass for a noisy ignored one. So an empty
+scope with a clean tree still prints `OK`, correctly, and an uncommitted
+`README.md` in this directory does not trip it either. Only `*.jsonl` counts.
+
+**Step 3 still matters, because the signal has a bound it cannot cross.** The
+guard sees rows waiting in *your* tree; it cannot see that you pushed your
+capture on a different branch, or that the base you diffed against was wrong. In
+both of those the scope is empty, nothing is waiting, and `0 corpus file(s)` is
+still the only line that tells you.
 
 **How this was found is the argument for writing it down.** It was not found by
 validating a branch. It surfaced by accident, while mutation-testing the
@@ -359,6 +376,17 @@ Condition 6 catches all of them without enumerating any, because it keys on the
 slot's declared pattern — a path must start with `/` — rather than on a list of
 spellings someone has to keep current. A list is always one spelling behind; a
 pattern is not.
+
+**"All of them" means all the PLACEHOLDERS, and the distinction is not
+pedantic.** The declared pattern is a slash followed by anything, so it rejects
+`<PATH>`, `<REPO>` and every stand-in of that shape — none of which start with
+`/` — while a **fabricated path that looks real** (`/path/to/repo/.github/…`)
+satisfies it and passes silently. Telling a fabrication from a real path would
+require already knowing the real one, which is what the row is supposed to be
+carrying, so this very likely cannot be closed by any matcher. Do not read this
+section as saying the condition covers substitution; it covers spelling. **Past
+that refusal the corpus simply believes you** — which makes byte-for-byte
+copying an honesty requirement on the capturing agent, not a check.
 
 ## Landing a capture — the PR workflow
 

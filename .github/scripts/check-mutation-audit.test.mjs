@@ -777,6 +777,49 @@ process.exit(0);
   check('the audit discovers itself as a target', found, true);
 }
 
+// ---------------------------------------------------------------------------
+// The never-ran branches, asserted against the production source (#443)
+//
+// Both spawn sites here use `process.execPath` — an ABSOLUTE path that always
+// resolves — so a real ENOENT is not producible, and the empty-PATH technique
+// that witnesses `generate-sbom` and `check-runtime-marker-ignored` does not
+// reach them. That is the same situation `check-runtime-marker-ignored` faced,
+// and it is answered the same way: the shared vocabulary is exercised for real
+// in `sdk-upgrade-drill.test.mjs` — including against a genuinely SIGKILLed
+// child — and its USE is pinned here.
+//
+// Without these, two new cannot-check branches would land unwitnessed, which is
+// the issue's own causal claim: nothing executed the detail-string
+// construction, which is exactly why the original undefined-dereference
+// shipped. Four new branches with two unwitnessed reproduces the condition this
+// work exists to remove.
+//
+// Comments are stripped first. This file and the guard both DISCUSS the
+// forbidden form in order to warn against it, and a scan window including its
+// own documentation goes red for a comment while staying green for a real call
+// site a comment happens to mention (#449).
+// ---------------------------------------------------------------------------
+{
+  const source = readFileSync(join(import.meta.dirname, 'check-mutation-audit.mjs'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+    .join('\n');
+
+  check('the audit imports the shared never-ran vocabulary', /import \{[^}]*didNotStart[^}]*\} from '\.\/sdk-upgrade-drill\.mjs'/.test(source), true);
+  check('...and builds its detail with the shared helper', /spawnFailureDetail\s*\(/.test(source), true);
+
+  // BOTH spawn sites, named separately. A single `didNotStart(` match would be
+  // satisfied by one site while the other still fell through — which is the
+  // half-applied shape this whole PR is about, and the one QA found in it.
+  check('runNodeCheck tests for a never-ran child', /runNodeCheck[\s\S]{0,400}?didNotStart\s*\(/.test(source), true);
+  check('runSelfTest tests for a never-ran child', /runSelfTest[\s\S]{0,400}?didNotStart\s*\(/.test(source), true);
+
+  // The inlined form. Its ABSENCE is the assertion: a call site reaching for
+  // `.error.message` has kept the condition and dropped the defence.
+  check('...and neither dereferences `.error.message` directly', /\.error\.message/.test(source), false);
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

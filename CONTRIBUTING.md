@@ -470,6 +470,37 @@ housekeeping.
 
 6. **Once approved**, a maintainer will merge your PR
 
+### If you added or removed a workspace member, run this before pushing
+
+```bash
+npm run check:workspace-artifacts
+```
+
+Adding a workspace member invalidates artifacts **no local build or test
+command consults**: `npm ci` reads a lockfile that local installs ignore, and
+`NOTICE` and the licence policy read the *installed dependency set*. So "I built
+it and ran the tests" can be true, thorough, and still blind to all three.
+
+They also fail in **sequence**, not together. `npm ci` runs first and takes
+every job down with it, so the NOTICE failure is not even reachable until the
+lockfile is fixed — which is how one change cost two red CI runs in #322 (#324).
+This command evaluates all three and reports every finding at once.
+
+**Be clear about what it does and does not do.** This repository has no git
+hooks, no `.husky`, no `core.hooksPath` — and git hooks are not shared by clone
+anyway — so nothing makes this run. The npm script and this section make it
+**discoverable, not enforced**:
+
+| | effect |
+|---|---|
+| you run it before pushing | the round-trip is eliminated |
+| you don't | halved — two red pushes become one, because CI now reports both together |
+| nobody ever runs it | advisory only |
+
+It reports `COULD NOT CHECK` for the licence item when `node_modules` is absent,
+and exits non-zero. That is deliberate: the item most likely to be skipped
+locally must not be the one that silently reports clean.
+
 ### PR Checklist
 
 Before submitting, ensure:
@@ -479,6 +510,7 @@ Before submitting, ensure:
 - [ ] All commits are signed off (DCO)
 - [ ] PR is linked to an issue (if applicable)
 - [ ] New features include tests
+- [ ] If you changed workspace membership: `npm run check:workspace-artifacts`
 
 ## Contributing Adapters and Plugins
 

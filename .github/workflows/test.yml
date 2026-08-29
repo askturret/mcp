@@ -587,6 +587,27 @@ jobs:
       - name: No NUL bytes in source
         run: node .github/scripts/check-nul-bytes.mjs . --require-roots
 
+      # #324: self-tested first, and the self-test is the point rather than
+      # ceremony. This guard's whole value is that it reports EVERY drifted
+      # artifact in one run; a version that short-circuits on the first finding
+      # would still look correct in a green log, and would silently rebuild the
+      # two-round-trip sequencing the guard exists to remove. The self-test
+      # asserts the later runners were INVOKED, which output alone cannot show.
+      - name: Self-test the workspace-artifact guard
+        run: node .github/scripts/check-workspace-artifacts.test.mjs
+
+      # #324: lockfile drift and NOTICE staleness are both already caught in CI
+      # — but in SEQUENCE, by different jobs, so one change cost two red runs.
+      # `npm ci` dies before the NOTICE check can run, which is why fixing the
+      # lockfile did not cause a new failure, it made an existing one reachable.
+      # Running here collapses that to one round-trip. Eliminating it needs the
+      # check to run pre-push, which nothing in this repo can enforce.
+      #
+      # node_modules is present in this job (npm ci above), so the licence item
+      # genuinely runs here rather than reporting "could not check".
+      - name: Workspace artifacts are up to date
+        run: node .github/scripts/check-workspace-artifacts.mjs .
+
       # #431/#456: self-tested first. Three of this guard's four failure sites
       # are exit(2) — cannot-check — and nothing observed any of them. The
       # sharpest is an empty denylist, which matches no label and so reports

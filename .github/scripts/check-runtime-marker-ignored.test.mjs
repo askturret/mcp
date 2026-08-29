@@ -22,7 +22,7 @@
  * Run: node .github/scripts/check-runtime-marker-ignored.test.mjs
  */
 
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,6 +107,62 @@ try {
     runGuard(track(fixture({ git: false, gitignore: '.operum-stash-recovery\n' }))),
     2,
   );
+  // -------------------------------------------------------------------------
+  // git that never RAN (#443)
+  //
+  // This guard keyed its never-ran test on `result.error`, which is set when a
+  // process fails to START and is UNDEFINED when it is killed by a SIGNAL —
+  // both leaving `status: null`. A signal-killed git therefore fell past it
+  // into the exit-code ladder and was reported as `git check-ignore exited
+  // null`, diagnosing an exit that never happened.
+  //
+  // It failed CLOSED throughout, so no wrong verdict ever shipped. What was
+  // wrong is the sentence a reader has to act on, and that is what these pin.
+  // -------------------------------------------------------------------------
+  {
+    const dir = track(fixture({ git: true, gitignore: '.operum-stash-recovery\n' }));
+    const run = spawnSync(process.execPath, [GUARD, dir], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: join(tmpdir(), 'operum-there-is-no-git-here') },
+    });
+    const out = `${run.stdout}${run.stderr}`;
+
+    check('with git unresolvable the guard still refuses', run.status !== 0, true);
+    check('...and says git could not be RUN', /git could not be run/.test(out), true);
+    check('...rather than naming an exit that never happened', /exited null/.test(out), false);
+    check('...and names the spawn cause', /ENOENT/.test(out), true);
+  }
+
+  // THE FOUR ABOVE ARE CONTROLS, NOT WITNESSES, and saying so is the point.
+  //
+  // Verified by reverting: with the old `if (result.error)` keying they all
+  // still pass, because a MISSING git sets `error` and both keyings catch it.
+  // The two differ only on the signal-killed row — `error` undefined, `status`
+  // null — which cannot be produced for `git` on demand from a self-test.
+  //
+  // That row IS witnessed, against a real SIGKILLed child, in
+  // `sdk-upgrade-drill.test.mjs`, which also asserts that the inlined
+  // `result.error.message` throws on it. What that suite cannot see is whether
+  // THIS file still keys on the right thing — so the shared vocabulary is
+  // tested there and its use is pinned here.
+  //
+  // Comments are stripped first: this file's own explanation names both forms,
+  // and a scan window including its documentation would go red for a comment
+  // and green for a real call site a comment happened to mention (#449).
+  {
+    const source = readFileSync(GUARD, 'utf-8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+      .join('\n');
+
+    check('the guard keys its never-ran test on didNotStart', /didNotStart\s*\(/.test(source), true);
+    check('...and builds its detail with the shared helper', /spawnFailureDetail\s*\(/.test(source), true);
+    // The inlined form this replaced. Its ABSENCE is the assertion: a call site
+    // reaching for `.error.message` has kept the condition and dropped the
+    // defence, which is #443 finding 2.
+    check('...and never dereferences `.error.message` directly', /\.error\.message/.test(source), false);
+  }
 } finally {
   for (const dir of fixtures) rmSync(dir, { recursive: true, force: true });
 }

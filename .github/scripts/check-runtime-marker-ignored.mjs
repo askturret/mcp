@@ -50,6 +50,8 @@
 
 import { spawnSync } from 'node:child_process';
 
+import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
+
 /**
  * Paths the agent harness writes into the repo root.
  *
@@ -66,7 +68,22 @@ function isIgnored(path) {
     encoding: 'utf8',
   });
 
-  if (result.error) return { ok: false, fatal: `git could not be run: ${result.error.message}` };
+  // KEYED ON `status === null`, NOT ON `error` (#443).
+  //
+  // `error` is set when the process failed to START, and is UNDEFINED when it
+  // was killed by a SIGNAL — and both leave `status: null`. Testing `error`
+  // therefore catches only half the never-ran cases: an OOM-killed git fell
+  // through to the exit-code ladder below and was reported as
+  // `git check-ignore exited null`, which diagnoses an exit that never
+  // happened. It failed closed, so no wrong verdict shipped; what was wrong was
+  // the sentence a reader had to act on.
+  //
+  // `didNotStart` and `spawnFailureDetail` are IMPORTED rather than reimplemented.
+  // An inlined copy of this pair is what #443 finding 2 is about: the condition
+  // was kept and the defence dropped.
+  if (didNotStart(result)) {
+    return { ok: false, fatal: `git could not be run: ${spawnFailureDetail(result)}` };
+  }
   // 0 = ignored, 1 = not ignored, anything else (128) = git could not answer.
   if (result.status === 0) return { ok: true };
   if (result.status === 1) return { ok: false };

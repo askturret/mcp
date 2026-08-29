@@ -70,6 +70,8 @@ import {
   interpretProbe,
   discoverGuards,
   renderInventory,
+  parseInventoryTotals,
+  inventoryDelta,
 } from './check-mutation-audit.mjs';
 
 let passed = 0;
@@ -860,6 +862,102 @@ process.exit(0);
   // The inlined form. Its ABSENCE is the assertion: a call site reaching for
   // `.error.message` has kept the condition and dropped the defence.
   check('...and neither dereferences `.error.message` directly', /\.error\.message/.test(source), false);
+}
+
+// ---------------------------------------------------------------------------
+// The revision delta (#438) — the inventory records state; this records CHANGE
+//
+// Built because the 73 -> 74 flip was correct and had to be derived from a
+// line-number diff, and because #434's condition 2 was written against 38
+// unwitnessed sites and read today against 46 — a scoping error two people had
+// to catch by hand on the same day.
+// ---------------------------------------------------------------------------
+
+const TOTALS = Object.freeze({
+  guards: 19, sites: 160, witnessed: 114, unwitnessed: 46,
+  unreachableSites: 3, unreachable: 1, cannotCheck: 0, cannotCheckSites: 0,
+});
+const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: [], unwitnessed: [], noFailureWitnesses: [], errors: [] });
+
+// The parser reads THIS renderer's own output. Asserted by round-trip rather
+// than against a transcribed literal, which would agree today and drift later.
+{
+  const back = parseInventoryTotals(rendered(TOTALS));
+  check('the parser round-trips the renderer for `sites`', back?.sites, TOTALS.sites);
+  check('...and `witnessed`', back?.witnessed, TOTALS.witnessed);
+  check('...and `unwitnessed`', back?.unwitnessed, TOTALS.unwitnessed);
+  check('...and both halves of the unreachable line', `${back?.unreachableSites}/${back?.unreachable}`, '3/1');
+}
+
+// BOTH DIRECTIONS. A delta reporting only growth would have missed unreachable
+// going 24 -> 3, the most consequential movement this instrument has recorded.
+{
+  const before = rendered({ ...TOTALS, sites: 149, witnessed: 106, unwitnessed: 43, unreachableSites: 7, unreachable: 2 });
+  const out = inventoryDelta(before, TOTALS).join('\n');
+  check('an INCREASE is reported', /\| failure sites \| 149 \| 160 \| \*\*\+11\*\* \|/.test(out), true);
+  check('a DECREASE is reported with the same prominence', /\| unreachable sites \| 7 \| 3 \| \*\*-4\*\* \|/.test(out), true);
+}
+
+// RECLASSIFICATION IS NOT REGRESSION — the local/CI divergence QA found, where
+// a non-green baseline moves sites into cannot-check and a naive delta reads
+// the fall in `witnessed` as lost coverage.
+{
+  const ci = rendered(TOTALS);
+  const local = { ...TOTALS, witnessed: 111, cannotCheck: 1, cannotCheckSites: 3 };
+  const out = inventoryDelta(ci, local).join('\n');
+  check('a fall in witnessed at a CONSTANT total is named a reclassification', /RECLASSIFICATION, not regression/.test(out), true);
+  check('...and says nothing was actually lost', /nothing was actually lost/.test(out), true);
+
+  // The paired positive: when the population really does change, it must NOT be
+  // excused as a reclassification.
+  const grew = { ...TOTALS, sites: 170, witnessed: 120 };
+  check('...but a real population change is NOT excused as one', /RECLASSIFICATION/.test(inventoryDelta(ci, grew).join('\n')), false);
+}
+
+// A partition that does not close refuses to interpret anything.
+{
+  const out = inventoryDelta(rendered(TOTALS), { ...TOTALS, witnessed: 100 }).join('\n');
+  check('a partition that does not close is reported', /Partition does not close/.test(out), true);
+  check('...and the figures are declared unexplained rather than read', /unexplained until that is understood/.test(out), true);
+}
+
+// "Could not compare" is SAID, because silence is indistinguishable from
+// "nothing moved" — the failure this whole instrument exists to catch.
+{
+  const out = inventoryDelta(null, TOTALS).join('\n');
+  check('no previous revision says so out loud', /Could not compare/.test(out), true);
+  check('...and distinguishes it from nothing having moved', /not the same as "nothing moved"/.test(out), true);
+  check('...and an UNPARSEABLE predecessor is the same case', /Could not compare/.test(inventoryDelta('not an inventory', TOTALS).join('\n')), true);
+}
+
+// A figure the previous revision did not record is "absent then", not
+// "unchanged" — the same missing-vs-unknown distinction the capture schema draws.
+{
+  const old = rendered(TOTALS).split('\n').filter((l) => !/^- witnessed:/.test(l)).join('\n');
+  const out = inventoryDelta(old, TOTALS).join('\n');
+  check('a figure absent from the predecessor is reported as not comparable', /Not comparable: \*\*witnessed\*\*/.test(out), true);
+  check('...and says absent is a different fact from unchanged', /different fact from unchanged/.test(out), true);
+}
+
+// OBSERVED FAILING, which the acceptance asks for: a moved figure WITHOUT the
+// section, then with it. Without the delta the rendered inventory carries the
+// new number and no account of the move — which is the state #438 describes.
+{
+  const withDelta = renderInventory({ totals: TOTALS, guards: [], unreachable: [], unwitnessed: [], noFailureWitnesses: [], errors: [] },
+    rendered({ ...TOTALS, witnessed: 106 }));
+  check('a moved figure is accounted for when the section runs', /\| witnessed \| 106 \| 114 \|/.test(withDelta), true);
+  // The pre-#438 behaviour: state only. The new number appears; the movement does not.
+  const stateOnly = rendered(TOTALS);
+  check('...and WITHOUT a predecessor the same render explains nothing', /\| witnessed \| 106 \|/.test(stateOnly), false);
+  check('...while still carrying the new figure, which is exactly the defect', /- witnessed: \*\*114\*\*/.test(stateOnly), true);
+}
+
+// The retroactive entry, so the first movement is not the undocumented one.
+{
+  const out = rendered(TOTALS);
+  check('the 73 -> 74 flip is recorded retroactively', /witnessed 73 -> 74/.test(out), true);
+  check('...with the site QA attributed it to', /interpretProbe/.test(out), true);
+  check('...and the section names WHAT it compared against', /the inventory committed in this repository/.test(out), true);
 }
 
 console.log('');

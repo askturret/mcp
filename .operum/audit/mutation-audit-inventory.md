@@ -21,19 +21,49 @@ which `env: node` fails in child processes — several guards then go
 precondition for reproducing anything below. Re-run with a sane `PATH` before
 treating a difference as a real change.
 
-- measured guards: **23**
-- failure sites: **149**
-- witnessed: **106**
-- unwitnessed: **43**
-- unreachable (no self-test, #431): **7** sites across 2 scripts
+- measured guards: **25**
+- failure sites: **160**
+- witnessed: **114**
+- unwitnessed: **46**
+- unreachable (no self-test, #431): **3** sites across 1 scripts
 - cannot check (non-green baseline): **0** scripts
+- cannot check, as sites: **0**
+
+`witnessed + unwitnessed + cannot-check sites = failure sites`. The site-level
+figure is what closes that identity, and it is what makes a fall in `witnessed`
+legible as a change of CATEGORY rather than a loss of coverage (#438).
+
+## What moved since the previous revision (#438)
+
+Compared against **the inventory committed in this repository**, not against the
+previous run. Two runs of the same code in different environments legitimately
+differ — see caveat 2 — so a delta between a local run and a CI one would report
+movement that is an artifact of where it ran. This says which it compared.
+
+| figure | before | after | change |
+|---|---|---|---|
+| failure sites | 149 | 160 | **+11** |
+| witnessed | 106 | 114 | **+8** |
+| unwitnessed | 43 | 46 | **+3** |
+| unreachable sites | 7 | 3 | **-4** |
+| unreachable scripts | 2 | 1 | **-1** |
+| measured guards | 23 | 25 | **+2** |
+
+**The measured population changed**, so the movement above is not only a change of category.
+
+The first recorded movement predates this section and is kept so that it is not
+the undocumented one: **witnessed 73 -> 74** between `8bc9641` and `f2d0fda`.
+QA attributed it to `errors.push(...interpretProbe(g).map(...))` in `audit()`
+gaining a witness from the new detector fixture — a fix giving a real site a
+real witness, which is what should happen. It had to be derived from a
+line-number diff, which is why this section exists.
 
 | script | sites | witnessed | unwitnessed | status |
 |---|---|---|---|---|
 | `check-adr-citations.mjs` | 3 | 3 | 0 | measured |
-| `check-audit-append-only.mjs` | 4 | 2 | 2 | measured |
+| `check-audit-append-only.mjs` | 5 | 4 | 1 | measured |
 | `check-codeowners.mjs` | 5 | 4 | 1 | measured |
-| `check-concealment-captures.mjs` | 14 | 12 | 2 | measured |
+| `check-concealment-captures.mjs` | 18 | 16 | 2 | measured |
 | `check-concealment-templates.mjs` | 42 | 27 | 15 | measured |
 | `check-dashboard-metrics.mjs` | 12 | 7 | 5 | measured |
 | `check-doc-types.mjs` | 3 | 2 | 1 | measured |
@@ -50,8 +80,10 @@ treating a difference as a real change.
 | `check-runners.mjs` | 3 | 3 | 0 | measured |
 | `check-runtime-marker-ignored.mjs` | 2 | 2 | 0 | measured |
 | `check-sdk-boundary.mjs` | 3 | 2 | 1 | measured |
+| `check-workspace-artifacts.mjs` | 1 | 1 | 0 | measured |
 | `ci-coverage-status.mjs` | 7 | 6 | 1 | measured |
 | `generate-notice.mjs` | 3 | 3 | 0 | measured |
+| `generate-sbom.mjs` | 5 | 1 | 4 | measured |
 | `sdk-upgrade-drill.mjs` | 8 | 1 | 7 | measured |
 
 ## Unwitnessed sites
@@ -60,11 +92,10 @@ Neutralising these changed nothing their self-test could see.
 
 | script | line | kind |
 |---|---|---|
-| `check-audit-append-only.mjs` | 108 | result-code |
-| `check-audit-append-only.mjs` | 199 | process-exit |
+| `check-audit-append-only.mjs` | 165 | result-code |
 | `check-codeowners.mjs` | 206 | process-exit |
-| `check-concealment-captures.mjs` | 310 | errors-push |
-| `check-concealment-captures.mjs` | 429 | errors-push |
+| `check-concealment-captures.mjs` | 532 | errors-push |
+| `check-concealment-captures.mjs` | 728 | errors-push |
 | `check-concealment-templates.mjs` | 194 | throw |
 | `check-concealment-templates.mjs` | 204 | throw |
 | `check-concealment-templates.mjs` | 218 | throw |
@@ -90,19 +121,23 @@ Neutralising these changed nothing their self-test could see.
 | `check-licenses.mjs` | 110 | process-exit |
 | `check-licenses.mjs` | 145 | process-exit |
 | `check-licenses.mjs` | 183 | process-exit |
-| `check-mutation-audit.mjs` | 469 | throw |
-| `check-mutation-audit.mjs` | 656 | errors-push |
-| `check-mutation-audit.mjs` | 700 | return-code |
-| `check-mutation-audit.mjs` | 712 | process-exit |
+| `check-mutation-audit.mjs` | 517 | throw |
+| `check-mutation-audit.mjs` | 879 | errors-push |
+| `check-mutation-audit.mjs` | 943 | return-code |
+| `check-mutation-audit.mjs` | 955 | process-exit |
 | `check-sdk-boundary.mjs` | 215 | process-exit |
 | `ci-coverage-status.mjs` | 74 | errors-push |
-| `sdk-upgrade-drill.mjs` | 132 | result-code |
-| `sdk-upgrade-drill.mjs` | 143 | result-code |
-| `sdk-upgrade-drill.mjs` | 165 | process-exit |
-| `sdk-upgrade-drill.mjs` | 178 | result-code |
-| `sdk-upgrade-drill.mjs` | 199 | result-code |
-| `sdk-upgrade-drill.mjs` | 212 | result-code |
-| `sdk-upgrade-drill.mjs` | 257 | process-exit |
+| `generate-sbom.mjs` | 109 | process-exit |
+| `generate-sbom.mjs` | 117 | process-exit |
+| `generate-sbom.mjs` | 124 | process-exit |
+| `generate-sbom.mjs` | 132 | process-exit |
+| `sdk-upgrade-drill.mjs` | 158 | result-code |
+| `sdk-upgrade-drill.mjs` | 169 | result-code |
+| `sdk-upgrade-drill.mjs` | 191 | process-exit |
+| `sdk-upgrade-drill.mjs` | 204 | result-code |
+| `sdk-upgrade-drill.mjs` | 225 | result-code |
+| `sdk-upgrade-drill.mjs` | 238 | result-code |
+| `sdk-upgrade-drill.mjs` | 283 | process-exit |
 
 ## Self-tests that observe no failure at all
 
@@ -121,7 +156,6 @@ re-keying of this audit reaches them. Separately owned by #431.
 | script | sites |
 |---|---|
 | `check-test-execution.mjs` | 3 |
-| `generate-sbom.mjs` | 4 |
 
 ---
 *Operum Engineer · [operum.ai](https://operum.ai)*

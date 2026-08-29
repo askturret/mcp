@@ -68,7 +68,14 @@ function check(desc, actual, expected) {
     });
     const out = `${run.stdout ?? ''}${run.stderr ?? ''}`;
 
-    check('a generator that never STARTS exits 2', run.status, 2);
+    // CONTROL, NOT A WITNESS — and it is labelled here because this is where a
+    // reader of the assertion looks. Verified by disabling the guard: this line
+    // stays GREEN, because the old code exited 2 from the next branch down. It
+    // establishes that the run refused at all; the four below are what
+    // establish it refused for the RIGHT REASON, and they are the ones that go
+    // red.
+    check('CONTROL: a generator that never STARTS exits 2', run.status, 2);
+
     check('...and says it COULD NOT RUN', /COULD NOT RUN/.test(out), true);
     check('...and names the spawn cause rather than swallowing it', /ENOENT/.test(out), true);
 

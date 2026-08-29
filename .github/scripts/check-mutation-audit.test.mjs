@@ -811,9 +811,51 @@ process.exit(0);
 
   // BOTH spawn sites, named separately. A single `didNotStart(` match would be
   // satisfied by one site while the other still fell through — which is the
-  // half-applied shape this whole PR is about, and the one QA found in it.
-  check('runNodeCheck tests for a never-ran child', /runNodeCheck[\s\S]{0,400}?didNotStart\s*\(/.test(source), true);
-  check('runSelfTest tests for a never-ran child', /runSelfTest[\s\S]{0,400}?didNotStart\s*\(/.test(source), true);
+  // half-applied shape this whole PR is about.
+  //
+  // SCOPED BY BRACE MATCHING, NOT BY A CHARACTER BUDGET, and the difference is
+  // the whole assertion. The first version of these two lines used
+  // `/runNodeCheck[\s\S]{0,400}?didNotStart\(/`, and QA showed it stayed GREEN
+  // with runNodeCheck's guard deleted outright: the 320-character window began
+  // at the name, ran through the now-unguarded body, CROSSED THE FUNCTION
+  // BOUNDARY and terminated on runSelfTest's guard. So the runNodeCheck
+  // assertion was witnessing runSelfTest, twice.
+  //
+  // It was asymmetric, which is why one-direction testing cleared it — deleting
+  // the LAST didNotStart in the file does go red. Both directions are exercised
+  // now, and a budget is never a scope.
+  const bodyOf = (src, name) => {
+    const at = src.indexOf(`function ${name}(`);
+    if (at === -1) return '';
+    const open = src.indexOf('{', at);
+    if (open === -1) return '';
+    let depth = 0;
+    for (let i = open; i < src.length; i += 1) {
+      if (src[i] === '{') depth += 1;
+      else if (src[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return src.slice(open, i + 1);
+      }
+    }
+    return '';
+  };
+
+  // The slices must be NON-EMPTY first. Without this the two assertions below
+  // pass vacuously the moment a function is renamed — `indexOf` returns -1, the
+  // slice is '', and `.test('')` is false, so the failure would look like a
+  // missing guard rather than a missing target. Same shape as the `-1 is less
+  // than any position` trap already recorded in sdk-upgrade-drill.test.mjs.
+  const nodeCheckBody = bodyOf(source, 'runNodeCheck');
+  const selfTestBody = bodyOf(source, 'runSelfTest');
+  check('the runNodeCheck body is located, so the next assertion is not vacuous', nodeCheckBody !== '', true);
+  check('the runSelfTest body is located, so the next assertion is not vacuous', selfTestBody !== '', true);
+
+  // ...and the slices must not be the SAME slice, which would restore the
+  // defect in a new costume.
+  check('...and they are distinct bodies', nodeCheckBody !== selfTestBody, true);
+
+  check('runNodeCheck tests for a never-ran child', /didNotStart\s*\(/.test(nodeCheckBody), true);
+  check('runSelfTest tests for a never-ran child', /didNotStart\s*\(/.test(selfTestBody), true);
 
   // The inlined form. Its ABSENCE is the assertion: a call site reaching for
   // `.error.message` has kept the condition and dropped the defence.

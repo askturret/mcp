@@ -159,8 +159,13 @@ declares that it closes nothing. The PR is then gated on `<N>`'s
 never be applied, or may be correctly removed the moment `<N>` ships.
 
 Naming a branch after the issue you *happened to be working on* is the natural
-mistake, and it has now been made five times. It bites hardest on PRs that
-legitimately close nothing — concealment captures above all, so
+mistake. The behaviour is established across five instances; **the mistake
+accounts for three of them.** The other two are branches that kept the number
+out and merged cleanly — they are the control arm, not noise around the
+finding, and they are why this is established rather than anecdotal.
+
+It bites hardest on PRs that legitimately close nothing — concealment captures
+above all, so
 [their README](.operum/audit/concealment-reminders/README.md#landing-a-capture--the-pr-workflow)
 carries the full mechanism and the evidence. The short version: if the branch
 does not do issue `<N>`'s work, keep `<N>` out of its name and put the reference

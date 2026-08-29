@@ -281,12 +281,12 @@ working issue `<N>`, which is the usual case and exactly why this keeps happenin
 ### Never file a tracking issue to satisfy a gate
 
 If a gate refuses the PR, **do not create an issue so the PR has something to
-close.** One such issue exists and its own body admits it was filed only to get
-past the gate. It is harmful in three ways, and the friction is the least of
-them: it puts a knowingly false statement in the permanent record; it opens and
-closes in one motion, so any signal derived from issue state degrades; and it
-trains the reflex of *filing an artifact to get past a control*, which is the
-worst habit to build anywhere near a security gate.
+close.** One such issue exists — #357 — and its own body admits it was filed
+only to get past the gate. It is harmful in three ways, and the friction is the
+least of them: it puts a knowingly false statement in the permanent record; it
+opens and closes in one motion, so any signal derived from issue state
+degrades; and it trains the reflex of *filing an artifact to get past a
+control*, which is the worst habit to build anywhere near a security gate.
 
 Do not write a `Closes #N` you do not mean, either. Same reason.
 
@@ -302,9 +302,9 @@ This is established behaviour with repeated instances, not a hypothesis:
 | when | branch | what happened |
 |---|---|---|
 | PR #352, #358 | `chore/preserve-*` — no number | merged |
-| PR #363 | `chore/issue-359-*` | refused, linkage resolved to #359 from the branch alone |
+| PR #363 | `chore/issue-359-*` | refused, with the linkage derived from the branch alone and pointed at #359 |
 | a capture during #266's QA | `chore/issue-266-*` | two PRs shared a branch-derived link, so the approval recorder refused to guess which head was reviewed — and blocked the stamp on an unrelated, already-approved PR |
-| PR #477 | `chore/issue-390-*` | refused, demanding a stamp on #390 that #390's own post-merge cleanup had correctly removed 45 seconds after its PR merged |
+| PR #477 | `chore/issue-390-*` | refused, demanding a stamp on #390 that #390's own post-merge cleanup had correctly removed 46 seconds after its PR merged |
 
 The last row is the sharpest, because nothing was wrong with any of it: the
 capture was correct, the cleanup was correct, and the PR still could not merge.

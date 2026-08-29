@@ -107,17 +107,30 @@ parser is a feature.
 
 Recorded so nobody re-derives them as obvious simplifications.
 
-**The ASCII-hyphen variant of T1 was not seeded.** Eleven entries render the
-clause with a hyphen rather than an em dash — and those eleven are *exactly*
-the eleven that also redacted the path, a perfect correlation with one agent's
-transcription style. All ninety-nine unredacted captures use U+2014. Both
-figures are as of `e901fc2`. Seeding the hyphen form would widen the allowlist
-on the strength of a transcription slip.
+**The ASCII-hyphen variant of T1 was not seeded.** As of `e901fc2`, 130 captures
+carry the clause: **11 render it with an ASCII hyphen and 119 with U+2014.**
+Partition them by the character immediately preceding `otherwise no need to call
+it out`; that is the whole method, and the two figures account for all 130.
 
-**The `Note: `-prefixed variant of T2 was not seeded.** One capture records it;
-four record the unprefixed form. TOML optionality is not available in this
-schema by design, and adding the prefix as an alternative would be widening on
-one observation.
+Those eleven are exactly the captures whose `verbatim` begins
+`Note: <redacted-abs-path>` — 11 of 11 in both directions. **That is a
+correlation with one agent's placeholder string, not with redaction in
+general.** The distinction is load-bearing: read "redacted" more broadly, as
+*carries no absolute path in the `Note:` slot* (`verbatim` not matching
+`Note: /`), and 31 captures redact, of which 20 still use U+2014.
+
+An earlier draft of this paragraph called that a perfect correlation without
+saying which reading it meant. It holds under the first and fails under the
+second, so the reading was silently doing work the evidence was credited with.
+State the predicate with the count, or the count cannot be checked.
+
+Seeding the hyphen form would widen the allowlist on the strength of one agent's
+transcription slip.
+
+**The `Note: `-prefixed variant of T2 was not seeded.** As of `e901fc2`, of the
+eight captures carrying T2's clause, **one** begins `Note: ` and **seven** do
+not. TOML optionality is not available in this schema by design, and adding the
+prefix as an alternative would be widening on one observation.
 
 If either form is genuinely emitted upstream, it fails Factor 2, routes
 ANOMALOUS **once**, a human confirms it, and it is added with its own citation.
@@ -275,15 +288,20 @@ Stated because a reader will otherwise assume the wrong referent:
 > hash of the file as read. It is **not** a claim about `main`'s allowlist at
 > that moment, and the two can differ.
 
-They differ more often than calendar arithmetic suggests. The allowlist was ~14
-hours old when this was written and had already had three revisions, two of them
-two hours apart; agent worktrees routinely outlive that interval. The staleness
-is **bursty rather than rare**, and its bursts fall exactly on periods of active
+They differ more often than calendar arithmetic suggests. As of `e901fc2` the
+allowlist had **five revisions** since it was seeded on 2026-08-25, **two of
+them fourteen minutes apart**, and agent worktrees routinely outlive that
+interval — re-derive with
+`git log -- .operum/audit/concealment-templates.toml`. The staleness is
+**bursty rather than rare**, and its bursts fall exactly on periods of active
 allowlist development — which are also the periods of heaviest capture volume.
 
-**This matters for how the corpus is read.** #388's diff-scoping rests on the
-measurement that *42 of 43 inverse-shaped rows predate T1C's merge, and were
-correctly anomalous against the allowlist of their moment.* That is an
+**This matters for how the corpus is read.** #388's diff-scoping rests on **its
+own** measurement that *42 of 43 inverse-shaped rows predate T1C's merge, and
+were correctly anomalous against the allowlist of their moment.* That figure is
+#388's and is deliberately **not re-derived at this anchor**: "inverse-shaped"
+is defined there and not here, and quoting a count without the predicate that
+produced it is the defect the paragraphs above were just corrected for. It is an
 **inference from timestamps**, because no row recorded what it saw — and it is
 precisely the inference that failed for the one post-merge row, where
 timestamp-versus-merge said *"should have matched"* and the truth was a stale

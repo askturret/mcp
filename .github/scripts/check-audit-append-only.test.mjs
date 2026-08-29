@@ -34,9 +34,12 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-import { check } from './check-audit-append-only.mjs';
+import { check, MANUAL_SUBSTITUTE } from './check-audit-append-only.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
+const GUARD = join(here, 'check-audit-append-only.mjs');
+/** A directory that does not exist, used as a PATH with no `git` on it. */
+const NO_GIT_PATH = join(tmpdir(), 'operum-there-is-no-git-here');
 const repoRoot = resolve(here, '../..');
 const REAL_GITATTRIBUTES = join(repoRoot, '.gitattributes');
 const LOG = '.operum/audit/protected-file-events.jsonl';
@@ -298,6 +301,115 @@ function guardRepo() {
 
   check_('exits 2 — not 0 — when the base ref cannot be resolved', result.code, 2);
   check_('and says the guard did not run', result.message.includes('did not run'), true);
+
+  // A refusal that does not say what to run instead is a shrug. QA hit this
+  // branch during live review of PR #490 and did the check by hand; this is
+  // that procedure, carried by the message rather than by whoever remembers it.
+  check_('...and names the manual substitute', result.message.includes(MANUAL_SUBSTITUTE), true);
+}
+
+// ---------------------------------------------------------------------------
+// git that never RAN — the crash inside the fail-closed branch (#449)
+//
+// NOT the same case as the unresolvable ref above, and the distinction is the
+// whole defect. An unresolvable ref means git RAN and exited non-zero, so
+// `stderr` is a string and the message rendered fine — which is why the test
+// above has always passed. A git that never STARTS has `status: null` and
+// `stderr: null`, so `merged.stderr.trim()` threw a TypeError from inside the
+// branch whose entire job is to report legibly.
+//
+// This is the #429 environment, not a shallow clone: a space-separated PATH
+// leaves `git` unresolvable in an ordinary agent worktree, which is where QA
+// met it.
+// ---------------------------------------------------------------------------
+{
+  const dir = guardRepo();
+  const realPath = process.env['PATH'];
+  let result;
+  try {
+    process.env['PATH'] = NO_GIT_PATH;
+    result = check('base', dir);
+  } finally {
+    process.env['PATH'] = realPath;
+  }
+
+  check_('a git that never RAN exits 2', result.code, 2);
+  // The regression proper: the old code threw before it could return anything.
+  check_('...and returns a message rather than throwing', typeof result.message, 'string');
+  check_('...and names the spawn cause instead of swallowing it', /ENOENT/.test(result.message), true);
+  check_('...and says it did not run', result.message.includes('did not run'), true);
+  check_('...and names the manual substitute', result.message.includes(MANUAL_SUBSTITUTE), true);
+}
+
+// The same case through the SHIPPED entry point, because the defect was only
+// ever visible there: a stack trace on stderr and exit 1 from an uncaught
+// throw, rather than the sentence and exit 2.
+{
+  const dir = guardRepo();
+  const r = spawnSync(process.execPath, [GUARD, 'base', dir], {
+    encoding: 'utf-8',
+    env: { ...process.env, PATH: NO_GIT_PATH },
+  });
+  const out = `${r.stdout}${r.stderr}`;
+
+  check_('the CLI exits 2, not 1 from an uncaught throw', r.status, 2);
+  check_('...and prints no stack trace', /TypeError|at ModuleJob/.test(out), false);
+  check_('...and prints the intended sentence', out.includes('did not run'), true);
+
+  // The annotation is the line that reaches the Actions summary. Announcing a
+  // guard that never ran as "lost lines" reports a finding it never made.
+  check_('...and the annotation says CANNOT CHECK', /CANNOT CHECK/.test(out), true);
+  check_('...rather than claiming lost lines', /lost lines/.test(out), false);
+}
+
+// ---------------------------------------------------------------------------
+// #443 finding 2, asserted against the production source
+//
+// Read from source rather than executed, and the reason is specific: the
+// CONDITION-ONLY variant — `didNotStart` kept, `spawnFailureDetail` replaced by
+// an inline `result.error.message` — leaves every behavioural assertion above
+// GREEN. A spawn that failed to START has `error` set, so the inline form works
+// on exactly the rows tested here. It breaks only on the signal-killed row
+// (`status: null`, `error` UNDEFINED, `signal` set), which cannot be produced
+// on demand from a self-test.
+//
+// `spawnFailureDetail` is tested directly, including that row, in
+// `sdk-upgrade-drill.test.mjs`. What that CANNOT see is whether this file still
+// calls it — so the shared helper is tested there and its use is pinned here.
+// ---------------------------------------------------------------------------
+{
+  // COMMENTS ARE STRIPPED FIRST, and that is load-bearing rather than tidy.
+  // Both absence assertions below FAILED on their first run — matching the
+  // prose in this guard's own docstrings, which name the two forms precisely
+  // in order to warn against them. A scan window that includes its own
+  // documentation is the Decorative Guard shape `docs/TESTING.md` names: it
+  // would go red for a comment and stay green for a real call site that a
+  // comment happened to mention.
+  const source = readFileSync(GUARD, 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+    .join('\n');
+
+  check_(
+    'the guard imports the shared failure-detail helper rather than re-deriving it',
+    /import \{[^}]*spawnFailureDetail[^}]*\} from '\.\/sdk-upgrade-drill\.mjs'/.test(source),
+    true,
+  );
+  check_('...and uses it', /spawnFailureDetail\(/.test(source), true);
+
+  // The inlined form this replaced. Its absence is the assertion: a call site
+  // reaching for `.error.message` has kept the condition and dropped the
+  // defence, which is the shape that dereferences `undefined` on a SIGKILL.
+  check_('...and never dereferences `.error.message` directly', /\.error\.message/.test(source), false);
+
+  // `stderr` is absent on a never-started spawn and a string otherwise, so a
+  // SPAWN RESULT may never be read directly — that was this issue's crash.
+  // Targeted at the named results rather than at `.stderr.trim()` in general:
+  // the `stderrOf` helper contains exactly that text and is CORRECT, because it
+  // type-checks first. Asserting on the bare form failed against the fix, which
+  // is how the over-broad window was found.
+  check_('...and reads no spawn result’s `stderr` directly', /\b(merged|diff)\.stderr/.test(source), false);
 }
 
 // ---------------------------------------------------------------------------

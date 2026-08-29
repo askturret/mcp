@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { applyMigrations, type ProjectFile } from '../engine.js';
+import { applyMigrations, blankComments, type ProjectFile } from '../engine.js';
 import { MIGRATIONS, selectMigrations, knownPairs } from '../registry.js';
 import { renderIndex, renderSnippet } from '../guide.js';
 import { parseMigrateArgs, migrateCommand } from '../index.js';
@@ -898,14 +898,187 @@ describe('source rules', () => {
       expect(asSource.files[0]?.contents ?? '').toContain('export { durable as legacy }');
     });
 
-    it('no longer calls an export specifier "object shorthand"', () => {
-      // The third acceptance item: every remaining refusal's reason must be
-      // TRUE of that occurrence.
+    it('CONTROL: a re-export refusal says "re-export", which was already true on main', () => {
+      // NAMED AS A CONTROL BECAUSE IT IS ONE (#454, second finding).
+      //
+      // This was `no longer calls an export specifier "object shorthand"`, a
+      // witness name over a re-export fixture — which #421 already reported as
+      // `re-export` before #424 existed. It passes both ways and was never
+      // among that issue's reds, so the name promised a guarantee the assertion
+      // does not carry.
+      //
+      // The local case the old name described IS covered, by
+      // `REFUSES local export { other as durability }` above: that one reddens
+      // on a reverted tree, because main classified it `reference` and rewrote
+      // it silently. Coverage was always intact; only the label was wrong.
+      //
+      // Kept rather than deleted: it pins that #424's new range function did
+      // not disturb #421's reason text, which is a real property even though
+      // no revert of #424 can break it.
       const result = runDurability(`export { durability } from '@askturret/mcp-core';\n`);
       const detail = result.findings.map((f) => f.detail).join('\n');
 
       expect(detail).not.toContain('object shorthand');
       expect(detail).toContain('re-export');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // A comment is not a statement boundary (#454)
+  //
+  // The local/re-export split was decided by `(?!\s*\bfrom\b)` over the RAW
+  // text. `\s*` cannot cross `/* c */`, so a re-export written with a comment
+  // in the gap fell into `localExportRanges` and took local policy — two
+  // near-identical files given different treatment on an incidental comment.
+  //
+  // The measured population is wider than "a comment in the gap", and every
+  // row below was observed before anything was changed:
+  //
+  //   export { X } /* c */ from 'm'     re-export -> REWRITTEN under local policy
+  //   export { X } // c \n from 'm'     same
+  //   export type { X } /* c */ from    same, for the type-only form
+  //   export /* c */ { X } from 'm'     matched NEITHER range -> "object shorthand"
+  //   export { other as X } /* c */ fr  refused both ways, but with a DIFFERENT reason
+  //   export { X } \n from.f()          local -> refused as "object shorthand"
+  //
+  // The last row is the reverse direction, and it matters that it exists: the
+  // lookahead was equally wrong about an identifier that merely spells `from`.
+  //
+  // THE FIX IS NOT A CLEVERER PATTERN. The engine already computes a
+  // length-preserving mask in which comments are whitespace; the split simply
+  // was not consulting it. Deciding it over a comment-blanked view makes both
+  // directions fall out, and disjointness is now structural — a local match is
+  // dropped when a re-export range STARTS at the same index, so the two sets
+  // cannot disagree about a statement even in principle.
+  // -------------------------------------------------------------------------
+  describe('a comment does not change which policy a statement gets (#454)', () => {
+    const CORE = '@askturret/mcp-core';
+
+    /** Policy, as the adopter sees it: the emitted text and every finding. */
+    const policyOf = (contents: string, comment: string) => {
+      const result = runDurability(contents);
+      const strip = (s: string) => s.split(comment).join('').replace(/[ \t]+/g, ' ');
+      return {
+        out: strip(result.files[0]?.contents ?? ''),
+        actions: result.findings.map((f) => f.action).join(','),
+        details: strip(result.findings.map((f) => f.detail).join('\n')),
+      };
+    };
+
+    // The pair the issue is named for. Same statement, one comment apart.
+    it('`export { X } /* c */ from` gets the same policy as `export { X } from`', () => {
+      const plain = policyOf(`export { durability } from '${CORE}';\n`, '/* c */');
+      const commented = policyOf(`export { durability } /* c */ from '${CORE}';\n`, '/* c */');
+
+      expect(commented).toEqual(plain);
+      // ...and the policy is still #421's refusal, not local-export aliasing.
+      expect(commented.actions).toBe('manual');
+      expect(commented.details).toContain('re-export');
+    });
+
+    it('...and so does the line-comment form, which spans a newline', () => {
+      const plain = policyOf(`export { durability } from '${CORE}';\n`, '// c');
+      const commented = policyOf(`export { durability } // c\nfrom '${CORE}';\n`, '// c');
+
+      expect(commented.actions).toBe(plain.actions);
+      expect(commented.details).toBe(plain.details);
+      expect(commented.out).toContain('export { durability }');
+      expect(commented.out).not.toContain('as durability');
+    });
+
+    it('...and the type-only form', () => {
+      const plain = policyOf(`export type { durability } from '${CORE}';\n`, '/* c */');
+      const commented = policyOf(`export type { durability } /* c */ from '${CORE}';\n`, '/* c */');
+
+      expect(commented).toEqual(plain);
+    });
+
+    it('...and a comment BEFORE the clause, which matched neither range', () => {
+      // This one did not take local policy — it fell out of both range sets and
+      // was refused as `object shorthand`, a reason that is false of a
+      // re-export specifier and sends the reader looking for an object literal.
+      const plain = policyOf(`export { durability } from '${CORE}';\n`, '/* c */');
+      const commented = policyOf(`export /* c */ { durability } from '${CORE}';\n`, '/* c */');
+
+      expect(commented.details).not.toContain('object shorthand');
+      expect(commented).toEqual(plain);
+    });
+
+    it('THE HAZARD stays refused with the SAME reason, comment or not (#421)', () => {
+      // Acceptance item 3. `other as durability` renames the adopter's public
+      // export, and refusing it is #421's whole point. It was refused both ways
+      // already — but the REASON differed (`re-export alias` vs `export
+      // alias`), which is the same defect one layer down: the report told two
+      // adopters different things about identical code.
+      const plain = policyOf(`export { other as durability } from '${CORE}';\n`, '/* c */');
+      const commented = policyOf(
+        `export { other as durability } /* c */ from '${CORE}';\n`,
+        '/* c */',
+      );
+
+      expect(commented.actions).toBe('manual');
+      expect(commented.out).toContain('export { other as durability }');
+      expect(commented.out).not.toContain('as durable');
+      expect(commented).toEqual(plain);
+    });
+
+    it('THE REVERSE DIRECTION: `from` as an identifier is not a re-export', () => {
+      // A semicolonless local export followed by a statement that begins with
+      // the identifier `from`. The lookahead saw the word and excluded the
+      // statement from local ranges, so #424's repair did not apply and the
+      // occurrence was refused as `object shorthand`.
+      //
+      // The split now asks whether a re-export range actually STARTS here,
+      // and a re-export needs a module string after `from` — `from.something()`
+      // has none.
+      const result = runDurability(
+        `import { durability } from '${CORE}';\nexport { durability }\nfrom.something();\n`,
+      );
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toContain('export { durable as durability }');
+      expect(out).toContain('from.something();');
+      expect(result.findings.map((f) => f.detail).join('\n')).not.toContain('object shorthand');
+    });
+
+    it('CONTROL: the comment itself is preserved verbatim in the output', () => {
+      // The split reads a blanked VIEW; the edit still lands on the original
+      // text. If this ever fails, the rewriter is writing to the wrong string.
+      const result = runDurability(
+        `import { durability } from '${CORE}';\nexport { durability } /* keep me */;\n`,
+      );
+      expect(result.files[0]?.contents ?? '').toContain('/* keep me */');
+    });
+
+    it('blanking a comment never reaches inside a STRING', () => {
+      // Blanking from `//` without tracking string state eats to end of line,
+      // which here swallows the whole re-export that follows on the same line —
+      // hiding it from `reExportRanges` and re-routing it to local policy. That
+      // is this very defect, reintroduced through its own fix.
+      //
+      // ASSERTED AT THE HELPER, DELIBERATELY, and the reason is a finding in
+      // its own right: an end-to-end fixture cannot decide this today. `masked`
+      // — the other view, built from a comment regex followed by a string regex
+      // — mangles `const u = 'x//y';` on `main` as well as here: the comment
+      // pass eats the closing quote, so the string pass then pairs the opening
+      // quote with the next one further down the file and blanks everything
+      // between. The re-export's occurrence is masked out and reported NOWHERE.
+      // Measured on both trees before writing this. Reported, not fixed here.
+      const src = `const u = 'x//y'; export { durability } from '${CORE}';\n`;
+      const blanked = blankComments(src);
+
+      expect(blanked).toBe(src); // nothing here is a comment
+      expect(blanked).toContain(`export { durability } from '${CORE}'`);
+
+      // ...while a real comment in the same position IS blanked, so the
+      // assertion above is not passing because the helper does nothing.
+      expect(blankComments(`export { a } /* c */ from 'm';`)).toBe(
+        `export { a }         from 'm';`,
+      );
+      // A line comment keeps its newline, or every line number below it moves.
+      expect(blankComments(`export { a } // c\nfrom 'm';`)).toBe(
+        `export { a }     \nfrom 'm';`,
+      );
     });
   });
 

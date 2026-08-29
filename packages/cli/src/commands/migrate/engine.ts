@@ -329,6 +329,90 @@ function importRanges(contents: string, masked: string): ReadonlyArray<readonly 
 }
 
 /**
+ * The source with COMMENTS blanked to spaces and strings left intact (#454).
+ *
+ * ## Why a second view, and why it is not the existing mask
+ *
+ * The export range functions match against the ORIGINAL text, because the mask
+ * blanks string literals and that is where the module specifier lives. But the
+ * original text still contains comments — so `\s*` between `}` and `from` could
+ * not cross `/* c *\/`, and a re-export written that way fell out of
+ * `reExportRanges` and into `localExportRanges`. Two near-identical files got
+ * different policy on an incidental comment (#454).
+ *
+ * This view is what both questions actually want: comments are whitespace,
+ * strings are not. Length is preserved, so every index is the same index in
+ * `contents` and in the mask, and the edits still land on the original text.
+ *
+ * ## Why this is a scanner and not a pair of regexes
+ *
+ * A `replace` of "double-slash to end of line" is the obvious form and it is
+ * wrong: it blanks from a `//` INSIDE a string to the end of that line. On
+ * `const u = 'x//y'; export { a } from 'm';` that erases the re-export, which
+ * re-routes it to local policy — this defect, reintroduced by its own fix.
+ * (The existing mask uses that shape safely only because it blanks strings too,
+ * so both readings produce spaces.) Tracking string state is the minimum needed
+ * to answer "is this `/` a comment", and one pass answers it.
+ *
+ * ## Known bound, stated rather than papered over
+ *
+ * Regex literals are not tracked, so `/[//]/` — a literal `//` unescaped inside
+ * a character class — reads as a comment. The existing mask has the same
+ * exposure and no shape in this repository or its fixtures exhibits it.
+ * Distinguishing a regex literal from division needs the parse this engine
+ * deliberately does not have (#230), so the honest move is to name the gap.
+ *
+ * Exported for the self-test. The string-safety property is asserted HERE
+ * rather than end-to-end, and the reason is worth knowing: `masked` — a
+ * different view, computed by the pair of regexes described above — mangles
+ * `const u = 'x//y';` today, so an end-to-end fixture carrying that string
+ * cannot distinguish a correct blanker from a naive one. That behaviour
+ * predates this change and is reported rather than repaired here.
+ */
+export function blankComments(contents: string): string {
+  const out = contents.split('');
+  let i = 0;
+  let quote: string | null = null;
+
+  while (i < contents.length) {
+    const c = contents[i] as string;
+
+    if (quote !== null) {
+      if (c === '\\') i += 1;
+      else if (c === quote) quote = null;
+      i += 1;
+      continue;
+    }
+
+    if (c === '"' || c === "'" || c === '`') {
+      quote = c;
+      i += 1;
+      continue;
+    }
+
+    if (c === '/' && contents[i + 1] === '/') {
+      while (i < contents.length && contents[i] !== '\n') {
+        out[i] = ' ';
+        i += 1;
+      }
+      continue;
+    }
+
+    if (c === '/' && contents[i + 1] === '*') {
+      const end = contents.indexOf('*/', i + 2);
+      const stop = end === -1 ? contents.length : end + 2;
+      for (let k = i; k < stop; k += 1) out[k] = contents[k] === '\n' ? '\n' : ' ';
+      i = stop;
+      continue;
+    }
+
+    i += 1;
+  }
+
+  return out.join('');
+}
+
+/**
  * Byte ranges of `export … from '…'` re-export statements (#284).
  *
  * ## Found, and then treated BY POSITION rather than wholesale
@@ -389,7 +473,10 @@ function importRanges(contents: string, masked: string): ReadonlyArray<readonly 
  * and they are silent CORRECTLY rather than by omission. Verified rather than
  * assumed: neither produces an occurrence of the renamed identifier at all.
  */
-function reExportRanges(contents: string, masked: string): ReadonlyArray<readonly [number, number]> {
+function reExportRanges(
+  commentless: string,
+  masked: string,
+): ReadonlyArray<readonly [number, number]> {
   const ranges: [number, number][] = [];
   const gap = String.raw`(?:\s+|(?=[{*]))`;
   // The same clause grammar as an import, minus the default-binding forms,
@@ -403,7 +490,11 @@ function reExportRanges(contents: string, masked: string): ReadonlyArray<readonl
   );
   let m: RegExpExecArray | null;
 
-  while ((m = re.exec(contents)) !== null) {
+  // Matched over the COMMENT-BLANKED view (#454): comments are whitespace
+  // there, so `export { a } /* c */ from 'm'` is one statement to `\s*` exactly
+  // as it is to the compiler. Strings survive that view, which is why the
+  // module specifier is still matchable here.
+  while ((m = re.exec(commentless)) !== null) {
     if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
     ranges.push([m.index, m.index + m[0].length]);
   }
@@ -429,27 +520,43 @@ function reExportRanges(contents: string, masked: string): ReadonlyArray<readonl
  * them. This is the missing third range, and adding it is what lets the
  * existing `as`-decides rule apply here rather than a parallel ruleset.
  *
- * ## The `from` lookahead is load-bearing
+ * ## Disjointness is STRUCTURAL, not a lookahead (#454)
  *
- * Without it this matches the PREFIX of every re-export, `export { a }` inside
- * `export { a } from 'mod'`, and would capture occurrences `reExportRanges`
- * owns — silently rewriting the adopter's public export names, which is the
- * exact hazard #421 closed. The two range sets must be disjoint, and this is
- * what makes them so.
+ * Without something, this matches the PREFIX of every re-export — `export { a }`
+ * inside `export { a } from 'mod'` — and would capture occurrences
+ * `reExportRanges` owns, silently rewriting the adopter's public export names,
+ * the exact hazard #421 closed. The two range sets must be disjoint.
+ *
+ * That was `(?!\s*\bfrom\b)`, and it was a PARAPHRASE of the other function's
+ * grammar. It disagreed with it in both directions:
+ *
+ *   export { a } /* c *\/ from 'm'   a re-export `\s*` could not reach across
+ *   export { a } \n from.f()         an identifier that merely spells `from`
+ *
+ * A statement now belongs to this set when no re-export range STARTS at its
+ * index. Both functions anchor at the same `export` keyword, so that question
+ * is answerable exactly, and the sets cannot disagree about a statement even in
+ * principle — the second one is defined as the complement of the first rather
+ * than as a description of it.
+ *
+ * This is the same lesson as #230 one level up: enumerating a grammar in a
+ * lookahead is another copy of it, and copies drift.
  */
 function localExportRanges(
-  contents: string,
+  commentless: string,
   masked: string,
+  reExportStarts: ReadonlySet<number>,
 ): ReadonlyArray<readonly [number, number]> {
   const ranges: [number, number][] = [];
   const gap = String.raw`(?:\s+|(?=\{))`;
   // `export type { x }` is a local type-only export and belongs here too; the
   // inner form (`export { type x }`) needs no case, since it lives inside `{…}`.
-  const re = new RegExp(String.raw`\bexport\b${gap}(?:type${gap})?\{[^{}]*\}(?!\s*\bfrom\b)`, 'g');
+  const re = new RegExp(String.raw`\bexport\b${gap}(?:type${gap})?\{[^{}]*\}`, 'g');
   let m: RegExpExecArray | null;
 
-  while ((m = re.exec(contents)) !== null) {
+  while ((m = re.exec(commentless)) !== null) {
     if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
+    if (reExportStarts.has(m.index)) continue; // owned by `reExportRanges`
     ranges.push([m.index, m.index + m[0].length]);
   }
 
@@ -611,8 +718,17 @@ function rewriteSource(
   const brackets = bracketContexts(masked);
   const openers = braceOpeners(masked);
   const imports = importRanges(contents, masked);
-  const reExports = reExportRanges(contents, masked);
-  const localExports = localExportRanges(contents, masked);
+  // Comments blanked, strings kept (#454). The export split is decided over
+  // this view, so a comment in the gap cannot change which policy a statement
+  // gets. `importRanges` deliberately still reads the raw text — see the note
+  // on `blankComments` about scope.
+  const commentless = blankComments(contents);
+  const reExports = reExportRanges(commentless, masked);
+  const localExports = localExportRanges(
+    commentless,
+    masked,
+    new Set(reExports.map(([start]) => start)),
+  );
   const lineOf = (index: number): number => contents.slice(0, index).split('\n').length;
 
   // Carries the replacement TEXT rather than just the index (#424).

@@ -407,5 +407,129 @@ for (const field of REQUIRED_FIELDS) {
   is('...and a no-attachment template is matched whole', corpusMatcher(f2).source.endsWith('$'), true);
 }
 
+// ---------------------------------------------------------------------------
+// CONDITION 6 — a redacted slot (#323)
+//
+// THE CASE THAT PASSES WITHOUT THIS CONDITION is the first one below: a
+// placeholder path with `template_id: null`. Verified against the real guard
+// before the condition existed — the row validated with exit 0 — so this is a
+// witnessed regression test rather than a decorative one.
+//
+// The redaction manufactures its own justification: stripping the path makes
+// the row match no template, which makes `null` truthful, which skips
+// condition 4; and the inverse check asks whether some template DOES match,
+// which after the redaction none does.
+// ---------------------------------------------------------------------------
+
+/** A T1-shaped message whose path position holds `p`. */
+const shaped = (p) => `Note: ${p} changed ${EM} no need to call it out. Here are the relevant changes (shown with line numbers):`;
+
+const REDACTED = /does not satisfy that slot's declared pattern/;
+
+{
+  const r = run({ 'a.jsonl': line(row({ verbatim: shaped('<PATH>'), template_id: null, classification: 'anomalous' })) }, ['a.jsonl']);
+  is('a placeholder path with template_id null is REFUSED', errorsMatching(r, REDACTED).length, 1);
+}
+
+// Every placeholder form the real corpus actually contains, not just the
+// commonest. Four different spellings appeared in six days, three of them on a
+// single day, so a check keyed on any one literal would miss most of them —
+// this one is keyed on the slot's declared pattern instead.
+for (const form of ['<PATH>', '<redacted-abs-path>/packages/core/src/x.ts', '<ABSOLUTE_WORKTREE_PATH>/repo/x.ts', '<repo>/packages/explorer/src/html.ts']) {
+  const r = run({ 'a.jsonl': line(row({ verbatim: shaped(form), template_id: null, classification: 'anomalous' })) }, ['a.jsonl']);
+  is(`placeholder form ${form.split('/')[0]} is caught`, errorsMatching(r, REDACTED).length, 1);
+}
+
+// The paired positive. Without it, a condition that refused every added row
+// would satisfy all of the above and make the corpus unwritable.
+{
+  const r = run({ 'a.jsonl': line(row()) }, ['a.jsonl']);
+  is('a real absolute path is NOT refused', errorsMatching(r, REDACTED).length, 0);
+  is('...and the row is clean overall', r.errors.length, 0);
+}
+
+// A gap that must exist can be declared, using the convention 15 rows in this
+// corpus already use for elided listings.
+{
+  const r = run({ 'a.jsonl': line(row({ verbatim: shaped('[ELIDED: path withheld, see #323]'), template_id: null, classification: 'anomalous' })) }, ['a.jsonl']);
+  is('a DECLARED elision in the slot is accepted', errorsMatching(r, REDACTED).length, 0);
+}
+
+// Diff-scoped, which is what keeps the 31 existing redacted rows and the frozen
+// log untouched BY CONSTRUCTION rather than by care.
+{
+  const r = run({ 'a.jsonl': line(row({ verbatim: shaped('<PATH>'), template_id: null, classification: 'anomalous' })) }, []);
+  is('the same row NOT added by this diff is left alone', errorsMatching(r, REDACTED).length, 0);
+}
+
+// The other reason a strict match fails is a drifted literal. That must not be
+// reported as a redaction: the prose literals are not widened, so a corrupted
+// message fails the shape matcher too and never reaches the slot check.
+{
+  const corrupted = shaped('/tmp/x.ts').replace(EM, '-');
+  const r = run({ 'a.jsonl': line(row({ verbatim: corrupted, template_id: null, classification: 'anomalous' })) }, ['a.jsonl']);
+  is('em-dash corruption is NOT misreported as a redaction', errorsMatching(r, REDACTED).length, 0);
+}
+
+// The refusal has to carry the repair, because the agent that trips it is
+// reached at the moment it matters — far more reliably than by a doctrine line
+// it never opens.
+{
+  const r = run({ 'a.jsonl': line(row({ verbatim: shaped('<PATH>'), template_id: null, classification: 'anomalous' })) }, ['a.jsonl']);
+  const msg = errorsMatching(r, REDACTED)[0] ?? '';
+  is('...and the refusal says to preserve the slot exactly', /Preserve the PATH EXACTLY/.test(msg), true);
+  is('...and names the declare-it-instead escape', /\[ELIDED: <why>\]/.test(msg), true);
+  is('...and states why redacting protects nothing', /attacker-influenceable/.test(msg), true);
+  // The ONE cause any row in this corpus has ever recorded. Four rows name the
+  // Bash isolation guard refusing a command carrying the path; none names a
+  // rule. The refusal answers that cause specifically, because an agent hitting
+  // this message is in the exact situation those four were in.
+  is('...and names the one recorded cause and its remedy', /BASH ISOLATION GUARD/.test(msg) && /Write\/Edit tool/.test(msg), true);
+
+  // QA's #499 point: "Preserve the PATH EXACTLY" tells the reader the answer is
+  // path-shaped, and path-shaped is exactly the class that passes. The message
+  // must say so itself rather than leave the reader to infer it.
+  is(
+    '...and warns that a path-shaped stand-in passes silently',
+    /COPY IT BYTE-FOR-BYTE/.test(msg) && /passes SILENTLY/.test(msg),
+    true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// KNOWN LIMIT — a path-shaped stand-in is not detectable (#499, found by QA)
+//
+// These assert that something UNWANTED currently passes, which is deliberate:
+// it makes the residue note in the guard's header EXECUTABLE rather than merely
+// prose, so the stated bound cannot quietly drift out of date the way a comment
+// can.
+//
+// IF THESE EVER GO RED that is not a regression — it means the limit has been
+// CLOSED. Delete them and remove the third bullet from the residue section in
+// `check-concealment-captures.mjs`.
+//
+// The SHAPE key is not what fails here; QA could not defeat it. What passes is
+// the slot-content check downstream, because `PATH` declares `/[^\n]+` — a
+// slash then anything — so any `/`-prefixed stand-in satisfies it and never
+// reaches the placeholder branch.
+// ---------------------------------------------------------------------------
+for (const standIn of ['/redacted', '/path/to/file', '/REDACTED/repo/a.ts']) {
+  const r = run(
+    { 'a.jsonl': line(row({ verbatim: shaped(standIn), template_id: null, classification: 'anomalous' })) },
+    ['a.jsonl'],
+  );
+  is(`KNOWN LIMIT: the path-shaped stand-in ${standIn} is NOT caught`, errorsMatching(r, REDACTED).length, 0);
+}
+{
+  // The paired refusal, so the three above read as a BOUND on this check rather
+  // than as the check being inert. A lone slash fails `/[^\n]+`, so it is still
+  // caught — the slot pattern is doing work, just not enough of it.
+  const bare = run(
+    { 'a.jsonl': line(row({ verbatim: shaped('/'), template_id: null, classification: 'anomalous' })) },
+    ['a.jsonl'],
+  );
+  is('...while a lone slash, which the slot pattern rejects, still IS caught', errorsMatching(bare, REDACTED).length, 1);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

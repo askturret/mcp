@@ -472,8 +472,23 @@ export function blankComments(contents: string): string {
  * the module exports today. There is nothing to rewrite and nothing to report,
  * and they are silent CORRECTLY rather than by omission. Verified rather than
  * assumed: neither produces an occurrence of the renamed identifier at all.
+ *
+ * ## Exported for one assertion, and it is load-bearing (#454 QA)
+ *
+ * `localExportRanges` drops a match when a re-export range STARTS at the same
+ * index. That is exact only because both functions anchor at `\bexport\b` over
+ * the same string — so if this one were re-anchored (at the `{`, say), the
+ * indices would stop corresponding, the drop would silently stop firing, and
+ * overlap returns with nothing pinning it.
+ *
+ * Nothing observable catches that. Measured, not assumed: re-anchoring this
+ * function at the brace leaves the CLI suite at 511/511, because
+ * `classifyOccurrence` consults re-export ranges first, so the drop is
+ * currently redundant for every fixture the suite has. A structural guarantee
+ * resting on a fact nothing checks is the defect this PR fixes, one level up —
+ * so the anchor is asserted directly, which needs this export.
  */
-function reExportRanges(
+export function reExportRanges(
   commentless: string,
   masked: string,
 ): ReadonlyArray<readonly [number, number]> {

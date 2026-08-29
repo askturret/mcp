@@ -23,7 +23,12 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { applyMigrations, blankComments, type ProjectFile } from '../engine.js';
+import {
+  applyMigrations,
+  blankComments,
+  reExportRanges,
+  type ProjectFile,
+} from '../engine.js';
 import { MIGRATIONS, selectMigrations, knownPairs } from '../registry.js';
 import { renderIndex, renderSnippet } from '../guide.js';
 import { parseMigrateArgs, migrateCommand } from '../index.js';
@@ -882,8 +887,11 @@ describe('source rules', () => {
     it('leaves #421\'s re-export refusals exactly as they were', () => {
       // THE BOUNDARY. Refusing these IS self-contained — each statement stays
       // valid as written — so "your judgement, not mine" is honest, and #421's
-      // behaviour must be untouched by the new range function. The `from`
-      // lookahead in `localExportRanges` is what keeps the two disjoint.
+      // behaviour must be untouched by the new range function. What keeps the
+      // two sets disjoint is that a local match is DROPPED when a re-export
+      // range starts at the same index (#454). That was a `from` lookahead in
+      // `localExportRanges` until #454 removed it — see the anchor assertion
+      // in the #454 block for the precondition the drop rests on.
       const both = runDurability(`export { durability } from '@askturret/mcp-core';\n`);
       expect(both.files[0]?.contents ?? '').toContain(
         `export { durability } from '@askturret/mcp-core'`,
@@ -1048,6 +1056,28 @@ describe('source rules', () => {
         `import { durability } from '${CORE}';\nexport { durability } /* keep me */;\n`,
       );
       expect(result.files[0]?.contents ?? '').toContain('/* keep me */');
+    });
+
+    it('THE PRECONDITION the drop rests on: both sets anchor at `export`', () => {
+      // `localExportRanges` drops a match when a re-export range STARTS at the
+      // same index. Exact only because both functions anchor at `\bexport\b`
+      // over the same string — re-anchor either one and the indices stop
+      // corresponding, the drop silently stops firing, and overlap returns.
+      //
+      // NOTHING OBSERVABLE CATCHES THAT, which is why this is asserted on the
+      // range directly rather than through a fixture. Measured before writing
+      // it: re-anchoring `reExportRanges` at the `{` leaves the suite at
+      // 511/511, because `classifyOccurrence` consults re-export ranges first,
+      // so the drop is redundant for every fixture here. The guarantee is real
+      // and the evidence for it was absent — the shape this PR fixes, one
+      // level up.
+      const src = `const x = 1;\nexport { durability } from '${CORE}';\n`;
+      const ranges = reExportRanges(src, src);
+
+      expect(ranges.length).toBe(1);
+      expect(ranges[0]?.[0]).toBe(src.indexOf('export'));
+      // ...and not the brace, which is the re-anchoring that breaks the drop.
+      expect(ranges[0]?.[0]).not.toBe(src.indexOf('{'));
     });
 
     it('blanking a comment never reaches inside a STRING', () => {

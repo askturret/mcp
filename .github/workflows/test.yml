@@ -731,6 +731,34 @@ jobs:
       - name: Every cited ADR resolves to a file
         run: node .github/scripts/check-adr-citations.mjs .
 
+      # #434 condition 1. Until this step existed, the mutation audit and its
+      # self-test sat in `WIRING_EXEMPT` and the audit's own assertions ran
+      # NOWHERE automated — the instrument that measures whether every other
+      # guard has a witness was itself unverified by anything except the QA pass
+      # at the SHA that introduced it.
+      #
+      # Self-test first, like every other guard here.
+      - name: Self-test the mutation audit
+        run: node .github/scripts/check-mutation-audit.test.mjs
+
+      # The audit itself, REPORT-ONLY: stage 1 fails on its own integrity and
+      # never on finding unwitnessed sites, so this step does not gate on
+      # coverage. Going fail-closed is stage 2 (#434 conditions 2-6), and the
+      # #431 ruling holds it back until no script lacks a witnessed failure
+      # path.
+      #
+      # IT IS THE SLOWEST STEP IN THIS JOB — measured at 322s locally at 151
+      # sites, of which ~113s is its own self-test running ten times, because
+      # the audit is in its own target list (#437). That cost is now recurring
+      # rather than local, and it is worth knowing before anyone tries to
+      # reclaim it: the per-site `yield` measures ~3ms across all sites and is
+      # what makes the tool cancellable. Removing it buys nothing and
+      # reintroduces the regression #435 fixed. The real lever, if this ever
+      # needs to be cheaper, is `check-mutation-audit.test.mjs` — every second
+      # added there is charged about ten times.
+      - name: Mutation audit (report-only)
+        run: node .github/scripts/check-mutation-audit.mjs .
+
       # #65 / §17: Architectural readiness gate for 1.0.
       # Verifies that all 12 readiness criteria are met and reference passing tests.
       #

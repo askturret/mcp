@@ -1596,30 +1596,46 @@ check(
 /**
  * Guards that deliberately have no workflow step. An entry is a line in a diff.
  *
- * ## THE EXIT FOR BOTH ENTRIES BELOW IS #434, AND IT IS CONDITION 1 THERE
+ * ## IT IS EMPTY, AND THE MECHANISM IS WHY (#434 condition 1)
  *
- * These are not settled. The mutation audit (#428 stage 1) is deliberately an
- * INSTRUMENT rather than a standing control, so it legitimately has no workflow
- * step — that is what this list is for. But its SELF-TEST is exempt only as a
- * consequence, and that is a real weakening: 48 assertions do not run anywhere
- * automated while these entries exist.
+ * It held two entries: the mutation audit (#428 stage 1) and its self-test. The
+ * audit was an INSTRUMENT rather than a standing control, so it legitimately had
+ * no workflow step — that is what this list is for — but its self-test was
+ * exempt only as a CONSEQUENCE, and that was a real weakening: the audit's own
+ * assertions ran nowhere automated for as long as the entries existed.
  *
- * The weakening is bounded and cannot be forgotten, because the check below
- * REJECTS A STALE EXEMPTION naming a file that does run. So #434's wiring
- * cannot land without deleting these two lines. The gap can only be ended, not
- * quietly inherited.
+ * Both are now wired into `test-integrity`. The weakening ended the way stage 1
+ * designed it to: the check below REJECTS A STALE EXEMPTION naming a file that
+ * does run, so the moment the workflow step landed this file failed BY NAME
+ * until both lines were deleted. The gap could only be ended, not quietly
+ * inherited.
  *
- * If you are reading this because you are adding a third entry: check that it
- * is a script that genuinely should never be a step, not one whose wiring is
- * merely inconvenient. The two here have a dated exit; a third with no exit is
- * how a list like this becomes the escape hatch it was built to avoid.
+ * Worth keeping in view now that the list is empty: an exemption's cost is not
+ * the entry, it is the assertions the entry silences. Both of those entries
+ * looked bounded and reasonable, and together they took the instrument that
+ * measures every other guard's witness coverage entirely out of CI.
+ *
+ * If you are adding the first new entry: it must be a script that genuinely
+ * should never be a step, not one whose wiring is merely inconvenient, and it
+ * needs a DATED EXIT naming what would remove it. The two that were here had
+ * one; an entry with no exit is how a list like this becomes the escape hatch
+ * it was built to avoid.
  */
-const WIRING_EXEMPT = Object.freeze({
-  'check-mutation-audit.mjs':
-    'stage 1 instrument, not a standing control — wired by #434, which is that issue\'s condition 1',
-  'check-mutation-audit.test.mjs':
-    'exempt only because its subject is — #434 wires both and must delete both entries',
-});
+// EMPTY, and that is the point (#434 condition 1).
+//
+// Both entries were the mutation audit and its self-test. They are now wired
+// into `test-integrity`, so the exemptions went STALE and this file failed by
+// name until they were deleted — exactly as stage 1 designed. The gap could
+// only be ended, not quietly inherited, and it has been ended.
+//
+// Keeping the map rather than deleting the mechanism: the stale-check works in
+// both directions, so an empty ledger still asserts that nothing claims an
+// exemption it no longer needs. If you are adding the first new entry, the
+// standard from stage 1 stands — it must be a script that genuinely should
+// never be a step, not one whose wiring is merely inconvenient, and it needs a
+// dated exit. An entry with no exit is how a list like this becomes the escape
+// hatch it was built to avoid.
+const WIRING_EXEMPT = Object.freeze({});
 
 function guardWiringReport({ scriptsDir, workflowsDir, exempt = {} }) {
   const fail = (cannotCheck) => ({ cannotCheck, unwired: [], staleExemptions: [], subjects: [], scanned: 0 });

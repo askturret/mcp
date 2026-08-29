@@ -59,6 +59,41 @@ the real compiler, so what you read is what actually works.
 Both are EXECUTED by CI rather than merely built, so neither can rot into a
 reference that no longer runs.
 
+### Run it
+
+Each example needs the packages it imports built first — and they import
+different things, so the build commands differ. Run these from the repository
+root:
+
+```bash
+# examples/plugin-source — imports @askturret/mcp-core
+npm run build -w packages/core
+node examples/plugin-source/index.mjs
+```
+
+```bash
+# examples/plugin-otel-exporter — also imports @askturret/mcp-observability
+npm run build -w packages/core -w packages/observability
+node examples/plugin-otel-exporter/index.mjs
+```
+
+The order in that second command matters: `observability` is built *from* core,
+and `npm run build -w packages/observability` on its own fails.
+
+Either example can also be run through its own `start` script, which is
+equivalent once the build above has been done:
+
+```bash
+cd examples/plugin-source && npm start
+```
+
+> **If the example fails with `ERR_MODULE_NOT_FOUND` after a build that
+> reported success**, the build emitted nothing because `tsconfig.tsbuildinfo`
+> says the package is already up to date while its `dist/` is missing. This is a
+> known trap rather than a broken step —
+> [CONTRIBUTING.md](../CONTRIBUTING.md#on-typecheck-and-build-being-the-same-command)
+> names the symptom and gives the escape hatch, `npx tsc -b --force`.
+
 ## Capabilities
 
 | Capability | Authorises |

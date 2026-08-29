@@ -7,7 +7,15 @@
  * what it registered, and watching the capability gate refuse a plugin that
  * asks for more than it declared.
  *
+ * Run it:
+ *
+ *   npm run build -w packages/core -w packages/observability
  *   node examples/plugin-otel-exporter/index.mjs
+ *
+ * Both packages, in that order: this file imports from observability, which is
+ * itself built from core, and `npm run build -w packages/observability` alone
+ * fails. Without the build step the run fails with ERR_MODULE_NOT_FOUND —
+ * measured from a clean tree rather than assumed (#325).
  */
 
 import { loadPlugins, PLUGIN_API_VERSION } from '@askturret/mcp-core';

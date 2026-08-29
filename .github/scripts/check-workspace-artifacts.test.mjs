@@ -30,13 +30,13 @@
  * Run: node .github/scripts/check-workspace-artifacts.test.mjs
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-import { runChecks, formatReport, PASS, FAIL, UNKNOWN } from './check-workspace-artifacts.mjs';
+import { runChecks, formatReport, defaultChecks, PASS, FAIL, UNKNOWN } from './check-workspace-artifacts.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const GUARD = join(here, 'check-workspace-artifacts.mjs');
@@ -139,6 +139,54 @@ const thrower = runChecks([
 ]);
 check('a runner that throws -> exit 2, never 0', thrower.code, 2);
 check('...recorded as unknown', thrower.results[0].status, UNKNOWN);
+
+// ---------------------------------------------------------------------------
+// Both dependency-set items answer the SAME missing input the SAME way
+//
+// This is the case that was missing, and its absence let a real bug ship for a
+// review round: NOTICE reported a confident DRIFTED on a tree with no install,
+// while the licence item correctly reported COULD NOT CHECK. Same precondition,
+// two answers.
+//
+// The assertions are deliberately on the NOTICE ITEM'S OWN STATUS, not on
+// whether "COULD NOT CHECK" appears somewhere in the report. The end-to-end
+// case below asserts the latter, and it passed throughout the whole bug —
+// because the licence item was supplying that string while NOTICE was wrong.
+// ---------------------------------------------------------------------------
+
+const noInstall = mkdtempSync(join(tmpdir(), 'ws-artifacts-noinstall-'));
+try {
+  // A tree that looks real — package.json and a NOTICE with content — but has
+  // never been installed. That is an ordinary state for a fresh clone.
+  writeFileSync(join(noInstall, 'package.json'), JSON.stringify({ name: 'probe', version: '1.0.0' }));
+  writeFileSync(join(noInstall, 'NOTICE'), 'Real attribution content that must not be deleted.\n');
+
+  const byName = Object.fromEntries(defaultChecks(noInstall).map((c) => [c.name, c]));
+
+  const noticeResult = byName.notice.run();
+  check('node_modules absent -> NOTICE is UNKNOWN, not FAIL', noticeResult.status, UNKNOWN);
+  ok(
+    '...and it warns against regenerating from an incomplete install',
+    /do not regenerate/i.test(noticeResult.detail),
+  );
+
+  const licenceResult = byName.licences.run();
+  check('node_modules absent -> licences is UNKNOWN', licenceResult.status, UNKNOWN);
+
+  check(
+    'the two dependency-set items agree on the same missing input',
+    noticeResult.status === licenceResult.status,
+    true,
+  );
+
+  // And end-to-end, the NOTICE line specifically must not say DRIFTED.
+  const res = spawnSync(process.execPath, [GUARD, noInstall], { encoding: 'utf8' });
+  const noticeLine = `${res.stdout}`.split('\n').find((l) => l.includes('NOTICE')) ?? '';
+  ok('real CLI: the NOTICE line reports COULD NOT CHECK', noticeLine.includes('COULD NOT CHECK'));
+  ok('real CLI: the NOTICE line does NOT report DRIFTED', !noticeLine.includes('DRIFTED'));
+} finally {
+  rmSync(noInstall, { recursive: true, force: true });
+}
 
 // ---------------------------------------------------------------------------
 // End-to-end through the real CLI

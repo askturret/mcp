@@ -28,13 +28,35 @@
  *
  * ## "Could not check" is never a pass
  *
- * `check-licenses.mjs` needs `node_modules`; the other two do not. So the item
- * most likely to be skipped on a developer's machine is exactly the one that
- * would silently report clean if absence were treated as success. It is
- * reported as `COULD NOT CHECK` and the process exits non-zero.
+ * BOTH `NOTICE` and the licence policy read the INSTALLED dependency set, so
+ * both are unevaluable without `node_modules`. Only `package-lock.json` is
+ * readable from the tree alone.
  *
- * That is this repository's most expensive recurring defect (#5646): "I could
- * not check" quietly becoming "it passed".
+ * An earlier draft of this docblock claimed only `check-licenses.mjs` needed
+ * `node_modules`. That was false, and it produced exactly one bug: the
+ * pre-check was applied to the licence item alone, so on a tree without an
+ * install the SAME missing input yielded `COULD NOT CHECK` for one item and a
+ * confident `DRIFTED` for the other.
+ *
+ * The second answer was the dangerous one, because the remediation it printed
+ * was actively harmful. `generate-notice.mjs` has no cannot-evaluate path for
+ * this case: an empty inventory is treated as a legitimate answer and renders
+ * as "(No third-party runtime dependencies.)", which differs from the real
+ * NOTICE — so it reports STALE. Following the "regenerate it" advice on an
+ * incomplete install DELETES the attribution line for every dependency that is
+ * not installed, on a file that same script calls a licence obligation and a
+ * compliance problem rather than an untidy file. CI catches the truncation,
+ * which costs the round-trip this guard exists to remove. And a fresh clone
+ * before `npm ci` is an ordinary local state, not a corner case.
+ *
+ * So the precondition is SHARED (`unevaluableWithoutInstall`) rather than
+ * duplicated. Two items with the same precondition must not carry two copies
+ * of it, or they drift apart again — which is how this happened.
+ *
+ * That is this repository's most expensive recurring defect (#5646), and note
+ * the bug above was that defect ROTATED rather than avoided: not "could not
+ * check" becoming "it passed", but "could not check" becoming a confident FAIL
+ * carrying the wrong fix.
  *
  * ## What this buys, stated honestly
  *
@@ -141,6 +163,28 @@ export function formatReport(results) {
   return lines.join('\n');
 }
 
+/**
+ * Shared precondition for every item that reads the INSTALLED dependency set.
+ *
+ * NOTICE and the licence policy both do; `package-lock.json` does not. Shared
+ * rather than duplicated because two items with the same precondition WILL
+ * drift apart if each carries its own copy — that is precisely how NOTICE came
+ * to report a confident `DRIFTED` on a tree the licence item correctly called
+ * unevaluable.
+ *
+ * Returns an UNKNOWN outcome when the precondition fails, or `null` when the
+ * item is safe to evaluate.
+ */
+function unevaluableWithoutInstall(rootDir, extraWarning = '') {
+  if (existsSync(join(rootDir, 'node_modules'))) return null;
+  return {
+    status: UNKNOWN,
+    detail:
+      'node_modules is absent, so the installed dependency set cannot be read — run `npm ci` first' +
+      extraWarning,
+  };
+}
+
 /** Map a child process result onto our three states. */
 function fromExit(res, { failDetail, unknownDetail }) {
   if (res.error || typeof res.status !== 'number') {
@@ -172,6 +216,19 @@ export function defaultChecks(rootDir) {
       name: 'notice',
       artifact: 'NOTICE',
       run: () => {
+        // NOTICE reads the INSTALLED dependency set, so it is unevaluable
+        // without an install — and generate-notice.mjs has no cannot-evaluate
+        // path for that case: an empty inventory is a legitimate answer to it,
+        // so it would report STALE. The extra warning is load-bearing rather
+        // than decorative: the remediation for a genuine staleness is actively
+        // harmful here, deleting an attribution line per uninstalled
+        // dependency.
+        const blocked = unevaluableWithoutInstall(
+          rootDir,
+          '. Do NOT regenerate NOTICE from an incomplete install — it would delete the attribution line for every dependency that is not installed',
+        );
+        if (blocked) return blocked;
+
         const res = spawnSync(process.execPath, [join(here, 'generate-notice.mjs'), '--check'], {
           cwd: rootDir,
           encoding: 'utf8',
@@ -186,15 +243,11 @@ export function defaultChecks(rootDir) {
       name: 'licences',
       artifact: 'licence policy',
       run: () => {
-        // Checked before spawning so the reason is specific. This is the item
-        // most likely to be unevaluable locally, and a vague "could not check"
-        // on the one that matters most would be its own defect.
-        if (!existsSync(join(rootDir, 'node_modules'))) {
-          return {
-            status: UNKNOWN,
-            detail: 'node_modules is absent, so the installed dependency set cannot be read — run `npm ci` first',
-          };
-        }
+        // Same precondition as NOTICE, from the same helper, so the two cannot
+        // give different answers to the same missing input again.
+        const blocked = unevaluableWithoutInstall(rootDir);
+        if (blocked) return blocked;
+
         const res = spawnSync(process.execPath, [join(here, 'check-licenses.mjs')], {
           cwd: rootDir,
           encoding: 'utf8',

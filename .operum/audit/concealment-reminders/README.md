@@ -268,7 +268,7 @@ and describes matching that already ships.
 
 Writing the entry is half the job. An entry that is never committed does not
 exist, because worktrees are ephemeral — so the capture has to reach `main`, and
-there are exactly two things to get right when opening the PR.
+there are exactly three things to get right when opening the PR.
 
 **1. Open it with `no_linked_issue: true`.** A capture closes nothing. That flag
 is the supported way to say so: it is auditable rather than a bypass, applying a
@@ -277,6 +277,11 @@ is the supported way to say so: it is auditable rather than a bypass, applying a
 **2. Name the branch WITHOUT an issue number.** Use `chore/preserve-<something>`.
 **Never `chore/issue-<N>-<slug>`** — not even when a capture fired while you were
 working issue `<N>`, which is the usual case and exactly why this keeps happening.
+
+**3. Sign off as the identity you are committing as.** Commit with `--signoff`,
+and check that the trailer names **the agent identity the commit is authored
+under** — never the founder's address. This one is about *which* identity, not
+about whether a trailer is present.
 
 ### Never file a tracking issue to satisfy a gate
 
@@ -317,6 +322,34 @@ name.
 PR cannot be re-pointed at a different one. The only repair is to close the PR,
 re-branch without the number, and re-open — which is why the rule is worth
 following the first time.
+
+### A sign-off is a personal attestation, not a formatting step
+
+`Signed-off-by` certifies that the person named **wrote the work and has the
+right to submit it**. Putting the founder's address on a commit an agent wrote
+puts their name on work they did not write and did not certify. **That is a
+false certification, not a formatting slip** — which is why rule 3 is about
+*which* identity rather than about whether a trailer is present.
+
+**Do not rely on DCO to catch it.** DCO checks that a sign-off matches the
+**author** — not that the author is **entitled to sign**. On PR #356 it rejected
+the commit only because the two addresses happened to differ; had they
+coincidentally matched, the misattribution would have merged silently.
+**Merged-by-luck is not a control**, and nothing here should be read as implying
+the check covers this case.
+
+The missing-trailer half *is* covered: CI fails it reliably, every time. The
+wrong-identity half has no reliable guard at all, and that asymmetry is the
+whole reason this is written down rather than left to the tooling.
+
+**Why here rather than in a contributing guide.** A capture is written once,
+mid-task, by whichever agent received the harness message — including agents
+that rarely commit at all. The `--signoff` habit that protects every other
+commit is exactly the habit these commits do not benefit from. Measured rather
+than supposed: of three capture commits written by three different agents in one
+evening, **two carried a defective sign-off** — one with no trailer at all, one
+signed as the founder — and they failed differently enough to read as three
+unrelated slips rather than one cause.
 
 ## Never rewrite what is already here
 

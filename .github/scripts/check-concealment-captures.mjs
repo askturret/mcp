@@ -64,6 +64,38 @@
  * Scoped to rows this PR ADDS, "the template existed at capture time" is true
  * by construction. Scope by what is knowable.
  *
+ * ## Condition 6, and the residue it does NOT cover (#323)
+ *
+ * A redaction manufactures its own justification. Stripping the path makes the
+ * row match no template, which makes `template_id: null` TRUTHFUL, which skips
+ * condition 4; and the inverse check asks whether some template DOES match,
+ * which after the redaction none does. Verified by running the guard, not
+ * reasoned: the same row is REFUSED claiming `T1C` and PASSES with exit 0
+ * claiming `null`. Condition 6 is therefore keyed on the message's SHAPE, which
+ * is the only key the redaction cannot erase.
+ *
+ * Measured against the 31 redacted rows in the corpus at the time of writing,
+ * had each been offered as an added row: **16 caught, 15 not.** The 15 divide,
+ * and neither group is a defect in this condition:
+ *
+ *   - **11 also carry the em-dash-to-hyphen corruption.** Their prose literals
+ *     drifted, so the shape matcher declines them — deliberately. Reporting a
+ *     corrupted message as a redaction would name the wrong defect.
+ *   - **4 are not messages.** Their `verbatim` opens with the capturing agent's
+ *     own summary ("Three notices, identical in prose apart from the path…"),
+ *     so there is no message shape to match.
+ *
+ * The first group is a REAL residue: a row that is both redacted AND corrupted
+ * is caught by neither condition. It is not closed here because closing it
+ * means matching a message whose literals have drifted, which is the widening
+ * that condition 4's guidance exists to forbid. Stated rather than fixed.
+ *
+ * Those four numbers are a DATED OBSERVATION, not a tally this file maintains —
+ * nothing asserts them and they will drift as the corpus grows, which is fine.
+ * The "no tallies" rule below governs the CHECKS, and no check here counts
+ * anything. They are recorded because "16 caught" and "closes the class" are
+ * very different claims, and the second one would be false.
+ *
  * ## No tallies
  *
  * Every check here is a RELATION OVER ROWS. There is no hardcoded corpus count
@@ -178,6 +210,49 @@ export function corpusMatcher(template) {
   const wholeRequired = (template.trailing_attachment ?? 'none') === 'none';
   return wholeRequired ? compiled.whole : compiled.head;
 }
+
+/**
+ * The same relation as `corpusMatcher`, but with every slot widened to "any
+ * text on one line" and CAPTURING.
+ *
+ * This exists to separate two failures that `corpusMatcher` collapses into one.
+ * When a capture's path is replaced by a placeholder the message stops matching
+ * its template — indistinguishably, from the strict matcher's side, from a
+ * message that was never that template at all. Widening the slots recognises
+ * the message's SHAPE, so the slot's CONTENT can then be judged on its own.
+ *
+ * The prose literals are NOT widened. That is what keeps this from
+ * mis-reporting the other failure: a row that fails the strict match because a
+ * literal drifted (the em-dash-to-hyphen corruption) fails this matcher too,
+ * and never reaches the slot check.
+ *
+ * Returns the slot names in prose order alongside the regex, so capture group
+ * `i + 1` is the content of `names[i]`.
+ */
+export function slotShapeMatcher(template) {
+  const widened = {
+    ...template,
+    slot: (template.slot ?? []).map((s) => ({ ...s, pattern: '([^\\n]+)' })),
+  };
+  const compiled = compileTemplate(widened);
+  const wholeRequired = (template.trailing_attachment ?? 'none') === 'none';
+  return { names: compiled.names, re: wholeRequired ? compiled.whole : compiled.head };
+}
+
+/**
+ * Slot content that DECLARES its own elision.
+ *
+ * The corpus already has this convention and agents already follow it — 15 rows
+ * annotate an elided listing in-band as `[ELIDED: ...]`, `[ATTACHMENT ELIDED:
+ * ...]` or `[ELIDED BY THE CAPTURING AGENT: ...]`. What none of them did was
+ * use it for a redacted PATH, which is the gap this reuses it to close: the
+ * shape is accepted anywhere a slot is, so a gap that must exist can be
+ * self-describing instead of silent.
+ *
+ * Anchored, and deliberately not a substring test: a bare `<PATH>` sitting next
+ * to an unrelated bracketed aside must not read as a declaration.
+ */
+export const DECLARED_ELISION = /^\[[^\]]*ELIDED[^\]]*\]$/;
 
 /** Code points above ASCII in `s`, as a sorted list of unique escapes. */
 function nonAscii(s) {
@@ -446,6 +521,63 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
           `${where}: claims no template, but ${matching.join(' / ')} matches its \`verbatim\`. ` +
             `A row added now is classified against the current allowlist, so "no template covers this" is checkable.`,
         );
+      }
+    }
+
+    // CONDITION 6 — a slot whose content was replaced by a placeholder (#323).
+    //
+    // REDACTION MANUFACTURES ITS OWN JUSTIFICATION, and every check above it
+    // is thereby skipped. Verified by running, not reasoned: a real T1C row
+    // whose path is replaced by `<PATH>` is REFUSED while it still claims
+    // `template_id: "T1C"` (condition 4), and the SAME row PASSES with exit 0
+    // once it claims `template_id: null`. Stripping the path makes the row
+    // match no template, which makes `null` truthful, which skips condition 4;
+    // and the inverse check cannot fire either, because it asks whether some
+    // template DOES match — and after the redaction none does.
+    //
+    // So this condition is keyed on the message's SHAPE rather than on any
+    // claimed template, which is the only key the redaction cannot erase.
+    //
+    // Diff-scoped for the same reason as the inverse check: the 31 redacted
+    // rows already in the corpus predate this, they are not retroactively
+    // fixable (the original text is gone), and the frozen log and existing
+    // per-entry files are NEVER rewritten or backfilled. Scoping by `isAdded`
+    // makes that hold by construction rather than by care.
+    if (isAdded && verbatim !== null) {
+      for (const template of templates.values()) {
+        const { names, re } = slotShapeMatcher(template);
+        const shaped = re.exec(verbatim);
+        if (shaped === null) continue;
+
+        for (let i = 0; i < names.length; i++) {
+          const slot = (template.slot ?? []).find((s) => s.name === names[i]);
+          const content = shaped[i + 1];
+          if (slot === undefined || typeof content !== 'string') continue;
+          if (new RegExp(`^(?:${slot.pattern})$`).test(content)) continue;
+          if (DECLARED_ELISION.test(content)) continue;
+
+          // Diagnosis FIRST, then the repair — the ordering this file's
+          // condition-4 note records as the measured reason a long message
+          // still works.
+          errors.push(
+            `${where}: the <${slot.name}> slot holds ${JSON.stringify(content.slice(0, 80))}, which does not satisfy ` +
+              `that slot's declared pattern — it reads as a placeholder substituted for the captured content. ` +
+              `Preserve the ${slot.name} EXACTLY as the harness rendered it: it is what whole-message matching anchors ` +
+              `on, it is not sensitive data (it is a message the harness sent you), and it is already declared ` +
+              `attacker-influenceable — so redacting it protects nothing the anchoring does not already contain, ` +
+              `while making the row unusable as Factor 2 evidence. ` +
+              `IF YOU GOT HERE BECAUSE THE BASH ISOLATION GUARD REFUSED A COMMAND CARRYING THE PATH: that is the ` +
+              `only cause any row in this corpus has ever recorded for a redaction (4 of them name it). Do not drop ` +
+              `the path to get past it — write the capture with the Write/Edit tool instead, which routes no content ` +
+              `through a shell and has no such refusal. ` +
+              `If it genuinely must be elided, declare it IN THE SLOT using this corpus's existing convention — a ` +
+              `bracketed note naming the elision, e.g. "[ELIDED: <why>]" — so the gap describes itself instead of ` +
+              `being silent.`,
+          );
+        }
+        // One shape-match is enough: T1/T1C/T1B share the PATH slot and its
+        // pattern, so a second match would re-report the same slot.
+        break;
       }
     }
   }

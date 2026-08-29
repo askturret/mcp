@@ -44,7 +44,8 @@
     "test": "npm test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "tsc -b",
-    "test:conformance": "node packages/adapter-conformance/bin/run.mjs"
+    "test:conformance": "node packages/adapter-conformance/bin/run.mjs",
+    "check:workspace-artifacts": "node .github/scripts/check-workspace-artifacts.mjs ."
   },
   "keywords": [
     "mcp",

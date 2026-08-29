@@ -46,8 +46,57 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
+import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
+
 const AUDIT_PREFIX = '.operum/audit/';
 const SUFFIX = '.jsonl';
+
+/**
+ * What to run by hand when this guard could not run (#449).
+ *
+ * Named in every cannot-check message, because the difference between a
+ * REFUSAL and a SHRUG is whether the reader is told what to do instead. A
+ * reader who hits this should not have to decide whether the failure mattered;
+ * QA hit exactly this during live review of PR #490 and did the check by hand,
+ * and this is that procedure written down.
+ *
+ * Exported so the self-test asserts against the real string rather than a
+ * transcribed copy of it — a second copy here is the Transcribed Oracle shape
+ * `docs/TESTING.md` names.
+ */
+export const MANUAL_SUBSTITUTE =
+  `Check by hand before trusting this change:\n` +
+  `  git diff --numstat origin/main...HEAD -- ${AUDIT_PREFIX}   # THREE dots; expect ZERO deletions\n` +
+  `  git show origin/main:<path> | wc -l                         # ...and the line count must go UP\n` +
+  `\n` +
+  `The three dots are load-bearing. Two-dot \`git diff origin/main\` compares main's CURRENT TIP\n` +
+  `against your HEAD, not your branch's own contribution, so a file added to main AFTER your\n` +
+  `branch forked renders as a phantom DELETION. Keep the line-count check too: it is immune to\n` +
+  `that distinction, and proving the count went UP establishes nothing was lost.`;
+
+/**
+ * CANNOT CHECK (2) for a git that never ran.
+ *
+ * `didNotStart` and `spawnFailureDetail` are IMPORTED, not reimplemented (#464).
+ * Keeping the condition while inlining its own detail construction is #443's
+ * finding 2 exactly: `status === null` is true both when the process failed to
+ * start (`error` set) and when it was killed by a signal (`error` UNDEFINED,
+ * `signal` set), so a hand-rolled `result.error.message` crashes on the second
+ * row — inside the branch whose whole job is to report legibly.
+ */
+function couldNotRunGit(what, result) {
+  return {
+    code: 2,
+    message:
+      `${what} COULD NOT RUN, so this guard did not check anything:\n` +
+      `${spawnFailureDetail(result)}\n\n` +
+      `This guard did not run, and "could not check" is never "it passed".\n\n` +
+      `${MANUAL_SUBSTITUTE}`,
+  };
+}
+
+/** A spawn's stderr, safe to read on any result shape. */
+const stderrOf = (result) => (typeof result.stderr === 'string' ? result.stderr.trim() : '(none reported)');
 
 /** Resolve the ref to diff against. */
 function resolveBase(explicit) {
@@ -89,6 +138,12 @@ function auditChanges(raw) {
 
 export function check(baseRef, repoDir = '.') {
   const merged = git(['merge-base', baseRef, 'HEAD'], repoDir);
+  // Tested BEFORE `status !== 0`, and before anything reads `stderr`. A spawn
+  // that never started has `status: null` and `stderr: null`, so the old
+  // `merged.stderr.trim()` threw a TypeError from inside the fail-closed branch
+  // — the guard crashed in exactly the degraded environment its message exists
+  // to explain, and printed a stack trace instead of the sentence (#449).
+  if (didNotStart(merged)) return couldNotRunGit('git merge-base', merged);
   if (merged.status !== 0) {
     // "I could not check" is never "it passed". A missing base ref means this
     // guard did not run, and saying so is the only honest outcome.
@@ -96,16 +151,18 @@ export function check(baseRef, repoDir = '.') {
       code: 2,
       message:
         `Could not resolve a merge base between '${baseRef}' and HEAD:\n` +
-        `${merged.stderr.trim()}\n\n` +
+        `${stderrOf(merged)}\n\n` +
         `This guard did not run. Fetch the base ref (Actions needs ` +
         `fetch-depth: 0) and retry — a guard that cannot check must not report ` +
-        `success.`,
+        `success.\n\n` +
+        `${MANUAL_SUBSTITUTE}`,
     };
   }
 
   const diff = git(['diff', '--numstat', `${baseRef}...HEAD`, '--', AUDIT_PREFIX], repoDir);
+  if (didNotStart(diff)) return couldNotRunGit('git diff', diff);
   if (diff.status !== 0) {
-    return { code: 2, message: `git diff failed:\n${diff.stderr.trim()}` };
+    return { code: 2, message: `git diff failed:\n${stderrOf(diff)}\n\n${MANUAL_SUBSTITUTE}` };
   }
 
   const changes = auditChanges(diff.stdout);
@@ -194,7 +251,17 @@ if (invokedDirectly) {
     console.log(result.message);
   } else {
     console.error(`\n${result.message}\n`);
-    console.error(`::error::append-only audit log lost lines.`);
+    // The annotation is the one line that survives into the Actions summary, so
+    // it must not say the opposite of the message above it. Code 2 means the
+    // guard did NOT run; announcing that as "lost lines" reports a finding it
+    // never made, and a reader who trusts the annotation over the body draws
+    // exactly the wrong conclusion. The EXIT CODE is unchanged — both are
+    // non-zero and both still fail closed (#449).
+    console.error(
+      result.code === 2
+        ? `::error::append-only guard CANNOT CHECK — it did not run, so nothing was verified.`
+        : `::error::append-only audit log lost lines.`,
+    );
   }
   process.exit(result.code);
 }

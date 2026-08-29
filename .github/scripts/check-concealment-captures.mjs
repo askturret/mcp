@@ -710,8 +710,8 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
               `this row was classified against, which is what makes the classification re-derivable later ` +
               `(#410: a stale checkout yields a confidently wrong Factor 2, and nothing else in the row ` +
               `reveals it). Record it with \`git hash-object ${TEMPLATES_PATH}\` — the BLOB hash of the ` +
-              `allowlist you actually read, not the commit that last changed it. Absence is required only ` +
-              `on rows a change ADDS; corpus-wide it means "predates the field", so history is untouched.`,
+              `allowlist you actually read, not the commit that last changed it. THE FIELD is required only ` +
+              `on rows a change ADDS; corpus-wide its absence means "predates the field", so history is untouched.`,
           );
         }
       }

@@ -583,6 +583,18 @@ const TEMPLATES = '.operum/audit/concealment-templates.toml';
   const added = run({ 'a.jsonl': line(without) }, ['a.jsonl']);
   is('a row ADDED without `templates_revision` fails', errorsMatching(added, MISSING_REVISION).length, 1);
 
+  // The trailing scope gloss says which rows the FIELD is required on. Written
+  // as "Absence is required only on rows a change ADDS" it said the inverse —
+  // in the sentence explaining the contract to someone who has just tripped
+  // over it (#506). This asserts the HARMFUL claim is ABSENT rather than
+  // transcribing the corrected sentence: a second copy of the prose here would
+  // agree today and drift tomorrow, which is the Transcribed Oracle shape.
+  is(
+    '...and the refusal does not claim the ABSENCE is what is required (#506)',
+    /Absence is required/.test(errorsMatching(added, MISSING_REVISION)[0] ?? ''),
+    false,
+  );
+
   // The bargain that keeps history out of it: 125 of 160 corpus rows lack the
   // field and can never be backfilled, so corpus-wide absence means "predates
   // the field" — exactly as it does for `factor_1`.

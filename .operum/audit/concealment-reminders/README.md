@@ -312,6 +312,54 @@ over the *template*, both untouched: the `concealment_clause` requirement and
 the attachment probe. This section concerns only the **capture-side** relation,
 and describes matching that already ships.
 
+## Validate your rows — and COMMIT THEM FIRST (#514)
+
+```
+1. commit the rows
+2. node .github/scripts/check-concealment-captures.mjs . origin/main
+3. read the "N corpus file(s) added or modified" note
+```
+
+**Step 3 is the load-bearing one, and step 1 is why.**
+
+`0 corpus file(s) added or modified` means **nothing was checked.** Not "nothing
+was wrong" — nothing was examined. The run still prints
+`OK — every capture row satisfies the schema`, and that green is indistinguishable
+from a real one.
+
+The reason is deliberate and is not a defect: the checks that catch a redacted
+path and a missing `templates_revision` are **diff-scoped to rows a change
+ADDS**, because the frozen log is never rewritten and most existing rows predate
+the field. Scoping by what is knowable is correct. What is not obvious is that
+**a run before committing has an empty scope**, so the natural order — validate,
+then commit — is the one order in which the validator can tell you nothing.
+
+Do not widen the checks to fix this. The scoping is right; the silent empty pass
+is the problem, and reading one line of output is the whole remedy.
+
+**How this was found is the argument for writing it down.** It was not found by
+validating a branch. It surfaced by accident, while mutation-testing the
+validator during an unrelated review — a placeholder was substituted into a good
+row, the check went red, and the author recognised their own rows in the
+failure. Run against those rows as first pushed, the validator names both
+defects six times over. Nobody needed luck; they needed step 1.
+
+### Do not write your own placeholder matcher
+
+If you are tempted to grep your rows for `<PATH>` and friends before committing:
+**don't.** Run the validator instead.
+
+Hand-rolled pattern-matching has failed on this class three times in one week,
+in both directions — passing bad rows and flagging good ones. The corpus has
+carried at least five placeholder spellings, including `<REPO>`, which a
+reviewer's own check missed by writing `<repo>` case-sensitively **in a review
+whose subject was that very defect.**
+
+Condition 6 catches all of them without enumerating any, because it keys on the
+slot's declared pattern — a path must start with `/` — rather than on a list of
+spellings someone has to keep current. A list is always one spelling behind; a
+pattern is not.
+
 ## Landing a capture — the PR workflow
 
 Writing the entry is half the job. An entry that is never committed does not

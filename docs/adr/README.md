@@ -25,6 +25,7 @@ reconstruct the answer from commit archaeology.
 | [020](ADR-020-explorer-panels.md) | The Explorer is six fixed panels, and no panel bypasses redaction | reconstructed ⚠ |
 | [021](ADR-021-two-logger-types.md) | Two logger types in `core`, and when the older one retires | written at the time (#133) |
 | [022](ADR-022-concealment-allowlist-is-evidence-bound.md) | The concealment allowlist is evidence-bound: no template without a captured message | written at the time (#276) |
+| [023](ADR-023-factor-1-is-keyed-on-read-order.md) | Factor 1 is keyed on read order, and `channel` records a judgement rather than a carrier | written at the time (#468) |
 
 ⚠ = the number is cited for more than one subject; the ADR records that
 ambiguity rather than resolving it by invention.

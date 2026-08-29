@@ -327,6 +327,18 @@ Entries predating the field carry neither `factor_1` nor `channel`; they are not
 backfilled, so any tally must scope itself to rows that carry them. Absence
 means *"predates the field"*, which is a different fact from `unknown`.
 
+**That claim holds only for the `unknown` boundary, and #468 found where it
+stops.** `unknown` against everything else is checkable, because it is the
+definitional Factor 1 axis restated. The distinctions *among* the PASSES values
+are not: Factor 1 never forces them, no tie-break rule exists, and three agents
+capturing one broadcast with identical carriers recorded two different values
+without any of them noticing. So `channel` is checkable as a record of the
+Factor 1 verdict and is **a recorded judgement, not a measured carrier**, above
+that line — which also means the carrier-shape claim above must be cited to the
+matched pair rather than to differing `channel` values.
+[ADR-023](ADR-023-factor-1-is-keyed-on-read-order.md) carries the evidence, the
+counts and the three unchosen repairs.
+
 ## Retirement trigger
 
 If the harness ever emits these notices in a structured, delimited form whose

@@ -63,6 +63,8 @@ import { join, resolve, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
+import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
+
 export const SCRIPTS_REL = '.github/scripts';
 export const INVENTORY_REL = '.operum/audit/mutation-audit-inventory.md';
 
@@ -314,11 +316,26 @@ export function reachedAssertions(output) {
 
 function runNodeCheck(file) {
   const r = spawnSync(process.execPath, ['--check', file], { encoding: 'utf-8' });
+  // A `node` that never RAN is not a parse failure, and reporting it as one
+  // names the wrong defect (#443). Both routes are non-ok, so the audit still
+  // errors rather than recording a false witness — but "the mutated file does
+  // not parse" and "node could not be started" ask for different actions, and
+  // trap 1 is the one place this audit must not be vague.
+  if (didNotStart(r)) {
+    return { ok: false, out: `node --check COULD NOT RUN: ${spawnFailureDetail(r)}` };
+  }
   return { ok: r.status === 0, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 
 function runSelfTest(testPath, cwd) {
   const r = spawnSync(process.execPath, [testPath], { encoding: 'utf-8', cwd });
+  // `code: null` propagated into "baseline self-test is not green (exit null)",
+  // which reads as a self-test that FAILED rather than one that never ran. The
+  // routing was already right — trap 5 makes a non-green baseline CANNOT CHECK
+  // — so this repairs the sentence, not the verdict (#443).
+  if (didNotStart(r)) {
+    return { code: null, out: `self-test COULD NOT RUN: ${spawnFailureDetail(r)}` };
+  }
   return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 

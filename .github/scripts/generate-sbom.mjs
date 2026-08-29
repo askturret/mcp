@@ -23,6 +23,7 @@ import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { inventory } from './lib/dependencies.mjs';
+import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
 
 /**
  * Pinned generator version. Bump deliberately, in a reviewed change.
@@ -91,6 +92,17 @@ function main() {
     { cwd: repoRoot, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
   );
 
+  // Tested BEFORE the exit-code comparison (#443). A generator that never ran
+  // leaves `status: null`, and `null !== 0` is true — so this reported
+  // `SBOM generation failed (exit null)`, naming an exit that never happened.
+  // Both paths exit 2, so nothing was admitted that should have been blocked;
+  // what was wrong is the sentence a reader has to act on. `didNotStart` and
+  // `spawnFailureDetail` are imported, never re-derived (#443 finding 2).
+  if (didNotStart(run)) {
+    console.error(`::error::the SBOM generator COULD NOT RUN: ${spawnFailureDetail(run)}`);
+    console.error('Nothing was generated, so this run has not checked anything.');
+    process.exit(2);
+  }
   if (run.status !== 0 || !existsSync(outputPath)) {
     console.error(`::error::SBOM generation failed (exit ${run.status}).`);
     console.error((run.stderr || run.stdout || '').slice(-4000));

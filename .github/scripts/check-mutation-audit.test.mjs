@@ -777,6 +777,91 @@ process.exit(0);
   check('the audit discovers itself as a target', found, true);
 }
 
+// ---------------------------------------------------------------------------
+// The never-ran branches, asserted against the production source (#443)
+//
+// Both spawn sites here use `process.execPath` — an ABSOLUTE path that always
+// resolves — so a real ENOENT is not producible, and the empty-PATH technique
+// that witnesses `generate-sbom` and `check-runtime-marker-ignored` does not
+// reach them. That is the same situation `check-runtime-marker-ignored` faced,
+// and it is answered the same way: the shared vocabulary is exercised for real
+// in `sdk-upgrade-drill.test.mjs` — including against a genuinely SIGKILLed
+// child — and its USE is pinned here.
+//
+// Without these, two new cannot-check branches would land unwitnessed, which is
+// the issue's own causal claim: nothing executed the detail-string
+// construction, which is exactly why the original undefined-dereference
+// shipped. Four new branches with two unwitnessed reproduces the condition this
+// work exists to remove.
+//
+// Comments are stripped first. This file and the guard both DISCUSS the
+// forbidden form in order to warn against it, and a scan window including its
+// own documentation goes red for a comment while staying green for a real call
+// site a comment happens to mention (#449).
+// ---------------------------------------------------------------------------
+{
+  const source = readFileSync(join(import.meta.dirname, 'check-mutation-audit.mjs'), 'utf-8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((l) => !/^\s*(\/\/|\*)/.test(l))
+    .join('\n');
+
+  check('the audit imports the shared never-ran vocabulary', /import \{[^}]*didNotStart[^}]*\} from '\.\/sdk-upgrade-drill\.mjs'/.test(source), true);
+  check('...and builds its detail with the shared helper', /spawnFailureDetail\s*\(/.test(source), true);
+
+  // BOTH spawn sites, named separately. A single `didNotStart(` match would be
+  // satisfied by one site while the other still fell through — which is the
+  // half-applied shape this whole PR is about.
+  //
+  // SCOPED BY BRACE MATCHING, NOT BY A CHARACTER BUDGET, and the difference is
+  // the whole assertion. The first version of these two lines used
+  // `/runNodeCheck[\s\S]{0,400}?didNotStart\(/`, and QA showed it stayed GREEN
+  // with runNodeCheck's guard deleted outright: the 320-character window began
+  // at the name, ran through the now-unguarded body, CROSSED THE FUNCTION
+  // BOUNDARY and terminated on runSelfTest's guard. So the runNodeCheck
+  // assertion was witnessing runSelfTest, twice.
+  //
+  // It was asymmetric, which is why one-direction testing cleared it — deleting
+  // the LAST didNotStart in the file does go red. Both directions are exercised
+  // now, and a budget is never a scope.
+  const bodyOf = (src, name) => {
+    const at = src.indexOf(`function ${name}(`);
+    if (at === -1) return '';
+    const open = src.indexOf('{', at);
+    if (open === -1) return '';
+    let depth = 0;
+    for (let i = open; i < src.length; i += 1) {
+      if (src[i] === '{') depth += 1;
+      else if (src[i] === '}') {
+        depth -= 1;
+        if (depth === 0) return src.slice(open, i + 1);
+      }
+    }
+    return '';
+  };
+
+  // The slices must be NON-EMPTY first. Without this the two assertions below
+  // pass vacuously the moment a function is renamed — `indexOf` returns -1, the
+  // slice is '', and `.test('')` is false, so the failure would look like a
+  // missing guard rather than a missing target. Same shape as the `-1 is less
+  // than any position` trap already recorded in sdk-upgrade-drill.test.mjs.
+  const nodeCheckBody = bodyOf(source, 'runNodeCheck');
+  const selfTestBody = bodyOf(source, 'runSelfTest');
+  check('the runNodeCheck body is located, so the next assertion is not vacuous', nodeCheckBody !== '', true);
+  check('the runSelfTest body is located, so the next assertion is not vacuous', selfTestBody !== '', true);
+
+  // ...and the slices must not be the SAME slice, which would restore the
+  // defect in a new costume.
+  check('...and they are distinct bodies', nodeCheckBody !== selfTestBody, true);
+
+  check('runNodeCheck tests for a never-ran child', /didNotStart\s*\(/.test(nodeCheckBody), true);
+  check('runSelfTest tests for a never-ran child', /didNotStart\s*\(/.test(selfTestBody), true);
+
+  // The inlined form. Its ABSENCE is the assertion: a call site reaching for
+  // `.error.message` has kept the condition and dropped the defence.
+  check('...and neither dereferences `.error.message` directly', /\.error\.message/.test(source), false);
+}
+
 console.log('');
 console.log(`${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

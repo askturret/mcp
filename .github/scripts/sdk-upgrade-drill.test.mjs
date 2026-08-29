@@ -26,6 +26,7 @@
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import { didNotStart, couldNotRun, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
 
@@ -203,6 +204,44 @@ check(
   /'node_modules\/typescript\/bin\/tsc'/.test(source),
   true,
 );
+
+// ---------------------------------------------------------------------------
+// The signal-killed row, against a REAL child rather than a fixture (#443)
+//
+// Every case above uses a hand-written object shaped like a `spawnSync` result.
+// That is the right way to test a classifier, and it has one weakness: the
+// fixture asserts what I BELIEVE node returns for a signal-killed child. If the
+// belief is wrong, the fixture and the code agree with each other and both are
+// wrong — the Transcribed Oracle shape, one level up.
+//
+// So this spawns a child that kills ITSELF with SIGKILL and asserts the shape
+// from the runtime. It is also the acceptance item #443 asks for: the row is
+// `status: null` with `error` UNDEFINED, which is the combination a condition-
+// only fix admits and then dereferences.
+// ---------------------------------------------------------------------------
+{
+  const killed = spawnSync(process.execPath, ['-e', 'process.kill(process.pid, "SIGKILL")'], {
+    encoding: 'utf-8',
+  });
+
+  check('a REAL signal-killed child reports status null', killed.status, null);
+  check('...and carries NO error object — the half a condition-only fix misses', killed.error, undefined);
+  check('...and does carry the signal', killed.signal, 'SIGKILL');
+
+  check('didNotStart recognises it', didNotStart(killed), true);
+  check('spawnFailureDetail names the signal rather than crashing', spawnFailureDetail(killed), 'killed by signal SIGKILL');
+  check('...and it still routes to CANNOT CHECK (2)', couldNotRun(killed, 'baseline').code, 2);
+
+  // THE DEFECT ITSELF, observed rather than described: the inlined form #443
+  // finding 2 documents throws on this exact result.
+  let threw = null;
+  try {
+    void killed.error.message;
+  } catch (e) {
+    threw = e.constructor.name;
+  }
+  check('the inlined `result.error.message` THROWS on this row', threw, 'TypeError');
+}
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

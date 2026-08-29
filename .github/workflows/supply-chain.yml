@@ -70,6 +70,14 @@ jobs:
       - name: Check NOTICE is current
         run: node .github/scripts/generate-notice.mjs --check
 
+      # Self-tested first, like the guards above. What it pins is the
+      # cannot-check branch (#443): a generator that never STARTS must say so,
+      # rather than report `SBOM generation failed (exit null)` and name an exit
+      # that never happened. An unwitnessed cannot-check branch is how an
+      # incomplete copy survives review — the causal claim #443 is built on.
+      - name: Self-test the SBOM generator
+        run: node .github/scripts/generate-sbom.test.mjs
+
       # Proves SBOM generation works without needing a release to exist.
       - name: Generate CycloneDX SBOM
         # pipefail matters here: GitHub Actions runs `bash -e` without it, so

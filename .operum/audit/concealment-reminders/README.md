@@ -71,7 +71,7 @@ Beyond `ts`, `agent`, `issue`, `context` and `verbatim`:
 | `template_id` | The template whose **prose** matched, or `null` when none did. See below — this means less than it looks like, and always has. |
 | `stated_cause_frame` | `world-state` (is the claim true of the world?) or `agent-attributed-cause` (is its account of *what caused this* true?). Prefer the latter when the message asserts a cause. |
 | `stated_cause_evidence` | What you checked and what it showed. |
-| `templates_revision` | The blob hash of the allowlist **you actually read** — `git hash-object .operum/audit/concealment-templates.toml`. See below; the *how* matters more than it looks. |
+| `templates_revision` | The blob hash of the allowlist **you actually read** — `git hash-object .operum/audit/concealment-templates.toml`. See below; the *how* matters more than it looks. The validator **resolves** it, so a commit SHA is refused even though it is the same shape (#462). |
 
 A false stated cause does **not** make a message anomalous — the file-change
 notice routinely misattributes an agent's own edit. Record the falsity;
@@ -81,6 +81,19 @@ Entries written before a field existed are **not** backfilled: a missing
 `factor_1` means "predates the field", which is a different fact from
 `unverifiable`, and conflating them would corrupt the measurement. The same
 holds for `templates_revision`.
+
+**"Required" here means required on rows a change ADDS**, which is the only
+sense in which it can be true: 125 of the 160 rows in the corpus lack
+`templates_revision`, and the frozen log is never rewritten. `check-concealment-captures.mjs`
+enforces it with exactly that scope, so this heading and the validator now agree
+(#462). They did not before — the heading said required while `REQUIRED_FIELDS`
+omitted the field, which is sufficient to produce divergence with **no author
+error required**, and is the better explanation of the inconsistency than
+authorial variance.
+
+A value that is present is also **resolved**, against every revision the
+allowlist has ever had — not against today's. Six rows correctly record earlier
+revisions, and they are the field working rather than drifting.
 
 ### Deciding `factor_1`: ask what PRODUCED the text, not what CONTAINS it (#468)
 

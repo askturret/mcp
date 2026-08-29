@@ -2,7 +2,7 @@
 
 What "1.0" will mean, expressed as a rule you can check a change against.
 
-**Policy version `1.0.0`. Applies from release `1.0.0` onward.**
+**Policy version `1.1.0`. Applies from release `1.0.0` onward.**
 
 This page is a **versioned contract**, and the most consequential one the
 project publishes: it is the thing the 1.0 label actually promises. Changing it
@@ -36,14 +36,26 @@ own stability rules for how *it* may change.
 A change to anything in this section is governed. Breaking it requires a MAJOR
 release, and there is no exception for "nobody was using it".
 
-### 1. Core public types
+### 1. Core public entry point
 
-Everything exported from `@askturret/mcp-core`'s public entry point, including:
+Everything exported from `@askturret/mcp-core`'s public entry point — the types
+below, **and the observable behaviour of exported functions**, including which
+inputs they reject:
 
 `OperationDefinition` · `OperationCommand` · `OperationResult` · `Policy` ·
 `OperationSource` · `OperationExecutor` · `PresetConfiguration` and the preset
 option types · the config surface accepted by the facades
 (`McpFacadeOptions`) and by `createMcpServer`.
+
+**Option defaults.** Changing the **default value of an option** on an exported
+function is MINOR only when the old behaviour remains reachable by passing the
+old value explicitly; otherwise it is MAJOR.
+
+This is the same test §4 applies to CLI flags and config keys, stated here as
+well because in a library most defaults are API options rather than flags — the
+more common case, and the one a reader is more likely to be pricing. A reader
+should meet the rule in the section that covers their surface, rather than
+having to reach for one whose heading names a different one.
 
 ### 2. The plugin API — versioned independently
 

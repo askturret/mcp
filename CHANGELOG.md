@@ -170,16 +170,32 @@ when `1.0.0` ships.
   exported from `@askturret/mcp-core`'s public entry point"); the `diff --json`
   contract (§3) reaches it via `packages/cli/src/commands/diff.ts:239`.
   Classified MINOR because the old behaviour stays reachable by writing the
-  value explicitly — §4 states that rule for CLI defaults, and the policy has
-  **no general rule for API option defaults**, so this applies §4's principle
-  by analogy rather than citing it. That gap is being filed against the policy
-  document rather than resolved here.
+  value explicitly. When this entry was written, §4 stated that rule for CLI
+  defaults only and the policy had no general rule for API option defaults, so
+  this applied §4's principle **by analogy rather than citing it** — and the
+  gap was filed as #390. It is a citation now: policy `1.1.0` states the rule
+  for API option defaults in §1 directly. The verdict is unchanged either way,
+  which is why the analogy was safe to ship on.
   **§5 is not engaged**: the hash algorithm is unchanged. `computeHash` moved
   from `compiler/passes/freeze-and-hash.ts` to `compiler/hash.ts` so one
   implementation serves both the pass and the reader; the function body is
   byte-identical to its previous form, and a test asserts `createSnapshot`'s
   hash equals the shared module's output. Nothing is re-exported, so the
   compiler's public surface is unchanged — two tests observe that too.
+- `docs/compatibility-policy.md` — §1 now covers the **observable behaviour of
+  exported functions**, not only their types, and is retitled *Core public entry
+  point* to name the surface its body always described. It also now prices
+  **API option defaults** (#390): changing a default is MINOR only when the old
+  behaviour stays reachable by passing the old value explicitly, otherwise
+  MAJOR — the same test §4 states for CLI flags and config keys, which is
+  unchanged.
+  Not a covered surface — this document publishes the rules that govern covered
+  surfaces rather than being one.
+  **Policy version `1.0.0` → `1.1.0`**: a MINOR bump classified as a
+  *clarification* rather than an addition, under the policy's own rule at
+  "Changing this policy". No verdict moves — §1's body already read "everything
+  exported" — so every entry above classified against §1 keeps the verdict it
+  shipped with.
 
 ### Fixed
 - `compositeSource().discover()` no longer swallows a child source's

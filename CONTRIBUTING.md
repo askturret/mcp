@@ -150,6 +150,22 @@ This applies to asserting that something *is* filed, as much as to asking for
 it. If you cannot cite a number, the honest sentence is "I have not filed this
 yet," not a description that implies you have.
 
+**But do not put a number in a branch name unless the branch does that issue's
+work.** Reference-by-number is right in prose and wrong in a branch, because a
+branch name is not only a label — **the merge gate resolves a linked issue out
+of `<type>/issue-<N>-<slug>`**, and it does so even when the PR explicitly
+declares that it closes nothing. The PR is then gated on `<N>`'s
+`status:qa-approved`: a stamp belonging to work the PR did not do, which may
+never be applied, or may be correctly removed the moment `<N>` ships.
+
+Naming a branch after the issue you *happened to be working on* is the natural
+mistake, and it has now been made five times. It bites hardest on PRs that
+legitimately close nothing — concealment captures above all, so
+[their README](.operum/audit/concealment-reminders/README.md#landing-a-capture--the-pr-workflow)
+carries the full mechanism and the evidence. The short version: if the branch
+does not do issue `<N>`'s work, keep `<N>` out of its name and put the reference
+in the PR body, where it is a pointer rather than a binding.
+
 **There is deliberately no automated check for this, and that is a decision
 rather than an omission.** *"Is this comment a finding about something else?"* is
 a semantic judgement with many shapes. A check that caught one syntactic form

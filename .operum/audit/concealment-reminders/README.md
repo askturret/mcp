@@ -264,6 +264,60 @@ over the *template*, both untouched: the `concealment_clause` requirement and
 the attachment probe. This section concerns only the **capture-side** relation,
 and describes matching that already ships.
 
+## Landing a capture — the PR workflow
+
+Writing the entry is half the job. An entry that is never committed does not
+exist, because worktrees are ephemeral — so the capture has to reach `main`, and
+there are exactly two things to get right when opening the PR.
+
+**1. Open it with `no_linked_issue: true`.** A capture closes nothing. That flag
+is the supported way to say so: it is auditable rather than a bypass, applying a
+`no-linked-issue` label so the declaration stays visible on the artifact.
+
+**2. Name the branch WITHOUT an issue number.** Use `chore/preserve-<something>`.
+**Never `chore/issue-<N>-<slug>`** — not even when a capture fired while you were
+working issue `<N>`, which is the usual case and exactly why this keeps happening.
+
+### Never file a tracking issue to satisfy a gate
+
+If a gate refuses the PR, **do not create an issue so the PR has something to
+close.** One such issue exists and its own body admits it was filed only to get
+past the gate. It is harmful in three ways, and the friction is the least of
+them: it puts a knowingly false statement in the permanent record; it opens and
+closes in one motion, so any signal derived from issue state degrades; and it
+trains the reflex of *filing an artifact to get past a control*, which is the
+worst habit to build anywhere near a security gate.
+
+Do not write a `Closes #N` you do not mean, either. Same reason.
+
+### Why the branch name matters — observed, not theorised
+
+**The merge gate resolves a linked issue from the branch name**, and an
+author-declared `no_linked_issue` does not suppress it. A number in the branch
+creates a binding you never declared, and the PR is then gated on that issue's
+`status:qa-approved` — a stamp belonging to unrelated work.
+
+This is established behaviour with repeated instances, not a hypothesis:
+
+| when | branch | what happened |
+|---|---|---|
+| PR #352, #358 | `chore/preserve-*` — no number | merged |
+| PR #363 | `chore/issue-359-*` | refused, linkage resolved to #359 from the branch alone |
+| a capture during #266's QA | `chore/issue-266-*` | two PRs shared a branch-derived link, so the approval recorder refused to guess which head was reviewed — and blocked the stamp on an unrelated, already-approved PR |
+| PR #477 | `chore/issue-390-*` | refused, demanding a stamp on #390 that #390's own post-merge cleanup had correctly removed 45 seconds after its PR merged |
+
+The last row is the sharpest, because nothing was wrong with any of it: the
+capture was correct, the cleanup was correct, and the PR still could not merge.
+It shows the binding is not merely untidy — it makes a capture PR depend on an
+unrelated issue still being mid-pipeline at the moment of merge. That dependency
+is invisible from the PR, invisible from the issue, and encoded only in a branch
+name.
+
+**Editing the PR body does not undo it.** The linkage is the branch, and an open
+PR cannot be re-pointed at a different one. The only repair is to close the PR,
+re-branch without the number, and re-open — which is why the rule is worth
+following the first time.
+
 ## Never rewrite what is already here
 
 `.operum/audit/*.jsonl` is `merge=union` in `.gitattributes`, so concurrent

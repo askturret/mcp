@@ -30,8 +30,9 @@ The forces that make this a decision rather than an obvious step:
 - Widening it is **cheap and quiet**. Adding one permissive template is a
   one-line diff that reads like configuration.
 - The corpus shows **silent textual corruption in practice**: an em dash was
-  transcribed as an ASCII hyphen in eleven entries, all from a single agent's
-  capture style. A reviewer cannot see that difference at a glance.
+  transcribed as an ASCII hyphen in eleven entries as of `e901fc2`, all from a
+  single agent's capture style. A reviewer cannot see that difference at a
+  glance.
 
 ## Decision
 
@@ -109,9 +110,9 @@ Recorded so nobody re-derives them as obvious simplifications.
 **The ASCII-hyphen variant of T1 was not seeded.** Eleven entries render the
 clause with a hyphen rather than an em dash — and those eleven are *exactly*
 the eleven that also redacted the path, a perfect correlation with one agent's
-transcription style. All thirty-four unredacted captures use U+2014. Seeding
-the hyphen form would widen the allowlist on the strength of a transcription
-slip.
+transcription style. All ninety-nine unredacted captures use U+2014. Both
+figures are as of `e901fc2`. Seeding the hyphen form would widen the allowlist
+on the strength of a transcription slip.
 
 **The `Note: `-prefixed variant of T2 was not seeded.** One capture records it;
 four record the unprefixed form. TOML optionality is not available in this
@@ -201,30 +202,32 @@ method, or the message is involved. An agent working predominantly through
 working through MCP tools, and a per-author tally of `classification` measures
 **tool mix**, not message risk.
 
-Measured against the corpus rather than asserted — of the 39 entries carrying
-`factor_1` at the time of writing, **every** `unverifiable` row also carries
+Measured against the corpus rather than asserted — of the 87 entries carrying
+`factor_1` as of `e901fc2`, **every** `unverifiable` row also carries
 `channel: unknown`, across two different agents. The correlation is total
 because it is definitional.
 
 **A second confounder, which weighting by `channel` alone does not remove.**
-ANOMALOUS and `unverifiable` are not the same population. At the time of writing
-the corpus holds 90 entries, of which **only 39 carry `factor_1` at all** — and
-**within that 39-entry subset**, 31 are anomalous: 14 by the carrier path above,
-and **17 that passed Factor 1**, anomalous because Factor 2 found no
+ANOMALOUS and `unverifiable` are not the same population. As of `e901fc2`
+the corpus holds 140 entries, of which **only 87 carry `factor_1` at all** — and
+**within that 87-entry subset**, 46 are anomalous: 25 by the carrier path above,
+and **21 that passed Factor 1**, anomalous because Factor 2 found no
 whole-message template match. That second group is a statement about template
 coverage rather than about the carrier or the agent. Read `factor_1` and
 `template_id` as separate axes; collapsing them into `classification` merges two
 unrelated causes into one number.
 
-**That 31 is not the whole-corpus anomalous count, which is 78.** The two differ
-because most entries predate `factor_1` entirely, so only the 39 carrying it can
-be split by cause at all — the split above is silent about the other 51. Mixing
-the two figures compares different populations.
+**That in-subset 46 is not the whole-corpus anomalous count, which is 93.** The
+two differ because many entries predate `factor_1` entirely, so only the 87
+carrying it can be split by cause at all — the split above is silent about the
+other 53. Mixing the two figures compares different populations.
 
-Every count above is a snapshot and will drift as the corpus grows — **recount
-from the artifact rather than citing them.** The artifact is the union of
+Every count above is a snapshot taken at `e901fc2` and will drift as the corpus
+grows — **recount from the artifact rather than citing them, and name the commit
+you counted at.** Without that coordinate a reader who recounts and disagrees
+cannot tell drift from error. The artifact is the union of
 `.operum/audit/concealment-reminders/*.jsonl` and the frozen
-`.operum/audit/concealment-reminders.jsonl`; at the time of writing every entry
+`.operum/audit/concealment-reminders.jsonl`; as of `e901fc2` every entry
 lives in the per-entry directory and the frozen log is not present, but a
 recount must read both, because a tally over one source silently under-counts.
 

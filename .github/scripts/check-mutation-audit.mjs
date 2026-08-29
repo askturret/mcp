@@ -594,7 +594,166 @@ export function discoverGuards(rootDir) {
     });
 }
 
-export function renderInventory(report) {
+/**
+ * The figures a revision delta compares, read back out of a rendered inventory.
+ *
+ * Parsed from this file's OWN output rather than stored alongside it, so there
+ * is one source of truth and no second file to fall out of step. Returns `null`
+ * for any figure the previous revision did not carry — a figure added later is
+ * "not recorded then", which is a different fact from "unchanged".
+ */
+export function parseInventoryTotals(markdown) {
+  if (typeof markdown !== 'string' || markdown === '') return null;
+  const num = (label) => {
+    const m = new RegExp(`^- ${label}: \\*\\*(\\d+)\\*\\*`, 'm').exec(markdown);
+    return m === null ? null : Number(m[1]);
+  };
+  const unreachable = /^- unreachable \(no self-test, #431\): \*\*(\d+)\*\* sites across (\d+) scripts/m.exec(markdown);
+  const totals = {
+    guards: num('measured guards'),
+    sites: num('failure sites'),
+    witnessed: num('witnessed'),
+    unwitnessed: num('unwitnessed'),
+    unreachableSites: unreachable === null ? null : Number(unreachable[1]),
+    unreachable: unreachable === null ? null : Number(unreachable[2]),
+    cannotCheck: num('cannot check \\(non-green baseline\\)'),
+  };
+
+  // A document carrying NONE of the expected figures is not an inventory, and
+  // must not be reported as one whose figures all happen to be unknown.
+  //
+  // Found by the self-test rather than by design: the first version returned
+  // this object regardless, so an unparseable predecessor produced "no headline
+  // figure moved" — silence indistinguishable from nothing having changed,
+  // which is the precise failure this section exists to prevent. It had that
+  // defect while containing a paragraph explaining why it must not.
+  if (Object.values(totals).every((v) => v === null)) return null;
+
+  return totals;
+}
+
+/** Figures a delta reports on, in the order a reader wants them. */
+const DELTA_FIGURES = Object.freeze([
+  ['sites', 'failure sites'],
+  ['witnessed', 'witnessed'],
+  ['unwitnessed', 'unwitnessed'],
+  ['unreachableSites', 'unreachable sites'],
+  ['unreachable', 'unreachable scripts'],
+  ['cannotCheck', 'cannot-check scripts'],
+  ['guards', 'measured guards'],
+]);
+
+/**
+ * What MOVED since the previous revision (#438).
+ *
+ * The inventory records state; this records change. It exists because the
+ * 73 -> 74 flip was correct and had to be derived from a line-number diff, and
+ * because a figure that moves without an attached explanation degrades toward
+ * the state it replaced — the reader has no cheap way to tell "a fix added a
+ * witness" from "the measurement drifted".
+ *
+ * THREE PROPERTIES, each from a way this kind of report goes wrong:
+ *
+ *   1. BOTH DIRECTIONS. A delta that reported only growth would have missed
+ *      unreachable going 24 -> 3, which is the most consequential movement this
+ *      instrument has yet recorded and the one that most changes #431's
+ *      precondition. Decreases are reported with the same prominence.
+ *
+ *   2. RECLASSIFICATION IS NOT REGRESSION. `witnessed + unwitnessed +
+ *      cannot-check sites = failure sites`. When the total holds and the parts
+ *      move, sites changed CATEGORY rather than appearing or vanishing — which
+ *      is exactly what a non-green baseline produces (#429), and what a naive
+ *      delta between a local and a CI run would report as a phantom loss of
+ *      witnesses. Named rather than left to the reader.
+ *
+ *   3. "COULD NOT COMPARE" IS SAID OUT LOUD. A first revision, or one whose
+ *      predecessor cannot be parsed, emits a section saying so. Silence would be
+ *      indistinguishable from "nothing moved", which is the failure this whole
+ *      instrument exists to catch.
+ */
+export function inventoryDelta(previousMarkdown, totals) {
+  const lines = [];
+  const previous = parseInventoryTotals(previousMarkdown);
+
+  if (previous === null) {
+    lines.push('**Could not compare.** No previous inventory was readable, so this revision has');
+    lines.push('no measured predecessor. That is not the same as "nothing moved".');
+    return lines;
+  }
+
+  const moved = [];
+  const unknown = [];
+  for (const [key, label] of DELTA_FIGURES) {
+    const before = previous[key];
+    const after = totals[key];
+    if (before === null || before === undefined) {
+      unknown.push(label);
+      continue;
+    }
+    if (before !== after) moved.push({ label, before, after, delta: after - before });
+  }
+
+  if (moved.length === 0) {
+    lines.push('**No headline figure moved** since the previous revision.');
+  } else {
+    lines.push('| figure | before | after | change |');
+    lines.push('|---|---|---|---|');
+    for (const m of moved) {
+      const sign = m.delta > 0 ? `+${m.delta}` : String(m.delta);
+      lines.push(`| ${m.label} | ${m.before} | ${m.after} | **${sign}** |`);
+    }
+  }
+
+  // The partition check. Stated whichever way it comes out: a conserved total
+  // with moving parts is a reclassification, and a moving total is a real
+  // change in the measured population.
+  const partitionNow = totals.witnessed + totals.unwitnessed + totals.cannotCheckSites;
+  if (partitionNow !== totals.sites) {
+    lines.push('');
+    lines.push(
+      `**Partition does not close:** witnessed + unwitnessed + cannot-check sites = ${partitionNow}, ` +
+        `against ${totals.sites} failure sites. Treat every figure above as unexplained until that is understood.`,
+    );
+  } else if (moved.some((m) => m.label === 'witnessed' || m.label === 'unwitnessed')) {
+    const sitesMoved = moved.some((m) => m.label === 'failure sites');
+    lines.push('');
+    lines.push(
+      sitesMoved
+        ? '**The measured population changed**, so the movement above is not only a change of category.'
+        : '**RECLASSIFICATION, not regression.** The failure-site total is unchanged, so sites moved ' +
+          'between categories rather than appearing or vanishing. A non-green baseline does exactly ' +
+          'this (#429): witnessed falls, cannot-check rises, and nothing was actually lost.',
+    );
+  }
+
+  if (unknown.length > 0) {
+    lines.push('');
+    lines.push(
+      `Not comparable: **${unknown.join(', ')}** — the previous revision did not record ${unknown.length === 1 ? 'it' : 'them'}. ` +
+        'Absent then is a different fact from unchanged.',
+    );
+  }
+
+  return lines;
+}
+
+/**
+ * The first movement this instrument recorded, before it could record its own.
+ *
+ * Kept as a constant because the inventory is regenerated wholesale, so a
+ * history accumulated in the file would be erased on the next run. One entry,
+ * deliberately — this is a line of provenance, not a changelog system.
+ */
+const SEED_PROVENANCE = Object.freeze([
+  'The first recorded movement predates this section and is kept so that it is not',
+  'the undocumented one: **witnessed 73 -> 74** between `8bc9641` and `f2d0fda`.',
+  'QA attributed it to `errors.push(...interpretProbe(g).map(...))` in `audit()`',
+  'gaining a witness from the new detector fixture — a fix giving a real site a',
+  'real witness, which is what should happen. It had to be derived from a',
+  'line-number diff, which is why this section exists.',
+]);
+
+export function renderInventory(report, previousMarkdown = null) {
   const lines = [];
   lines.push('# Mutation-audit inventory (#428 stage 1)');
   lines.push('');
@@ -625,6 +784,22 @@ export function renderInventory(report) {
   lines.push(`- unwitnessed: **${report.totals.unwitnessed}**`);
   lines.push(`- unreachable (no self-test, #431): **${report.totals.unreachableSites}** sites across ${report.totals.unreachable} scripts`);
   lines.push(`- cannot check (non-green baseline): **${report.totals.cannotCheck}** scripts`);
+  lines.push(`- cannot check, as sites: **${report.totals.cannotCheckSites}**`);
+  lines.push('');
+  lines.push('`witnessed + unwitnessed + cannot-check sites = failure sites`. The site-level');
+  lines.push('figure is what closes that identity, and it is what makes a fall in `witnessed`');
+  lines.push('legible as a change of CATEGORY rather than a loss of coverage (#438).');
+  lines.push('');
+  lines.push('## What moved since the previous revision (#438)');
+  lines.push('');
+  lines.push('Compared against **the inventory committed in this repository**, not against the');
+  lines.push('previous run. Two runs of the same code in different environments legitimately');
+  lines.push('differ — see caveat 2 — so a delta between a local run and a CI one would report');
+  lines.push('movement that is an artifact of where it ran. This says which it compared.');
+  lines.push('');
+  lines.push(...inventoryDelta(previousMarkdown, report.totals));
+  lines.push('');
+  lines.push(...SEED_PROVENANCE);
   lines.push('');
   lines.push('| script | sites | witnessed | unwitnessed | status |');
   lines.push('|---|---|---|---|---|');
@@ -720,6 +895,14 @@ export async function audit(rootDir, { onProgress = () => {} } = {}) {
     unreachable: unreachable.length,
     unreachableSites: unreachable.reduce((n, r) => n + r.sites, 0),
     cannotCheck: measured.filter((g) => g.status === 'cannot-check').length,
+    // SITES, not scripts (#438). The scripts figure cannot close the partition:
+    // witnessed + unwitnessed + cannotCheckSites = sites is what makes a drop in
+    // `witnessed` legible as a RECLASSIFICATION rather than a regression, and
+    // that distinction is the whole difference between a real movement and the
+    // #429 environment artifact.
+    cannotCheckSites: measured
+      .filter((g) => g.status === 'cannot-check')
+      .reduce((n, g) => n + g.sites.length, 0),
     noSites,
   };
 
@@ -733,10 +916,22 @@ async function main(argv) {
 
   const report = await audit(root, { onProgress: (m) => process.stderr.write(`  ... ${m}\n`) });
 
-  console.log(renderInventory(report));
+  // The COMMITTED inventory is the comparison point (#438), read once and used
+  // for both the printed and the written copy so they cannot disagree. Read
+  // failures are not swallowed: `parseInventoryTotals` treats an unreadable
+  // predecessor as "could not compare", which the delta says out loud.
+  const inventoryPath = join(root, INVENTORY_REL);
+  let previousMarkdown = null;
+  try {
+    previousMarkdown = readFileSync(inventoryPath, 'utf-8');
+  } catch {
+    previousMarkdown = null;
+  }
+
+  console.log(renderInventory(report, previousMarkdown));
 
   if (write) {
-    writeFileSync(join(root, INVENTORY_REL), renderInventory(report), 'utf-8');
+    writeFileSync(inventoryPath, renderInventory(report, previousMarkdown), 'utf-8');
     console.log(`wrote ${INVENTORY_REL}`);
   }
 

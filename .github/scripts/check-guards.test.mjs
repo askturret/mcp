@@ -1960,6 +1960,293 @@ const wfStep = (script) => `jobs:\n  a:\n    steps:\n      - run: node .github/s
   check('wiring: a workflow directory with NO workflows is CANNOT CHECK', empty.cannotCheck !== null, true);
 }
 
+// ---------------------------------------------------------------------------
+// SPAWN SAFETY, DERIVED ACROSS EVERY SCRIPT (#509)
+//
+// #443 swept the child-spawning guards from a hand-written list. The list was
+// already stale when that work began — the population moved 8 -> 9 mid-issue,
+// because #324 added a script after the issue was filed. The tenth is the one
+// nobody notices, so the population is derived here instead.
+//
+// ## WHY THIS IS NOT A GREP, AND WHY THAT MATTERS MORE THAN THE ENUMERATION
+//
+// The obvious implementation asks the source whether it "has the didNotStart
+// check". I built exactly that during #443 and it was WRONG THREE TIMES OUT OF
+// THREE before I read the sites:
+//
+//   * flagged `spawnFailureDetail`'s own `result?.error?.message` — optional-
+//     chained, and safe;
+//   * flagged a dereference that `if (result.error)` guarded on the same line;
+//   * reported `check-workspace-artifacts` as having NO condition, when it
+//     spells a correct one as `typeof res.status !== 'number'`.
+//
+// That is #443's own finding running in BOTH directions: a grep reads
+// incomplete code as fine AND correct code as missing. I declined to ship it,
+// on the reasoning that a guard with a 3-of-3 false-positive rate is one people
+// learn to skim. So this asserts BEHAVIOUR instead: run the script with a PATH
+// on which its child cannot be found, and see what it does. An idiom this
+// author never thought of passes, because the script behaves correctly — which
+// is the property, rather than a spelling of it.
+//
+// ## THE PROBE MUST PROVE IT REACHED THE SPAWN
+//
+// Found by running it: an empty-PATH probe passed `check-path-filters` at exit
+// 0 having tested nothing, because that script only diffs when a PR payload is
+// present and locally there is none. A probe that cannot reach the branch it
+// claims to test is the same empty pass as a validator run before committing
+// (#514) — the third instance of that shape in one day.
+//
+// So a script counts as WITNESSED only when its output shows the spawn actually
+// failed. Anything else is NOT REACHED and must be declared below, never
+// silently passed.
+//
+// ## WHAT THIS DOES NOT COVER — the ENOENT row only, on real scripts
+//
+// The assertion names below read stronger than the coverage is, so the bound
+// belongs here rather than in a completion report nobody reads twice.
+//
+// An unresolvable PATH produces exactly ONE of the two `status === null` rows:
+// the child never STARTS, and `error` is set. The other row — killed by a
+// signal, `error` UNDEFINED — is the one #443 finding 2 is actually about, and
+// NO PATH MANIPULATION PRODUCES IT. It is reachable only in the fixtures below,
+// where a child SIGKILLs itself.
+//
+// Two consequences, both of which were reported as stronger than they are:
+//
+//   1. **This does not replace the per-file source assertions from #443.** Those
+//      remain the only thing pinning the signal row on the real scripts.
+//   2. **A tenth spawning script is ENUMERATED here, but its keying is not
+//      verified.** The derivation finds it, and an unprobeable one must be
+//      declared or `undeclared` fails — but if the probe DOES reach it, all that
+//      is exercised is the ENOENT row, where the finding-2 defect is harmless.
+//      QA demonstrated this end-to-end: a fixture script carrying the defect,
+//      once wired, passes this suite 147/0.
+//
+// The earlier claim that #381's wiring guard catches such a script is true and
+// beside the point: it catches an UNWIRED script, and #381 requires wiring
+// anyway. That is a missing STEP being detected, not a missing keying — so once
+// the author does the thing they were going to do, nothing here objects.
+// ---------------------------------------------------------------------------
+
+/** Scripts that spawn a child, derived rather than listed. */
+export function spawningScripts(scriptsDir) {
+  const strip = (s) =>
+    s.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+
+  const out = [];
+  for (const f of readdirSync(scriptsDir).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs')).sort()) {
+    const code = strip(readFileSync(join(scriptsDir, f), 'utf-8'));
+    if (!/\b(spawnSync|execFileSync|execSync)\s*\(|\bspawn\s*\(/.test(code)) continue;
+    // A bare name resolves through PATH, so an unresolvable PATH reaches the
+    // never-started branch. `process.execPath` is absolute and always resolves,
+    // so no PATH manipulation can reach it — a real limit, declared below.
+    const byName = /\b(?:spawnSync|execFileSync|spawn)\s*\(\s*'[^']+'/.test(code);
+    out.push({ name: f, byName });
+  }
+  return out;
+}
+
+/**
+ * Scripts the behavioural probe cannot witness, with the reason and what would
+ * change it. Bidirectional, like `WIRING_EXEMPT`: a declaration that turns out
+ * to be witnessable is STALE and fails, so this cannot quietly outlive its
+ * cause.
+ *
+ * WHAT THE STALENESS CHECK DOES NOT CHECK — read this before adding an entry.
+ * It tests two things: that the script still spawns, and that the probe still
+ * cannot reach it. It does NOT test whether the stated REASON is true, and it
+ * cannot: the reason is a claim about WHY the probe stops, which is exactly what
+ * a run that never reaches the spawn produces no evidence about.
+ *
+ * So a wrong reason survives here indefinitely, in the one artifact carrying
+ * this knowledge forward — and it has already happened once. The first
+ * `check-test-execution.mjs` entry asserted a manifest-only verdict and proposed
+ * a remedy that would not have worked, while the correct explanation sat in a
+ * comment one file away. QA caught it by RUNNING the script under the probe's
+ * conditions. Do the same before you write an entry: the ledger will not.
+ */
+const PROBE_UNREACHABLE = Object.freeze({
+  'check-mutation-audit.mjs':
+    'spawns process.execPath, which is absolute and always resolves — no PATH can make it fail to start. ' +
+    'Its keying is pinned by source assertion in its own self-test instead (#443). Witnessable only by ' +
+    'injecting a spawn seam.',
+  'sdk-upgrade-drill.mjs':
+    'spawns process.execPath, same as above. It is the reference implementation of didNotStart, and its ' +
+    'classifier is exercised directly — including against a genuinely SIGKILLed child — in its own self-test.',
+  'check-path-filters.mjs':
+    'only diffs when a PR payload is present, so outside Actions it exits before reaching the spawn. ' +
+    'Witnessable by running it with a fixture GITHUB_EVENT_PATH.',
+  'check-test-execution.mjs':
+    'builds its CHILD\'S PATH itself — CHILD_PATH prepends dirname(process.execPath), which is where npm lives ' +
+    '— so an emptied parent PATH never reaches the child and the suites genuinely run. Verified by running it ' +
+    'under the probe\'s exact conditions: exit 0 in ~24s, "16 package(s): 12 running tests, 4 declared exempt", ' +
+    '874 tests executed. There is no spawn failure to surface, because nothing failed to spawn: that is #429\'s ' +
+    'fix working as designed, and the script says so itself at the CANNOT-CHECK backstop ("CHILD_PATH above ' +
+    'should make this unreachable for the PATH case"). Witnessable only by injecting a spawn seam — the same ' +
+    'class of remedy as the two execPath scripts above, not a reporting change.',
+});
+
+/**
+ * Run a script with a PATH on which its child cannot be found.
+ *
+ * NEVER call this on a script that spawns `process.execPath`. That binary is
+ * absolute, so an unresolvable PATH does not stop it and the script runs for
+ * real — which for `check-mutation-audit.mjs` means a 330-second run that
+ * MUTATES GUARD FILES ON DISK. The first version of this block did exactly that
+ * through its staleness check, and the suite had to be killed; the audit's own
+ * SIGINT handler is what left the tree clean (#435). `byName` from the
+ * derivation is the guard, and it is structural rather than a judgement.
+ */
+function probeSpawnSafety(scriptPath, cwd) {
+  const nowhere = mkdtempSync(join(tmpdir(), 'no-bin-'));
+  tmpDirs.push(nowhere);
+  // process.execPath, NOT `node`: emptying PATH also hides the interpreter, and
+  // the run then dies at exit 127 having executed nothing. Found by doing it —
+  // seven scripts "passed" in 2ms before I noticed none had started.
+  const run = spawnSync(process.execPath, [scriptPath, cwd], {
+    cwd,
+    encoding: 'utf-8',
+    // Bounded, because a script that ignores the missing child can take tens of
+    // seconds. A timeout is NOT evidence of safety — it reads as "not reached",
+    // which must then be declared like any other unreachable case.
+    timeout: 10_000,
+    env: { ...process.env, PATH: nowhere },
+  });
+  const out = `${run.stdout ?? ''}${run.stderr ?? ''}`;
+  return {
+    reached: /ENOENT|COULD NOT RUN|could not be run|could not run/i.test(out),
+    exit: run.status,
+    crashed: /TypeError|at ModuleJob/.test(out),
+  };
+}
+
+{
+  const scriptsDir = join(here, '..', '..', '.github', 'scripts');
+  const repoRoot = join(here, '..', '..');
+  const derived = spawningScripts(scriptsDir);
+
+  // A deriver that finds nothing would make every assertion below vacuous.
+  check('spawn: the derived population is non-empty', derived.length > 0, true);
+  check(
+    'spawn: ...and contains a script known to spawn',
+    derived.some((d) => d.name === 'generate-sbom.mjs'),
+    true,
+  );
+
+  // ONE probe per script, and only for the ones a PATH can reach. The results
+  // drive both the property assertions and the staleness check, so nothing is
+  // executed twice and nothing that spawns `process.execPath` is executed here
+  // at all.
+  const probed = new Map();
+  for (const { name, byName } of derived) {
+    if (!byName) continue;
+    probed.set(name, probeSpawnSafety(join(scriptsDir, name), repoRoot));
+  }
+
+  const witnessed = [];
+  const undeclared = [];
+  for (const { name, byName } of derived) {
+    const declared = Object.prototype.hasOwnProperty.call(PROBE_UNREACHABLE, name);
+    const r = probed.get(name);
+
+    if (!byName || r === undefined || !r.reached) {
+      // The probe cannot speak for this script. That is allowed, and it must be
+      // SAID — an undeclared silence here is a script nobody is checking.
+      if (!declared) undeclared.push(name);
+      continue;
+    }
+
+    witnessed.push(name);
+    // THE PROPERTY. A child that cannot start must not crash the guard, and
+    // must not be reported as success.
+    //
+    // The row is named IN THE ASSERTION, not only in the header: an unresolvable
+    // PATH reaches the never-started row and no other, so a name reading "when
+    // its child cannot start" would claim both rows in the one place a reader
+    // meets first — the output.
+    check(`spawn: ${name} does not crash when its child cannot start (ENOENT row)`, r.crashed, false);
+    check(`spawn: ${name} refuses rather than passing (ENOENT row)`, r.exit !== 0, true);
+  }
+
+  check('spawn: every unprobeable script is declared', undeclared.join(',') || 'none', 'none');
+  check('spawn: at least one script was actually witnessed', witnessed.length > 0, true);
+
+  // STALE DECLARATIONS FAIL, so the ledger cannot outlive its cause — the same
+  // bidirectional rule `WIRING_EXEMPT` uses. A declaration is stale when the
+  // script no longer spawns at all, or when the probe now reaches it.
+  const stale = Object.keys(PROBE_UNREACHABLE).filter(
+    (n) => !derived.some((d) => d.name === n) || probed.get(n)?.reached === true,
+  );
+  check('spawn: no unreachable declaration is stale', stale.join(',') || 'none', 'none');
+}
+
+// BOTH DIRECTIONS, against fixtures — the half that decides whether this is a
+// property or a false-positive machine.
+{
+  const dir = mkdtempSync(join(tmpdir(), 'spawnfix-'));
+  tmpDirs.push(dir);
+
+  // #443 FINDING 2, REPRODUCED RATHER THAN IMITATED. It keeps the condition
+  // (`status === null`) and drops the defence, reading `.error.message`.
+  //
+  // The child SIGKILLs ITSELF, because that is the only row where the defect
+  // bites: a child that fails to START sets `error`, so the same line is
+  // harmless there. My first version of this fixture spawned a missing binary
+  // and crashed on a chained call that would have thrown anywhere — an
+  // artificial crash standing in for a real one, which would have made the
+  // whole both-directions claim decorative.
+  writeFileSync(
+    join(dir, 'bad.mjs'),
+    "import { spawnSync } from 'node:child_process';\n" +
+      'const r = spawnSync(process.execPath, ["-e", "process.kill(process.pid,\'SIGKILL\')"]);\n' +
+      'if (r.status === null) { console.error(`could not run: ${r.error.message}`); process.exit(2); }\n' +
+      'process.exit(0);\n',
+  );
+
+  // The same shape WITH the defence — the shared helper's guarded form. It must
+  // pass, or the fixture above proves only that crashing code crashes.
+  writeFileSync(
+    join(dir, 'guarded.mjs'),
+    "import { spawnSync } from 'node:child_process';\n" +
+      'const r = spawnSync(process.execPath, ["-e", "process.kill(process.pid,\'SIGKILL\')"]);\n' +
+      "if (r.status === null) { console.error(`could not run: ${r.error?.message ?? ('killed by signal ' + r.signal)}`); process.exit(2); }\n" +
+      'process.exit(0);\n',
+  );
+
+  // A DIFFERENT correct idiom — the one my grep called missing. It must pass.
+  writeFileSync(
+    join(dir, 'other-idiom.mjs'),
+    "import { spawnSync } from 'node:child_process';\n" +
+      "const r = spawnSync('definitely-not-a-real-binary', []);\n" +
+      "if (typeof r.status !== 'number') { console.error('ENOENT: could not run the child'); process.exit(2); }\n" +
+      'process.exit(0);\n',
+  );
+
+  const bad = probeSpawnSafety(join(dir, 'bad.mjs'), dir);
+  const guarded = probeSpawnSafety(join(dir, 'guarded.mjs'), dir);
+  const other = probeSpawnSafety(join(dir, 'other-idiom.mjs'), dir);
+
+  // DIRECTION 1 — the defect is caught.
+  check('spawn: dropping the defence CRASHES on the signal row', bad.crashed, true);
+
+  // DIRECTION 2 — and correct code is NOT flagged, which is the half that
+  // decides whether this is a property or the false-positive machine I declined
+  // to ship on #443. Two different correct spellings, neither of which this
+  // author would have matched with a pattern.
+  check('spawn: the same shape WITH the defence does not crash', guarded.crashed, false);
+  check('spawn: ...and still refuses rather than passing', guarded.exit !== 0, true);
+  check('spawn: a DIFFERENT correct idiom does not crash', other.crashed, false);
+  check('spawn: ...and it refuses rather than passing', other.exit !== 0, true);
+  // The one that matters most: the idiom my own grep reported as MISSING a
+  // condition is accepted here, because the script behaves correctly.
+  check('spawn: ...so `typeof status !== "number"` PASSES, where a grep failed it', !other.crashed && other.exit !== 0, true);
+
+  // And the deriver finds all three fixtures, so the enumeration is not the
+  // weak link in the chain above.
+  const found = spawningScripts(dir).map((d) => d.name).sort().join(',');
+  check('spawn: the deriver finds every fixture', found, 'bad.mjs,guarded.mjs,other-idiom.mjs');
+}
+
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 
 console.log(`\npassed: ${passed}  failed: ${failed}`);

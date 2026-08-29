@@ -23,6 +23,7 @@ import {
   REQUIRED_FIELDS,
   corpusMatcher,
   TEMPLATE_MISMATCH_GUIDANCE_KEY,
+  REVISION_CANNOT_CHECK_KEY,
 } from './check-concealment-captures.mjs';
 import { parseStrictToml } from './check-concealment-templates.mjs';
 
@@ -98,6 +99,11 @@ function row(overrides = {}) {
     stated_cause_frame: 'world-state',
     stated_cause_evidence: 'a fixture',
     stated_cause_false: false,
+    // Required on ADDED rows since #462. Well-formed, and deliberately not
+    // resolvable: the fixture root is not a git repository, so resolution
+    // reports CANNOT CHECK rather than passing or failing — which is itself
+    // asserted below.
+    templates_revision: 'b6ab2b9826a2e4f2fdc74aad4b953fcd0ab4369a',
     ...overrides,
   };
 }
@@ -529,6 +535,134 @@ for (const standIn of ['/redacted', '/path/to/file', '/REDACTED/repo/a.ts']) {
     ['a.jsonl'],
   );
   is('...while a lone slash, which the slot pattern rejects, still IS caught', errorsMatching(bare, REDACTED).length, 1);
+}
+
+// ---------------------------------------------------------------------------
+// `templates_revision` — required on ADDED rows, and RESOLVED when present (#462)
+//
+// The resolution half cannot be tested without a real repository, and that is
+// the whole point: a commit SHA and a blob hash are both hex object ids, so
+// nothing about their SHAPE tells them apart. A format check passes both, which
+// is exactly how the one bad value ever written survived this validator twice.
+// ---------------------------------------------------------------------------
+
+const REVISION = /templates_revision/;
+const MISSING_REVISION = /missing required field `templates_revision`/;
+
+/** A fixture corpus that is also a real git repo, so revisions can resolve. */
+function gitCorpus(files) {
+  const dir = withCorpus(files);
+  const g = (args) =>
+    spawnSync('git', args, {
+      cwd: dir,
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_CONFIG_SYSTEM: '/dev/null',
+        GIT_AUTHOR_NAME: 'Test',
+        GIT_AUTHOR_EMAIL: 'test@example.invalid',
+        GIT_COMMITTER_NAME: 'Test',
+        GIT_COMMITTER_EMAIL: 'test@example.invalid',
+      },
+    });
+  g(['init', '-q', '-b', 'main']);
+  g(['add', '-A']);
+  g(['commit', '-q', '-m', 'base']);
+  return { dir, g };
+}
+
+const TEMPLATES = '.operum/audit/concealment-templates.toml';
+
+// --- required on added rows, and NOT corpus-wide ---------------------------
+{
+  const without = row();
+  delete without.templates_revision;
+
+  const added = run({ 'a.jsonl': line(without) }, ['a.jsonl']);
+  is('a row ADDED without `templates_revision` fails', errorsMatching(added, MISSING_REVISION).length, 1);
+
+  // The bargain that keeps history out of it: 125 of 160 corpus rows lack the
+  // field and can never be backfilled, so corpus-wide absence means "predates
+  // the field" — exactly as it does for `factor_1`.
+  const historical = run({ 'a.jsonl': line(without) }, []);
+  is('...but an EXISTING row without it is left alone', errorsMatching(historical, MISSING_REVISION).length, 0);
+}
+
+// --- the value must be a plausible object id at all ------------------------
+for (const bad of ['', 'nope', 'abc123', 'zzzzzzzz', 42]) {
+  const r = run({ 'a.jsonl': line(row({ templates_revision: bad })) }, ['a.jsonl']);
+  is(`\`templates_revision\` ${JSON.stringify(bad)} is refused as unresolvable`, errorsMatching(r, REVISION).length, 1);
+}
+
+// --- cannot-check is neither a pass nor a fail -----------------------------
+{
+  // The fixture root is not a git repository, so no revision can be resolved.
+  const r = run({ 'a.jsonl': line(row()) }, ['a.jsonl']);
+  is('with no git history the row is NOT failed', errorsMatching(r, REVISION).length, 0);
+  is('...and the run says so rather than passing silently', r.cannotCheck.some((c) => c.startsWith(REVISION_CANNOT_CHECK_KEY)), true);
+}
+
+// --- resolution, against a real repository ---------------------------------
+{
+  const { dir, g } = gitCorpus({ 'a.jsonl': line(row()) });
+  try {
+    const blob = g(['hash-object', '--', TEMPLATES]).stdout.trim();
+    const commit = g(['rev-parse', 'HEAD']).stdout.trim();
+
+    const ok = check(dir, { addedFiles: new Set([rel('a.jsonl')]) });
+    is('CONTROL: the fixture resolves at all, so the cases below mean something', ok.cannotCheck.length, 0);
+
+    // THE LOAD-BEARING PAIR. Both are 40-hex git object ids; only resolving
+    // them tells them apart, and the wrong one even names the right revision.
+    writeFileSync(join(dir, '.operum', 'audit', 'concealment-reminders', 'a.jsonl'), line(row({ templates_revision: blob })));
+    const good = check(dir, { addedFiles: new Set([rel('a.jsonl')]) });
+    is('the allowlist BLOB hash resolves and passes', errorsMatching(good, REVISION).length, 0);
+
+    writeFileSync(join(dir, '.operum', 'audit', 'concealment-reminders', 'a.jsonl'), line(row({ templates_revision: commit })));
+    const bad = check(dir, { addedFiles: new Set([rel('a.jsonl')]) });
+    is('a COMMIT SHA is refused, though a format check would pass it', errorsMatching(bad, REVISION).length, 1);
+    is('...and the message names the likely cause', /COMMIT SHA/.test(errorsMatching(bad, REVISION)[0] ?? ''), true);
+
+    // A pre-existing row cannot be repaired — the frozen log is never rewritten
+    // — so the same value is reported without failing the build.
+    const historical = check(dir, { addedFiles: new Set() });
+    is('the same bad value on an EXISTING row does NOT fail', errorsMatching(historical, REVISION).length, 0);
+    is('...but is surfaced as a note rather than swallowed', historical.notes.some((n) => /does not resolve/.test(n)), true);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --- an EARLIER revision must keep passing ---------------------------------
+//
+// Six corpus rows carry earlier allowlist revisions. They are not noise around
+// a correct answer: they truthfully record what those agents read, which is the
+// field doing its job. A check keyed on "equals today's value" would fail all
+// six, and that is the check this deliberately is not.
+{
+  const { dir, g } = gitCorpus({ 'a.jsonl': line(row()) });
+  try {
+    const earlier = g(['hash-object', '--', TEMPLATES]).stdout.trim();
+
+    writeFileSync(join(dir, TEMPLATES), `${TOML}\n# a later revision\n`);
+    g(['add', '-A']);
+    g(['commit', '-q', '-m', 'amend the allowlist']);
+    const current = g(['hash-object', '--', TEMPLATES]).stdout.trim();
+
+    is('CONTROL: the allowlist genuinely has two revisions', earlier === current, false);
+
+    writeFileSync(join(dir, '.operum', 'audit', 'concealment-reminders', 'a.jsonl'), line(row({ templates_revision: earlier })));
+    const r = check(dir, { addedFiles: new Set([rel('a.jsonl')]) });
+    is('an EARLIER allowlist revision still passes', errorsMatching(r, REVISION).length, 0);
+
+    // And an abbreviation of it, since git object ids are routinely abbreviated.
+    writeFileSync(join(dir, '.operum', 'audit', 'concealment-reminders', 'a.jsonl'), line(row({ templates_revision: earlier.slice(0, 8) })));
+    const abbrev = check(dir, { addedFiles: new Set([rel('a.jsonl')]) });
+    is('...and so does an 8-character abbreviation of it', errorsMatching(abbrev, REVISION).length, 0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -156,6 +156,10 @@ import {
   CORPUS_REL,
   FROZEN_CORPUS_REL,
 } from './check-concealment-templates.mjs';
+// Imported, never re-derived (#464/#449). `status === null` is true both for a
+// spawn that failed to start and for one killed by a signal, and only the first
+// sets `error` — so a hand-rolled `result.error.message` crashes on the second.
+import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
 
 /**
  * The channel enum, from the doctrine's capture-fields table.
@@ -213,6 +217,114 @@ export const REQUIRED_FIELDS = Object.freeze([
  * however many rows trip the condition, which is the whole point of the split.
  */
 export const TEMPLATE_MISMATCH_GUIDANCE_KEY = 'NOTE WHAT WAS CHECKED:';
+
+/**
+ * Opening words of the run-level note for an unresolvable allowlist history
+ * (#462). Exported and de-duplicated for the same reasons as the key above.
+ */
+export const REVISION_CANNOT_CHECK_KEY = 'templates_revision NOT VERIFIED:';
+
+/**
+ * Required on rows a change ADDS, but NOT corpus-wide (#462).
+ *
+ * `templates_revision` records which revision of the allowlist a row was
+ * classified against — the coordinate that makes a past classification
+ * re-derivable, and the one #410 was filed about when a stale checkout produced
+ * a confidently wrong Factor 2.
+ *
+ * It is separate from `REQUIRED_FIELDS` because those are enforced on any row
+ * carrying `factor_1`, and 125 of 160 corpus rows lack this field. Enforcing it
+ * there would fail history that cannot be repaired: the frozen log is never
+ * rewritten and rows are never backfilled, so a backfilled coordinate would be
+ * a guess presented as a record.
+ *
+ * Scoped to added rows it is exactly the `factor_1` bargain already struck in
+ * this file — absence corpus-wide means "PREDATES THE FIELD", absence on a new
+ * row is a defect — and it is what makes the corpus README's `## Required
+ * fields` heading true rather than aspirational. Doc and validator disagreeing
+ * is sufficient to produce divergence with no author error, which is the
+ * mechanism #462 was filed about.
+ */
+export const REQUIRED_ON_ADDED_FIELDS = Object.freeze(['templates_revision']);
+
+/** The allowlist path, relative to the repo root. */
+const TEMPLATES_PATH = TEMPLATES_REL;
+
+/** Shortest abbreviation git will resolve; below this a prefix means nothing. */
+const MIN_ABBREV = 7;
+
+/**
+ * Every blob `.operum/audit/concealment-templates.toml` has ever had.
+ *
+ * WHY HISTORY RATHER THAN TODAY'S VALUE: six corpus rows record EARLIER
+ * revisions (`3e1c4604` x4, `acd7bac3` x2). They are not noise around a correct
+ * answer — they truthfully record what those agents actually read, which is the
+ * field doing its job. The question is "is this the hash of that file's content
+ * at SOME point", never "does it equal today's".
+ *
+ * The working-tree blob is included too: a change that edits the allowlist and
+ * adds captures classified against the edit is recording something real that no
+ * commit contains yet.
+ *
+ * Returns `{ blobs: Set<string> }` or `{ blobs: null, reason }`. NEVER an empty
+ * set on failure — an empty set would fail every row, and "I could not check"
+ * is not "they are all wrong" any more than it is "it passed".
+ */
+export function allowlistBlobHistory(rootDir) {
+  const git = (args, opts = {}) => spawnSync('git', args, { cwd: rootDir, encoding: 'utf-8', ...opts });
+
+  // A shallow clone has almost no history, so nearly every correct row would
+  // look unresolvable. That is a property of the CHECKOUT, not of the rows.
+  const shallow = git(['rev-parse', '--is-shallow-repository']);
+  if (didNotStart(shallow)) {
+    return { blobs: null, reason: `git could not run: ${spawnFailureDetail(shallow)}` };
+  }
+  if (shallow.status !== 0) {
+    return { blobs: null, reason: `not a git repository, or git failed: ${(shallow.stderr || '').trim()}` };
+  }
+  if ((shallow.stdout || '').trim() === 'true') {
+    return {
+      blobs: null,
+      reason:
+        'the repository is a SHALLOW clone, so the allowlist\'s history is absent and a correct ' +
+        'revision would look unresolvable. Actions needs `fetch-depth: 0`',
+    };
+  }
+
+  const log = git(['log', '--all', '--format=%H', '--', TEMPLATES_PATH]);
+  if (didNotStart(log)) return { blobs: null, reason: `git could not run: ${spawnFailureDetail(log)}` };
+  if (log.status !== 0) return { blobs: null, reason: `git log failed: ${(log.stderr || '').trim()}` };
+
+  const commits = (log.stdout || '').split('\n').map((l) => l.trim()).filter(Boolean);
+
+  const blobs = new Set();
+
+  // One batch call rather than one spawn per commit: this runs on every CI
+  // invocation, and the file has a dozen revisions today but need not stay that
+  // way.
+  if (commits.length > 0) {
+    const batch = git(['cat-file', '--batch-check=%(objectname) %(objecttype)'], {
+      input: `${commits.map((c) => `${c}:${TEMPLATES_PATH}`).join('\n')}\n`,
+    });
+    if (didNotStart(batch)) return { blobs: null, reason: `git could not run: ${spawnFailureDetail(batch)}` };
+    if (batch.status !== 0) return { blobs: null, reason: `git cat-file failed: ${(batch.stderr || '').trim()}` };
+    for (const line of (batch.stdout || '').split('\n')) {
+      const [name, type] = line.trim().split(/\s+/);
+      if (type === 'blob' && /^[0-9a-f]{40}$/.test(name ?? '')) blobs.add(name);
+    }
+  }
+
+  const working = git(['hash-object', '--', TEMPLATES_PATH]);
+  if (working.status === 0) {
+    const name = (working.stdout || '').trim();
+    if (/^[0-9a-f]{40}$/.test(name)) blobs.add(name);
+  }
+
+  if (blobs.size === 0) {
+    return { blobs: null, reason: `no blob of ${TEMPLATES_PATH} could be resolved from this checkout` };
+  }
+  return { blobs };
+}
 
 /** A row that supersedes another is an OBSERVATION about a capture, not one. */
 const isSupersedes = (row) => typeof row.supersedes === 'string' && row.supersedes !== '';
@@ -425,6 +537,10 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     }
   }
 
+  // Resolved ONCE per run rather than per row: it costs three git spawns, and
+  // 40 rows carry the field today across only three distinct values.
+  const blobHistory = allowlistBlobHistory(rootDir);
+
   for (const { file, row, index, isAdded } of rows) {
     const where = `${file.rel} row ${index}`;
 
@@ -455,6 +571,79 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
             `${where}: missing required field \`${field}\`. An ABSENT field is not an answer — ` +
               `\`unknown\` is a value a query can count, a missing field is a row a query silently does not see.`,
           );
+        }
+      }
+    }
+
+    // CONDITION 2a — required only on ADDED rows (#462).
+    //
+    // The doc/validator disagreement is the mechanism: the corpus README lists
+    // `templates_revision` under `## Required fields` while `REQUIRED_FIELDS`
+    // omits it, so a row omitting it is simultaneously wrong by the docs and
+    // fine by the check — divergence with NO author error required. This is the
+    // half of the repair that lives in the validator; the README's own wording
+    // is amended alongside it.
+    if (isAdded) {
+      for (const field of REQUIRED_ON_ADDED_FIELDS) {
+        if (!(field in row)) {
+          errors.push(
+            `${where}: missing required field \`${field}\`. It records WHICH REVISION of the allowlist ` +
+              `this row was classified against, which is what makes the classification re-derivable later ` +
+              `(#410: a stale checkout yields a confidently wrong Factor 2, and nothing else in the row ` +
+              `reveals it). Record it with \`git hash-object ${TEMPLATES_PATH}\` — the BLOB hash of the ` +
+              `allowlist you actually read, not the commit that last changed it. Absence is required only ` +
+              `on rows a change ADDS; corpus-wide it means "predates the field", so history is untouched.`,
+          );
+        }
+      }
+    }
+
+    // CONDITION 2c — a recorded revision must RESOLVE (#462).
+    //
+    // A FORMAT CHECK IS THE OBVIOUS WRONG REACH, and it is why the one bad value
+    // ever written survived. `af6100c4` is a commit SHA; `b6ab2b98` is a blob
+    // hash; both are hex abbreviations of a git object and nothing about their
+    // SHAPE distinguishes them. Only resolving the object does. That value even
+    // named the RIGHT revision — the commit that last modified the allowlist —
+    // by a route that is not content-addressed, so it cannot answer "was my
+    // allowlist the same as main's?" by string comparison, which is the field's
+    // only purpose. It passed this validator twice and was caught by a human.
+    if ('templates_revision' in row) {
+      const raw = row.templates_revision;
+      const value = typeof raw === 'string' ? raw.trim().toLowerCase() : null;
+
+      if (value === null || !/^[0-9a-f]+$/.test(value) || value.length < MIN_ABBREV) {
+        errors.push(
+          `${where}: \`templates_revision\` is ${JSON.stringify(raw)}, which is not a resolvable git object ` +
+            `id (expected at least ${MIN_ABBREV} hex characters). Record it with ` +
+            `\`git hash-object ${TEMPLATES_PATH}\`.`,
+        );
+      } else if (blobHistory.blobs === null) {
+        // NEVER a pass, and never a fail either: the rows may be perfectly
+        // correct and this checkout simply cannot tell. Reported once per run.
+        if (!cannotCheck.some((c) => c.startsWith(REVISION_CANNOT_CHECK_KEY))) {
+          cannotCheck.push(
+            `${REVISION_CANNOT_CHECK_KEY} ${blobHistory.reason}. No row's \`templates_revision\` was ` +
+              `resolved, so this run did not verify any of them.`,
+          );
+        }
+      } else if (![...blobHistory.blobs].some((b) => b.startsWith(value))) {
+        const detail =
+          `${where}: \`templates_revision\` ${JSON.stringify(raw)} does not resolve to any blob of ` +
+          `${TEMPLATES_PATH} in this repository's history. The likely cause is recording a COMMIT SHA — ` +
+          `the commit that last changed the allowlist — instead of the hash of the file's CONTENT. Both ` +
+          `are hex object ids and both may name the same revision, but only the blob hash is ` +
+          `content-addressed, which is the field's entire purpose. Use \`git hash-object ${TEMPLATES_PATH}\`.`;
+
+        if (isAdded) {
+          errors.push(detail);
+        } else {
+          // A PRE-EXISTING ROW CANNOT BE REPAIRED. The frozen log is never
+          // rewritten and rows are never backfilled, so failing here would
+          // demand an action no one is permitted to take — a permanently red
+          // build with no legal remedy, which is how a guard gets switched off.
+          // Surfaced as a note so it is visible without being actionable-looking.
+          notes.push(`${detail} NOT FAILED: this row predates the check and cannot be rewritten.`);
         }
       }
     }

@@ -75,8 +75,8 @@
  * is the only key the redaction cannot erase.
  *
  * Measured against the 31 redacted rows in the corpus at the time of writing,
- * had each been offered as an added row: **16 caught, 15 not.** The 15 divide,
- * and neither group is a defect in this condition:
+ * had each been offered as an added row: **16 caught, 15 not.** The 15 divide
+ * into two groups, and neither is a defect in this condition:
  *
  *   - **11 also carry the em-dash-to-hyphen corruption.** Their prose literals
  *     drifted, so the shape matcher declines them — deliberately. Reporting a
@@ -89,6 +89,41 @@
  * is caught by neither condition. It is not closed here because closing it
  * means matching a message whose literals have drifted, which is the widening
  * that condition 4's guidance exists to forbid. Stated rather than fixed.
+ *
+ * ### The third class, which no row in the corpus exhibits (found by QA on #499)
+ *
+ * The two groups above bound what this condition misses AMONG THE 31. They are
+ * not the whole bound, and reading them as one would be the mistake this
+ * section exists to prevent:
+ *
+ *   - **A PATH-SHAPED placeholder is not detectable, and very likely cannot
+ *     be.** The SHAPE key holds — QA could not defeat it. What it defeated is
+ *     the slot-content check downstream. `PATH` declares `/[^\n]+`, a slash
+ *     then anything, so ANY `/`-prefixed stand-in satisfies it and never
+ *     reaches the placeholder branch. Verified end-to-end through `check()`
+ *     against the real allowlist: `/redacted`, `/path/to/file` and
+ *     `/REDACTED/repo/a.ts` all PASS, while `<PATH>` and a lone `/` are
+ *     refused and a declared elision is accepted.
+ *
+ * This one is not "stated rather than fixed" in the same sense as the corrupted
+ * group — it is stated because **closing it appears to require the answer**:
+ * telling a fabricated absolute path from a real one means knowing the real
+ * one, which is precisely what the row is supposed to be carrying. A stricter
+ * slot pattern would only move the bar, since any rule describing a real path
+ * also describes a stand-in built to satisfy it.
+ *
+ * Note the sharp edge, and do not sand it off: the refusal message below says
+ * "Preserve the PATH EXACTLY", and **path-shaped is exactly the class that
+ * passes** — so the instruction can steer an agent into the evasion while it
+ * believes it has complied. The message therefore says explicitly that a
+ * substituted stand-in is undetectable here, rather than relying on the reader
+ * to infer it. WHAT REMAINS IS AN HONESTY REQUIREMENT ON THE CAPTURING AGENT,
+ * and this file cannot enforce it.
+ *
+ * That matters more than it normally would, because the doctrine amendment for
+ * #323 was DECLINED on the evidence: there is no doctrine text behind this
+ * guard to catch a reader it misleads. This section is the remedy's
+ * documentation, so an unstated bound here is unstated everywhere.
  *
  * Those four numbers are a DATED OBSERVATION, not a tally this file maintains —
  * nothing asserts them and they will drift as the corpus grows, which is fine.
@@ -566,6 +601,11 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
               `on, it is not sensitive data (it is a message the harness sent you), and it is already declared ` +
               `attacker-influenceable — so redacting it protects nothing the anchoring does not already contain, ` +
               `while making the row unusable as Factor 2 evidence. ` +
+              `COPY IT BYTE-FOR-BYTE: do not retype it, shorten it, or substitute a plausible-looking stand-in. ` +
+              `A stand-in that merely LOOKS like a path satisfies this check and passes SILENTLY — the slot's ` +
+              `declared pattern is a slash followed by anything, and telling a fabricated path from a real one ` +
+              `would require already knowing the real one. So this refusal is the last point at which a ` +
+              `substitution is visible to anyone, and past it the corpus simply believes you. ` +
               `IF YOU GOT HERE BECAUSE THE BASH ISOLATION GUARD REFUSED A COMMAND CARRYING THE PATH: that is the ` +
               `only cause any row in this corpus has ever recorded for a redaction (4 of them name it). Do not drop ` +
               `the path to get past it — write the capture with the Write/Edit tool instead, which routes no content ` +

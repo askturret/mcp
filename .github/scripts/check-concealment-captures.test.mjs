@@ -485,6 +485,50 @@ for (const form of ['<PATH>', '<redacted-abs-path>/packages/core/src/x.ts', '<AB
   // rule. The refusal answers that cause specifically, because an agent hitting
   // this message is in the exact situation those four were in.
   is('...and names the one recorded cause and its remedy', /BASH ISOLATION GUARD/.test(msg) && /Write\/Edit tool/.test(msg), true);
+
+  // QA's #499 point: "Preserve the PATH EXACTLY" tells the reader the answer is
+  // path-shaped, and path-shaped is exactly the class that passes. The message
+  // must say so itself rather than leave the reader to infer it.
+  is(
+    '...and warns that a path-shaped stand-in passes silently',
+    /COPY IT BYTE-FOR-BYTE/.test(msg) && /passes SILENTLY/.test(msg),
+    true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// KNOWN LIMIT — a path-shaped stand-in is not detectable (#499, found by QA)
+//
+// These assert that something UNWANTED currently passes, which is deliberate:
+// it makes the residue note in the guard's header EXECUTABLE rather than merely
+// prose, so the stated bound cannot quietly drift out of date the way a comment
+// can.
+//
+// IF THESE EVER GO RED that is not a regression — it means the limit has been
+// CLOSED. Delete them and remove the third bullet from the residue section in
+// `check-concealment-captures.mjs`.
+//
+// The SHAPE key is not what fails here; QA could not defeat it. What passes is
+// the slot-content check downstream, because `PATH` declares `/[^\n]+` — a
+// slash then anything — so any `/`-prefixed stand-in satisfies it and never
+// reaches the placeholder branch.
+// ---------------------------------------------------------------------------
+for (const standIn of ['/redacted', '/path/to/file', '/REDACTED/repo/a.ts']) {
+  const r = run(
+    { 'a.jsonl': line(row({ verbatim: shaped(standIn), template_id: null, classification: 'anomalous' })) },
+    ['a.jsonl'],
+  );
+  is(`KNOWN LIMIT: the path-shaped stand-in ${standIn} is NOT caught`, errorsMatching(r, REDACTED).length, 0);
+}
+{
+  // The paired refusal, so the three above read as a BOUND on this check rather
+  // than as the check being inert. A lone slash fails `/[^\n]+`, so it is still
+  // caught — the slot pattern is doing work, just not enough of it.
+  const bare = run(
+    { 'a.jsonl': line(row({ verbatim: shaped('/'), template_id: null, classification: 'anomalous' })) },
+    ['a.jsonl'],
+  );
+  is('...while a lone slash, which the slot pattern rejects, still IS caught', errorsMatching(bare, REDACTED).length, 1);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

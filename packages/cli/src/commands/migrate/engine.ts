@@ -370,46 +370,156 @@ function importRanges(contents: string, masked: string): ReadonlyArray<readonly 
  * predates this change and is reported rather than repaired here.
  */
 export function blankComments(contents: string): string {
-  const out = contents.split('');
-  let i = 0;
-  let quote: string | null = null;
+  return maskSource(contents).commentless;
+}
 
-  while (i < contents.length) {
+/** Where a construct opened that never closed. */
+export interface UnterminatedRegion {
+  readonly kind: 'string literal' | 'block comment';
+  /** Index the construct opened at. Everything from here on is unanalysable. */
+  readonly index: number;
+}
+
+/** The two views of a source file, and whether the scan ran off the end. */
+export interface SourceViews {
+  /** Comments blanked to spaces; string literals INTACT. */
+  readonly commentless: string;
+  /** Comments AND string literals blanked to spaces. */
+  readonly masked: string;
+  /** Set when the file ends inside a construct that never closed. */
+  readonly unterminated: UnterminatedRegion | null;
+}
+
+/**
+ * Both views, from ONE scan (#527).
+ *
+ * ## The defect this replaces
+ *
+ * `masked` was three chained regexes — block comments, then line comments, then
+ * strings. The middle one blanks from `//` to end of line **without knowing it
+ * is inside a string**, so `const u = "https://x";` lost its closing quote, and
+ * the string pass then paired the orphaned opener with the NEXT quote further
+ * down the file and blanked everything between.
+ *
+ * The consequence is the worst class this engine has: occurrences in the
+ * blanked region are not refused and not reported `manual` — the word scan runs
+ * over `masked`, so they are never seen at all. `findings: []` on a file with
+ * unhandled work.
+ *
+ * Measured on the unmodified tree, and the population is narrower than the
+ * filing assumed, which is worth recording because it is easy to over-claim:
+ *
+ *   const u = "https://x"; console.log(durability);   SILENT — same line
+ *   "https://a" … durability … "https://b"           SILENT — quotes re-pair
+ *   const u = "https://x";\n console.log(durability); FINE — nothing left to
+ *                                                     pair with, so the blanking
+ *                                                     stops at end of line
+ *
+ * A single such string near the end of a file is harmless. It takes a second
+ * quote to close the trap, or an occurrence on the same line.
+ *
+ * ## Why one scanner rather than a fixed regex
+ *
+ * The order dependency IS the bug: each pass rewrites the text the next one
+ * reads, so every pass after the first is looking at something that is no
+ * longer the source. No amount of regex repair removes that, because the
+ * information a later pass needs — "was that `//` inside a string?" — was
+ * destroyed by an earlier one. A single left-to-right scan knows the state at
+ * every character, which is what the question actually requires.
+ *
+ * `blankComments` (#454) already scanned this way, and its string-safety is
+ * asserted. This generalises that scanner to emit both views instead of
+ * duplicating it, so the two cannot drift into disagreeing about where a string
+ * begins.
+ *
+ * ## Unterminated constructs are REPORTED, not silently swallowed
+ *
+ * A scanner is stricter than the old regexes here, and deliberately: an
+ * unterminated `"` or `/*` matched no regex at all, so nothing was blanked and
+ * occurrences after it were REWRITTEN — edits made from a parse that had
+ * already failed. This blanks to end of file instead, which is the honest
+ * reading, and returns `unterminated` so the caller can SAY SO.
+ *
+ * That last part is the durable half of #527. Getting the mask right removes
+ * today's silent region; making omission impossible is what stops the next one,
+ * because any region this scanner cannot analyse now arrives with a finding
+ * attached rather than as an absence.
+ *
+ * ## Known bound, unchanged from #454
+ *
+ * Regex literals are not tracked, so `/[//]/` — a literal `//` unescaped inside
+ * a character class — still reads as a comment. Distinguishing a regex literal
+ * from division needs the parse this engine deliberately does not have (#230).
+ */
+export function maskSource(contents: string): SourceViews {
+  const commentless = contents.split('');
+  const masked = contents.split('');
+  const length = contents.length;
+  let unterminated: UnterminatedRegion | null = null;
+  let i = 0;
+
+  // Newlines survive every blanking, or every line number below the blanked
+  // region moves and `lineOf` starts reporting the wrong one.
+  const blank = (buffers: string[][], from: number, to: number): void => {
+    for (let k = from; k < to; k += 1) {
+      if (contents[k] === '\n') continue;
+      for (const buffer of buffers) buffer[k] = ' ';
+    }
+  };
+
+  while (i < length) {
     const c = contents[i] as string;
 
-    if (quote !== null) {
-      if (c === '\\') i += 1;
-      else if (c === quote) quote = null;
-      i += 1;
-      continue;
-    }
-
-    if (c === '"' || c === "'" || c === '`') {
-      quote = c;
-      i += 1;
-      continue;
-    }
-
+    // Comments are consumed BEFORE strings, so an apostrophe in `// don't`
+    // cannot open a string. That ordering is the whole reason a scan works
+    // where chained passes did not.
     if (c === '/' && contents[i + 1] === '/') {
-      while (i < contents.length && contents[i] !== '\n') {
-        out[i] = ' ';
-        i += 1;
-      }
+      const newline = contents.indexOf('\n', i);
+      const stop = newline === -1 ? length : newline;
+      blank([commentless, masked], i, stop);
+      i = stop;
       continue;
     }
 
     if (c === '/' && contents[i + 1] === '*') {
       const end = contents.indexOf('*/', i + 2);
-      const stop = end === -1 ? contents.length : end + 2;
-      for (let k = i; k < stop; k += 1) out[k] = contents[k] === '\n' ? '\n' : ' ';
+      const stop = end === -1 ? length : end + 2;
+      blank([commentless, masked], i, stop);
+      if (end === -1) unterminated ??= { kind: 'block comment', index: i };
       i = stop;
+      continue;
+    }
+
+    if (c === '"' || c === "'" || c === '`') {
+      const start = i;
+      i += 1;
+      let closed = false;
+      while (i < length) {
+        const d = contents[i];
+        // `"a \" // b"` — the escaped quote does not close the string, and the
+        // `//` inside it is not a comment. Both were wrong before this.
+        if (d === '\\') {
+          i += 2;
+          continue;
+        }
+        if (d === c) {
+          i += 1;
+          closed = true;
+          break;
+        }
+        i += 1;
+      }
+      // Strings are blanked in `masked` ONLY: `commentless` keeps them because
+      // that is where a module specifier lives (#454).
+      blank([masked], start, i);
+      if (!closed) unterminated ??= { kind: 'string literal', index: start };
       continue;
     }
 
     i += 1;
   }
 
-  return out.join('');
+  return { commentless: commentless.join(''), masked: masked.join(''), unterminated };
 }
 
 /**
@@ -717,27 +827,42 @@ function rewriteSource(
   }
 
   // Mask strings and comments so an occurrence inside either is left alone,
-  // then map replacements back onto the original text by index.
-  const masked = contents
-    .replace(/\/\*[\s\S]*?\*\//g, (m) => ' '.repeat(m.length))
-    .replace(/\/\/[^\n]*/g, (m) => ' '.repeat(m.length))
-    .replace(/(['"`])(?:\\.|(?!\1)[^\\])*\1/g, (m) => ' '.repeat(m.length));
+  // then map replacements back onto the original text by index. ONE scan for
+  // both views (#527) — chained regexes could not answer "was that `//` inside
+  // a string?", because the pass that knew had already overwritten the answer.
+  const { commentless, masked, unterminated } = maskSource(contents);
+
+  // REPORTED BEFORE ANYTHING ELSE CAN RETURN, including the no-occurrences path
+  // below. That path is where the silence lived: a region blanked away takes
+  // its occurrences with it, and `findings: []` then says "nothing here" about
+  // code that was never examined. An unanalysable region is now a finding even
+  // when it is the ONLY thing this rule has to say about the file.
+  const findings: Finding[] = [];
+  if (unterminated !== null) {
+    const line = contents.slice(0, unterminated.index).split('\n').length;
+    findings.push({
+      ruleId: rule.id,
+      kind: 'source',
+      file,
+      action: 'manual',
+      detail:
+        `line ${String(line)}: an unterminated ${unterminated.kind} starts here, so everything after it ` +
+        `could not be analysed. Occurrences of '${rule.from}' in that region were NOT rewritten and are ` +
+        `NOT listed — this file does not parse, and editing past a failed parse is how a migration ` +
+        `corrupts code it never understood. Close the ${unterminated.kind} and re-run.`,
+    });
+  }
 
   const word = new RegExp(`\\b${rule.from}\\b`, 'g');
   const indices: number[] = [];
   let match;
   while ((match = word.exec(masked)) !== null) indices.push(match.index);
 
-  if (indices.length === 0) return { contents, findings: [], changed: false };
+  if (indices.length === 0) return { contents, findings, changed: false };
 
   const brackets = bracketContexts(masked);
   const openers = braceOpeners(masked);
   const imports = importRanges(contents, masked);
-  // Comments blanked, strings kept (#454). The export split is decided over
-  // this view, so a comment in the gap cannot change which policy a statement
-  // gets. `importRanges` deliberately still reads the raw text — see the note
-  // on `blankComments` about scope.
-  const commentless = blankComments(contents);
   const reExports = reExportRanges(commentless, masked);
   const localExports = localExportRanges(
     commentless,
@@ -824,7 +949,7 @@ function rewriteSource(
     out = out.slice(0, index) + text + out.slice(index + rule.from.length);
   }
 
-  const findings: Finding[] = [];
+  // `findings` is declared above, so an unanalysable region is already in it.
 
   if (rewritable.length > 0) {
     findings.push({

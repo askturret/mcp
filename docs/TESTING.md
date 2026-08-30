@@ -666,20 +666,37 @@ left in that thread.
 
 ### The aggravating factor, and it is structural (#330)
 
-`gh_pr_checks` on this repository **cannot enumerate which checks are
-required**. Branch protection and rulesets both return `403` on a free-plan
-private repo, and the tool **correctly fails closed** — reporting
-`required_known: false` with the reason, rather than reporting "nothing
-required". That refusal is right: the endpoint returns `200 []` when no rules
-apply, so a non-200 is never evidence that nothing is required.
+The required set **is readable, and it is empty**. Check it rather than assume
+it — one call settles it, and the answer has changed at least once:
 
-The consequence is that **there is no authoritative list to compare against**,
-which makes the waiter's own list the only source of truth — in exactly the case
-where that list is incomplete. The two failures compose: no required-set to
-check against, plus a set that grows during the run.
+| what to run | what it returns today |
+|---|---|
+| `gh_pr_checks` on any open PR | `required_known: true`, `required_checks: []` |
+| `GET /repos/askturret/mcp/rulesets` | `200`, two rulesets, both `enforcement: active` |
+| `GET /repos/askturret/mcp/branches/main/protection` | `404 Branch not protected` — rules live in rulesets, not legacy protection |
 
-This is a second consequence of the plan-tier constraint tracked in **#330**,
-and it strengthens the case for resolving it.
+So the consequence is **not** that the list cannot be read. It is that the list
+is **empty**: no check is required to merge, and a green board is a fact about
+what ran rather than about what had to.
+
+That leaves the waiter's own list as the practical source of truth for *what
+should have run* — the same conclusion as before, reached for a different
+reason, and still colliding with the same second failure: a set that grows
+during the run.
+
+> **This paragraph replaced a premise that had gone false, and the replacement
+> is the point (#549).** It used to say branch protection and rulesets *"both
+> return 403 on a free-plan private repo"*, so `required_known` was `false` and
+> nothing could be enumerated. Every clause of that is now wrong — and the
+> reason it matters more here than in the other stale-premise sites fixed under
+> #330 is that **this file tells a reviewer what to do**. It told the next QA
+> agent not to bother checking something they can check in one call.
+>
+> Note the response itself moved during a single day: the legacy protection
+> endpoint returned `403` while the repository was private on the free plan, and
+> `404` once it was public. A status word would have been wrong twice. The rows
+> above are conditions with the call that settles each, so the next reader can
+> re-check rather than believe.
 
 ### How to name the checks when nothing will name them for you
 
@@ -721,9 +738,11 @@ superseded head is a fact about a different commit.
 ### No mechanical guard is proposed, and that is a finding
 
 A guard verifying that a waiter waited for the right set would need to know the
-required set. That is **precisely** what the `403` withholds. A guard built
-anyway would check the waiter against an incomplete list, agree with it, and
-report clean.
+required set. It can now read it — and reading it returns **nothing**, because
+no check is required (see the table above). An empty authoritative list cannot
+validate a waiter's coverage any better than an unreadable one could. A guard
+built anyway would check the waiter against an incomplete list, agree with it,
+and report clean.
 
 **The reason is that NO IN-REPO LIST IS AUTHORITATIVE — not that the guard would
 happen to reuse the waiter's one.** The distinction decides the obvious

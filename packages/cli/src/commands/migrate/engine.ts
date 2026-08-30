@@ -329,7 +329,7 @@ const IMPORT_CLAUSE = [
  * A side-effect import matches nothing here BY DESIGN: it has no specifier to
  * rewrite, and its module string is masked before classification anyway.
  */
-function importRanges(commentless: string, masked: string): ReadonlyArray<readonly [number, number]> {
+export function importRanges(commentless: string, masked: string): ReadonlyArray<readonly [number, number]> {
   const ranges: [number, number][] = [];
   // `\s+` OR a lookahead at `{`/`*`: `import{a}from'x'` is valid and appears in
   // tight or minified source, but a default binding does need the space — there
@@ -819,7 +819,7 @@ export function reExportRanges(
  * This is the same lesson as #230 one level up: enumerating a grammar in a
  * lookahead is another copy of it, and copies drift.
  */
-function localExportRanges(
+export function localExportRanges(
   commentless: string,
   masked: string,
   reExportStarts: ReadonlySet<number>,
@@ -949,18 +949,89 @@ function rewriteSource(
   file: string,
 ): { contents: string; findings: readonly Finding[]; changed: boolean } {
   const escapedModule = rule.module.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const importsIt = new RegExp(
-    `import[^;]*\\b${rule.from}\\b[^;]*from\\s*['"]${escapedModule}`,
-  ).test(contents);
+
+  // THE GATE DECIDES OVER `commentless`, NOT RAW SOURCE (#538).
+  //
+  // `import { x } from /* c */ 'm'` defeated `from\s*['"]` against raw text, so
+  // the file never entered processing at all: nothing scanned, nothing renamed,
+  // and NO FINDING. That is the findings-empty-over-unhandled-work signature at
+  // FILE granularity — a green run and an unprocessed file are indistinguishable
+  // from outside, which is worse than a wrong rewrite because nothing points at
+  // it.
+  //
+  // A comment is whitespace to the compiler, so the view where comments are
+  // already whitespace is the one the gate should read — the same reasoning
+  // that put the range scans on this view (#454). It also disposes of the
+  // `[^;]*` hazard for free: a `;` inside a comment used to terminate the
+  // character class early, and in this view there is no such `;`.
+  //
+  // `commentless` rather than `masked`, deliberately: the module specifier IS a
+  // string, so the view that blanks strings cannot see it.
+  const { commentless, masked, unterminated } = maskSource(contents);
+
+  // ...AND THE KEYWORD MUST BE CODE, which is the second half and is not
+  // optional. Matching over `commentless` alone was measured to introduce a
+  // WRONG EDIT: that view keeps string text, so
+  //
+  //   const s = "import { oldName } from 'mod'";
+  //   let oldName = 5;
+  //   const b = oldName;          ->   const b = newName;
+  //
+  // passed the gate on a mention that exists only inside a STRING, and an
+  // unrelated local was renamed into non-compiling code. Before this change the
+  // file was refused outright, so widening the gate without this check would
+  // have traded a silent skip for a silent corruption — a worse bargain than
+  // the defect being repaired.
+  //
+  // The remedy is the masked-keyword guard the range scans already use (#543):
+  // match over `commentless` so the specifier is visible, then require the
+  // match to START on real code in `masked`. Same view pair, same reasoning,
+  // one level further out.
+  // Two answers per pattern, and the difference between them is what decides a
+  // file the gate cannot judge. `loose` is "the text is there somewhere";
+  // `anchored` additionally requires the keyword to be real CODE.
+  const matches = (pattern: string): { loose: boolean; anchored: boolean } => {
+    const re = new RegExp(pattern, 'g');
+    let m: RegExpExecArray | null;
+    let loose = false;
+    while ((m = re.exec(commentless)) !== null) {
+      loose = true;
+      if (!/\s/.test(masked[m.index] as string)) return { loose: true, anchored: true };
+    }
+    return { loose, anchored: false };
+  };
+
+  const importGate = matches(`import[^;]*\\b${rule.from}\\b[^;]*from\\s*['"]${escapedModule}`);
   // A file may name the symbol ONLY in a re-export (#284). The gate required
   // the word `import`, so such a file returned `findings: []` — a clean report
   // on unhandled work, which is the failure signature this whole family of
   // fixes exists to remove.
-  const reExportsIt = new RegExp(
-    `export[^;]*\\b${rule.from}\\b[^;]*from\\s*['"]${escapedModule}`,
-  ).test(contents);
+  const reExportGate = matches(`export[^;]*\\b${rule.from}\\b[^;]*from\\s*['"]${escapedModule}`);
 
-  if (!importsIt && !reExportsIt) return { contents, findings: [], changed: false };
+  const importsIt = importGate.anchored;
+  const reExportsIt = reExportGate.anchored;
+
+  // THE GATE MAY REFUSE A FILE IT UNDERSTANDS, NEVER ONE IT COULD NOT READ.
+  //
+  // Anchoring alone re-introduced the silence one door further out, and a test
+  // caught it: in `const s = "oops` + an import + a use, the whole import lives
+  // inside an UNTERMINATED string, so it is not code in any view, so the
+  // anchored gate refused — and the unanalysable region went unreported.
+  // `findings: []` over a file that does not parse is the precise signature
+  // this family exists to remove, so trading the old silent skip for that would
+  // have been no gain at all.
+  //
+  // So when the file does NOT parse and the text is present, the decision is
+  // deferred rather than made: fall through, emit no edit, and let the
+  // unterminated-region finding below say so. Narrow on purpose — it needs BOTH
+  // an unterminated construct AND a textual match, so a file with an
+  // unterminated string that has nothing to do with this rule is still skipped
+  // in silence, as it should be.
+  const undecidable = unterminated !== null && (importGate.loose || reExportGate.loose);
+
+  if (!importsIt && !reExportsIt && !undecidable) {
+    return { contents, findings: [], changed: false };
+  }
 
   if (rule.to === undefined) {
     return {
@@ -982,7 +1053,10 @@ function rewriteSource(
   // then map replacements back onto the original text by index. ONE scan for
   // both views (#527) — chained regexes could not answer "was that `//` inside
   // a string?", because the pass that knew had already overwritten the answer.
-  const { commentless, masked, unterminated } = maskSource(contents);
+  //
+  // Computed ABOVE THE GATE since #538, which needs `commentless` to decide
+  // whether the file is in scope at all. Still one scan per file: the gate and
+  // the rewrite read the same views rather than each building their own.
 
   // REPORTED BEFORE ANYTHING ELSE CAN RETURN, including the no-occurrences path
   // below. That path is where the silence lived: a region blanked away takes

@@ -2087,9 +2087,33 @@ const PROBE_UNREACHABLE = Object.freeze({
   'sdk-upgrade-drill.mjs':
     'spawns process.execPath, same as above. It is the reference implementation of didNotStart, and its ' +
     'classifier is exercised directly — including against a genuinely SIGKILLed child — in its own self-test.',
-  'check-path-filters.mjs':
-    'only diffs when a PR payload is present, so outside Actions it exits before reaching the spawn. ' +
-    'Witnessable by running it with a fixture GITHUB_EVENT_PATH.',
+  // check-path-filters.mjs WAS DECLARED HERE and no longer is (#563). The record
+  // is kept rather than deleted, because the reason it was true is the reason
+  // the probe now supplies a fixture payload.
+  //
+  // It read: "only diffs when a PR payload is present, so outside Actions it
+  // exits before reaching the spawn. Witnessable by running it with a fixture
+  // GITHUB_EVENT_PATH." Both halves were correct, and the second WAS THE REMEDY
+  // — the probe now does exactly that, so the site is witnessed on every run
+  // instead of declared unwitnessable.
+  //
+  // What made it STALE was #542, which surfaced a git that never started as
+  // "git could not be started" rather than blaming a shallow checkout. The
+  // probe's `reached` test keys on that wording, so a site that had always been
+  // reachable-in-principle became DETECTABLE, and the declaration stopped being
+  // true without anyone touching it. That is the bidirectional check working.
+  //
+  // DELETING THE ENTRY ALONE WOULD NOT HAVE WORKED, recorded because it is the
+  // obvious move and it is wrong. Measured both ways:
+  //
+  //                      entry present            entry removed
+  //   no payload         145/0                    144/1  "every unprobeable script is declared"
+  //   ci:cheap payload   146/1  "...is stale"     147/0
+  //
+  // Neither binary state is correct, because reachability depended on the
+  // ambient event payload — so removing the declaration only moves the failure
+  // into the other half of the matrix. Making the PROBE deterministic collapses
+  // the matrix to one column, and only then is removal right.
   'check-test-execution.mjs':
     'builds its CHILD\'S PATH itself — CHILD_PATH prepends dirname(process.execPath), which is where npm lives ' +
     '— so an emptied parent PATH never reaches the child and the suites genuinely run. Verified by running it ' +
@@ -2117,6 +2141,11 @@ const PROBE_UNREACHABLE = Object.freeze({
 function probeSpawnSafety(scriptPath, cwd) {
   const nowhere = mkdtempSync(join(tmpdir(), 'no-bin-'));
   tmpDirs.push(nowhere);
+  const eventPath = join(nowhere, 'event.json');
+  writeFileSync(
+    eventPath,
+    JSON.stringify({ pull_request: { number: 1, labels: [{ name: 'ci:cheap' }] } }),
+  );
   // process.execPath, NOT `node`: emptying PATH also hides the interpreter, and
   // the run then dies at exit 127 having executed nothing. Found by doing it —
   // seven scripts "passed" in 2ms before I noticed none had started.
@@ -2127,7 +2156,26 @@ function probeSpawnSafety(scriptPath, cwd) {
     // seconds. A timeout is NOT evidence of safety — it reads as "not reached",
     // which must then be declared like any other unreachable case.
     timeout: 10_000,
-    env: { ...process.env, PATH: nowhere },
+    // A FIXTURE EVENT PAYLOAD, so the probe does not inherit the ambient run's
+    // (#563). `check-path-filters` is the only probed script that reads
+    // GITHUB_EVENT_PATH, and its git spawn sits behind the ci:cheap lane branch
+    // — so WITHOUT this, whether the probe reaches that spawn depended on how
+    // the workflow happened to be triggered. Measured on one branch, one guard:
+    //
+    //   PR run at `opened`, before labels applied -> not reached, green
+    //   PR run at `synchronize`, labels present   -> reached, RED
+    //
+    // Same code, opposite verdicts. A probe whose reach depends on its ambient
+    // environment cannot be reproduced deliberately, and this one hid a
+    // genuinely stale declaration through three merges: #554 and #557 each had
+    // exactly ONE run, fired at PR creation before their labels existed, so
+    // neither ever exercised the path.
+    env: {
+      ...process.env,
+      PATH: nowhere,
+      GITHUB_EVENT_PATH: eventPath,
+      GITHUB_EVENT_NAME: 'pull_request',
+    },
   });
   const out = `${run.stdout ?? ''}${run.stderr ?? ''}`;
   return {

@@ -975,6 +975,35 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
  * The live ledger is EMPTY by design (#533 writes the entries), so every
  * direction has to be exercised against fixtures or the machinery ships
  * unmeasured — which is the failure this whole issue is about, one level up.
+ *
+ * ## Every assertion below was measured against a mutation (#540)
+ *
+ * Not read for plausibility — RUN. Each checked behaviour of
+ * `evaluateExemptions` was removed in turn and the suite observed, because a
+ * test that passes for the wrong reason is invisible to reading, invisible to a
+ * green suite, and invisible even to an author who has just fixed the same
+ * shape in the adjacent test. That is exactly how #540 was born: the kind
+ * assertion matched `errors-push` against a fixture kind of `errors-pushh`,
+ * which contains it, so the stale fall-through satisfied it too.
+ *
+ * The sweep found FIVE such assertions, not the one filed. Current state, with
+ * the mutation that reddens each behaviour:
+ *
+ *   required fields        6 red    kind vocabulary        2 red
+ *   script not measured    2 red    stale no-match         2 red
+ *   ambiguous match        2 red    decay direction        2 red
+ *   cannot-confirm         1 red    honoured count         2 red
+ *   identity key           4 red    printed count          1 red
+ *
+ * ONE branch is deliberately unpinned and must stay that way: the defensive
+ * `site === undefined` read. It is unreachable by construction because the
+ * stale branch precedes it, which is what makes it the ledger's own first
+ * candidate for an exemption entry (#533). An assertion for it would have to
+ * reach through the branch that prevents it.
+ *
+ * Assertions that no mutation reddens are labelled CONTROL. A control is
+ * legitimate — it pins that something does NOT happen — but it must not wear a
+ * witness's name, which is the #431 lesson this file keeps re-learning.
  * ---------------------------------------------------------------------- */
 {
   const entry = (over = {}) => ({
@@ -1022,7 +1051,11 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
   // --- THE DECAY DIRECTION, which is the one that gets skipped -------------
   {
     const r = evaluateExemptions(reportWith([site({ verdict: 'witnessed' })]), [entry()]);
-    check('ledger: an exempt site that IS witnessed fails', r.errors.length, 1);
+    // SHAPE ONLY, and labelled as such (#540). It pins that one entry yields
+    // one error rather than several — a real property, but NOT the direction.
+    // No mutation in the battery reddens it, because every fall-through also
+    // produces exactly one error. The line below carries the direction.
+    check('ledger: CONTROL: an exempt site that IS witnessed yields one error', r.errors.length, 1);
     // Counting errors is NOT enough here, and mutation proved it: with the decay
     // branch removed the fall-through still produces exactly one error, so the
     // count assertion stayed green while the direction was gone.
@@ -1042,15 +1075,34 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
   // --- STALE: the code it exempted has changed (condition 5) ---------------
   {
     const r = evaluateExemptions(reportWith([site({ source: "errors.push('different');" })]), [entry()]);
-    check('ledger: an entry whose source no longer exists is STALE', /STALE/.test(r.errors[0] ?? ''), true);
+    // Anchored on wording ONLY THIS BRANCH produces (#540). Matching /STALE/
+    // was decorative: the defensive `site === undefined` fall-through also says
+    // STALE, so removing this branch left the assertion green.
+    check(
+      'ledger: an entry whose source no longer exists is STALE',
+      /no errors-push site in check-thing\.mjs now reads/.test(r.errors[0] ?? ''),
+      true,
+    );
     check('ledger: ...and removal is by refusal, not by memory', /condition 5/.test(r.errors[0] ?? ''), true);
   }
 
   // --- STALE: the script is not measured at all ----------------------------
   {
     const r = evaluateExemptions(reportWith([site()]), [entry({ script: 'check-gone.mjs' })]);
-    check('ledger: an entry for an unmeasured script is STALE', /STALE/.test(r.errors[0] ?? ''), true);
-    check('ledger: ...and names the script rather than the site', /check-gone\.mjs/.test(r.errors[0] ?? ''), true);
+    // Both assertions here were decorative for the same reason as the kind one
+    // (#540): with this branch removed, the key lookup finds nothing and the
+    // no-match branch produces a STALE message that ALSO names the script. So
+    // neither /STALE/ nor the filename could tell the two branches apart.
+    check(
+      'ledger: an entry for an unmeasured script is STALE',
+      /was not measured this run/.test(r.errors[0] ?? ''),
+      true,
+    );
+    check(
+      'ledger: ...and says nothing here confirms or denies it',
+      /confirms or\s+denies the exemption/.test(r.errors[0] ?? ''),
+      true,
+    );
   }
 
   // --- AMBIGUOUS: one entry cannot exempt several sites --------------------
@@ -1076,19 +1128,50 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
   }
 
   // --- A kind outside the vocabulary ---------------------------------------
+  //
+  // THE ASSERTION #540 WAS FILED ABOUT, and it is worth keeping the reason next
+  // to it. It matched `new RegExp(SITE_KINDS[0])` — that is `errors-push` —
+  // against a fixture whose kind is `errors-pushh`, which CONTAINS it. So the
+  // stale fall-through message, which quotes `entry.kind`, satisfied the regex
+  // just as well as a real vocabulary refusal, and removing the vocabulary
+  // check entirely left the suite green.
+  //
+  // Anchored on the refusal's own wording instead. Same discipline as #542: an
+  // assertion that cannot distinguish the fixed state from the broken one is
+  // the defect it was written to catch.
   {
     const r = evaluateExemptions(reportWith([site()]), [entry({ kind: 'errors-pushh' })]);
-    check('ledger: a mistyped kind is refused', new RegExp(SITE_KINDS[0]).test(r.errors[0] ?? ''), true);
+    check(
+      'ledger: a mistyped kind is refused',
+      /kind is not one of/.test(r.errors[0] ?? ''),
+      true,
+    );
+    // ...and the refusal lists the vocabulary, so the reader can see the near
+    // miss. Checked against a kind the message would NOT contain incidentally.
+    check(
+      'ledger: ...and the refusal lists the real vocabulary',
+      r.errors[0]?.includes(SITE_KINDS.join(', ')),
+      true,
+    );
   }
 
   // --- WHY IDENTITY IS TEXT: the key survives a line shift ------------------
   {
     const src = "a();\nerrors.push('boom');\n";
     const shifted = '// an unrelated line added above\n' + src;
+    // Comparing two calls of the same function is satisfied by ANY uniform
+    // answer — including the empty string (#540). The key is asserted to be the
+    // real line as well, so a degenerate implementation cannot pass by
+    // returning the same nothing twice.
     check(
       'ledger: the identity key is unchanged when unrelated lines move',
       siteSource(src, src.indexOf('errors.push')),
       siteSource(shifted, shifted.indexOf('errors.push')),
+    );
+    check(
+      'ledger: ...and it is the line itself, not a uniform placeholder',
+      siteSource(src, src.indexOf('errors.push')),
+      "errors.push('boom');",
     );
     // ...and it DOES change when that site's own code changes, which is when
     // the exemption should stop applying.

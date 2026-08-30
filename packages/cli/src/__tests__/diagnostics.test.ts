@@ -253,7 +253,7 @@ describe('sanitizeErrorText', () => {
     const out = sanitizeErrorText("open '/srv/private-client/my spec file.yaml'");
 
     expect(out).not.toContain('private-client');
-    expect(out).toBe("open 'my spec file.yaml'");
+    expect(out).toBe("open '[REDACTED:path]/my spec file.yaml'");
   });
 
   it('does not swallow the prose after a path', () => {
@@ -267,7 +267,7 @@ describe('sanitizeErrorText', () => {
     // assertion is still worth having, it just does not test what its old
     // rationale claimed.
     expect(sanitizeErrorText('/srv/x/spec.yaml is missing and the server is unhappy')).toBe(
-      'spec.yaml is missing and the server is unhappy',
+      '[REDACTED:path]/spec.yaml is missing and the server is unhappy',
     );
   });
 
@@ -275,16 +275,16 @@ describe('sanitizeErrorText', () => {
     // node:path's basename is platform-bound; this must not depend on where
     // the tool happens to run.
     expect(sanitizeErrorText('open "C:\\Users\\First Last\\spec.yaml"')).toBe(
-      'open "spec.yaml"',
+      'open "[REDACTED:path]/spec.yaml"',
     );
   });
 
   it('reduces absolute POSIX paths to basenames', () => {
-    expect(sanitizeErrorText("open '/tmp/private/a/b/spec.yaml'")).toBe("open 'spec.yaml'");
+    expect(sanitizeErrorText("open '/tmp/private/a/b/spec.yaml'")).toBe("open '[REDACTED:path]/spec.yaml'");
   });
 
   it('reduces Windows paths to basenames', () => {
-    expect(sanitizeErrorText('open "C:\\Users\\alice\\spec.yaml"')).toBe('open "spec.yaml"');
+    expect(sanitizeErrorText('open "C:\\Users\\alice\\spec.yaml"')).toBe('open "[REDACTED:path]/spec.yaml"');
   });
 
   it('does not chew a URL up with the path branch', () => {
@@ -311,7 +311,7 @@ describe('sanitizeErrorText', () => {
     // bundle. Reachable any time --spec or --log-file points at a network share.
     const out = sanitizeErrorText('open \\\\fileserver\\acme-share\\private\\spec.yaml failed');
 
-    expect(out).toBe('open spec.yaml failed');
+    expect(out).toBe('open [REDACTED:path]/spec.yaml failed');
     expect(out).not.toContain('fileserver');
     expect(out).not.toContain('acme-share');
     expect(out).not.toContain('private');
@@ -323,7 +323,7 @@ describe('sanitizeErrorText', () => {
     // form originally failed.
     const out = sanitizeErrorText('open \\\\file server\\Acme Holdings\\private\\spec.yaml');
 
-    expect(out).toBe('open spec.yaml');
+    expect(out).toBe('open [REDACTED:path]/spec.yaml');
     expect(out).not.toContain('Acme Holdings');
   });
 
@@ -332,7 +332,7 @@ describe('sanitizeErrorText', () => {
     // filename corrupted, because the allowance was a literal space.
     const out = sanitizeErrorText("open '/srv/Acme\tHoldings/private/spec.yaml'");
 
-    expect(out).toBe("open 'spec.yaml'");
+    expect(out).toBe("open '[REDACTED:path]/spec.yaml'");
     expect(out).not.toContain('Acme');
     expect(out).not.toContain('Holdings');
   });
@@ -340,7 +340,7 @@ describe('sanitizeErrorText', () => {
   it('reduces a Windows path whose directory name contains a TAB', () => {
     const out = sanitizeErrorText('open "C:\\Acme\tHoldings\\private\\spec.yaml"');
 
-    expect(out).toBe('open "spec.yaml"');
+    expect(out).toBe('open "[REDACTED:path]/spec.yaml"');
     expect(out).not.toContain('Holdings');
   });
 
@@ -349,14 +349,14 @@ describe('sanitizeErrorText', () => {
     // stack trace would collapse into one mangled token.
     const out = sanitizeErrorText('/srv/a/spec.yaml\n/srv/b/other.yaml');
 
-    expect(out).toBe('spec.yaml\nother.yaml');
+    expect(out).toBe('[REDACTED:path]/spec.yaml\n[REDACTED:path]/other.yaml');
   });
 
   it('keeps the drive-letter form working', () => {
     // The UNC alternative is added ALONGSIDE the drive-letter form. Pinned so a
     // future edit to the alternation cannot trade one for the other.
     expect(sanitizeErrorText('open "C:\\Program Files\\acme\\spec.yaml"')).toBe(
-      'open "spec.yaml"',
+      'open "[REDACTED:path]/spec.yaml"',
     );
   });
 
@@ -390,17 +390,17 @@ describe('sanitizeErrorText', () => {
   it('reduces a mixed-separator UNC path to exactly the basename', () => {
     expect(
       sanitizeErrorText('open \\\\SECRETHOST\\SECRETSHARE/SECRETDIR/spec.yaml failed'),
-    ).toBe('open spec.yaml failed');
+    ).toBe('open [REDACTED:path]/spec.yaml failed');
   });
 
   it('handles blanks in a mixed-separator UNC path', () => {
     // Both #163 fixes have to survive the #286 change: spaces are the norm in
     // Windows names, and the tab case was its own leak.
     expect(sanitizeErrorText('open \\\\file server\\Acme Holdings/private/spec.yaml')).toBe(
-      'open spec.yaml',
+      'open [REDACTED:path]/spec.yaml',
     );
     expect(sanitizeErrorText('open \\\\host\\Acme\tHoldings/private/spec.yaml')).toBe(
-      'open spec.yaml',
+      'open [REDACTED:path]/spec.yaml',
     );
   });
 
@@ -408,8 +408,8 @@ describe('sanitizeErrorText', () => {
     // NOT in #286, found while reproducing it: the drive prefix required a
     // backslash, so POSIX_RUN took the tail and left `C:spec.yaml`. No directory
     // leaked, but the filename was corrupted — same root cause, same fix.
-    expect(sanitizeErrorText('open "C:/Program Files/acme/spec.yaml"')).toBe('open "spec.yaml"');
-    expect(sanitizeErrorText('open "C:\\Program Files/acme\\spec.yaml"')).toBe('open "spec.yaml"');
+    expect(sanitizeErrorText('open "C:/Program Files/acme/spec.yaml"')).toBe('open "[REDACTED:path]/spec.yaml"');
+    expect(sanitizeErrorText('open "C:\\Program Files/acme\\spec.yaml"')).toBe('open "[REDACTED:path]/spec.yaml"');
   });
 
   it('does not read a letter inside a longer token as a drive', () => {
@@ -421,7 +421,7 @@ describe('sanitizeErrorText', () => {
 
   it('still does not run across a newline, with either separator', () => {
     expect(sanitizeErrorText('\\\\host\\a/spec.yaml\n\\\\host\\b/other.yaml')).toBe(
-      'spec.yaml\nother.yaml',
+      '[REDACTED:path]/spec.yaml\n[REDACTED:path]/other.yaml',
     );
   });
 
@@ -453,7 +453,7 @@ describe('sanitizeErrorText', () => {
     for (const token of leaked as string[]) {
       expect(out).not.toContain(token);
     }
-    expect(out).toBe('spec.yaml');
+    expect(out).toBe('[REDACTED:path]/spec.yaml');
   });
 
   it('reduces a JSON-stringified UNC path, where every backslash is doubled', () => {
@@ -465,19 +465,19 @@ describe('sanitizeErrorText', () => {
 
     expect(out).not.toContain('HOST');
     expect(out).not.toContain('SHARE');
-    expect(out).toBe('spec.yaml');
+    expect(out).toBe('[REDACTED:path]/spec.yaml');
   });
 
   it('still does not swallow the prose after a doubled-separator path', () => {
     // Quantifying the separator must not let the run walk past the filename.
-    expect(sanitizeErrorText('/srv//x//spec.yaml is missing')).toBe('spec.yaml is missing');
-    expect(sanitizeErrorText('open "C:\\\\a\\\\spec.yaml" failed')).toBe('open "spec.yaml" failed');
+    expect(sanitizeErrorText('/srv//x//spec.yaml is missing')).toBe('[REDACTED:path]/spec.yaml is missing');
+    expect(sanitizeErrorText('open "C:\\\\a\\\\spec.yaml" failed')).toBe('open "[REDACTED:path]/spec.yaml" failed');
   });
 
   it('still does not run across a newline when separators are doubled', () => {
     // A blank line between two paths is two newlines, not a separator run.
     expect(sanitizeErrorText('/srv//a/spec.yaml\n/srv//b/other.yaml')).toBe(
-      'spec.yaml\nother.yaml',
+      '[REDACTED:path]/spec.yaml\n[REDACTED:path]/other.yaml',
     );
   });
 
@@ -544,7 +544,7 @@ describe('sanitizeErrorText', () => {
     // path, the one case where a basename is both safe and useful.
     const out = sanitizeErrorText('failed for file:///srv/customer-acme/x.log');
 
-    expect(out).toBe('failed for x.log');
+    expect(out).toBe('failed for [REDACTED:path]/x.log');
     expect(out).not.toContain('null');
     expect(out).not.toContain('customer-acme');
     expect(out).not.toContain('[REDACTED:host]');
@@ -933,9 +933,11 @@ describe('--regulated bundle (§52)', () => {
 describe('bundle helpers', () => {
   it('reduces paths to basenames, both separator styles', () => {
     expect(pathBasenames(['/a/b/c.ts', 'd.ts', 'C:\\Program Files\\x\\e.ts'])).toEqual([
-      'c.ts',
+      // Reduced, so marked (#519).
+      '[REDACTED:path]/c.ts',
+      // NOT reduced — one segment, nothing was removed, so no marker is claimed.
       'd.ts',
-      'e.ts',
+      '[REDACTED:path]/e.ts',
     ]);
   });
 

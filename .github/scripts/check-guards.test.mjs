@@ -2170,6 +2170,14 @@ function probeSpawnSafety(scriptPath, cwd) {
     // genuinely stale declaration through three merges: #554 and #557 each had
     // exactly ONE run, fired at PR creation before their labels existed, so
     // neither ever exercised the path.
+    //
+    // THE STRUCTURAL REASON, worth knowing beyond this guard: a PR is created
+    // first and labelled in a SEPARATE call, so the `opened` run's payload
+    // NEVER carries labels. Every PR's first run is therefore label-blind, and
+    // only a later `synchronize` — a push to an already-labelled PR — sees
+    // them. Any check whose behaviour depends on a label is consequently
+    // exercised only on PRs that get pushed to twice, which is a strange and
+    // invisible sampling rule to leave a guard resting on.
     env: {
       ...process.env,
       PATH: nowhere,

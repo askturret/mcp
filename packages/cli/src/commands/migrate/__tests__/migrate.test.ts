@@ -26,6 +26,8 @@ import { dirname, join } from 'node:path';
 import {
   applyMigrations,
   blankComments,
+  importRanges,
+  localExportRanges,
   maskSource,
   reExportRanges,
   type ProjectFile,
@@ -2187,5 +2189,160 @@ describe('maskSource: the two views are always the length of the input (534)', (
   it('still reports an unterminated BLOCK COMMENT at its opening index, unchanged', () => {
     const { unterminated } = maskSource('const x = 1; /* abc');
     expect(unterminated).toEqual({ kind: 'block comment', index: 13 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A comment must not make the entry gate skip the whole file (closes #538)
+//
+// MEASURED FIRST, and the population is FIVE shapes rather than the one filed.
+// On the tree as it stood, each of these was silently skipped — no rewrite and
+// NO FINDING, which is the findings-empty-over-unhandled-work signature at FILE
+// granularity. A green run and an unprocessed file were indistinguishable.
+//
+//   block comment between `from` and the module
+//   a comment containing a SEMICOLON        (the `[^;]*` class ended early)
+//   `import type` with a comment
+//   a default binding with a comment
+//   a re-export with a comment              (without one it REPORTS; with one it went silent)
+//
+// The last is the sharpest: a comment turned a loud, correct refusal into
+// nothing at all.
+// ---------------------------------------------------------------------------
+describe('entry gate: comments (#538)', () => {
+  const rename: Migration = {
+    from: '1.0',
+    to: '2.0',
+    status: 'published',
+    summary: 'test',
+    reference: 'test',
+    rules: [
+      {
+        kind: 'source',
+        id: 'renamed',
+        from: 'oldName',
+        to: 'newName',
+        module: '@askturret/mcp-core',
+        reason: 'Renamed.',
+      },
+    ],
+  };
+  const go = (contents: string) => run([{ path: 'src/a.ts', contents }], [rename]);
+
+  it.each([
+    ['a block comment between `from` and the module', `import { oldName } from /* c */ '@askturret/mcp-core';\nconst a = oldName;\n`],
+    ['a comment containing a semicolon', `import { oldName } from /* a; b */ '@askturret/mcp-core';\nconst a = oldName;\n`],
+    ['`import type` with a comment', `import type { oldName } from /* c */ '@askturret/mcp-core';\nconst a: oldName = 1;\n`],
+    ['a default binding with a comment', `import oldName from /* c */ '@askturret/mcp-core';\nconst a = oldName;\n`],
+  ])('processes a file with %s', (_name, contents) => {
+    const result = go(contents);
+    expect(result.files[0]?.contents).toContain('newName');
+    expect(result.findings.length).toBeGreaterThan(0);
+  });
+
+  it('REPORTS a commented re-export, exactly as it reports an uncommented one', () => {
+    // Not rewritten either way — the adopter's export surface is not ours to
+    // change (#284) — but the comment must not turn the refusal into silence.
+    const withComment = go(`export { oldName } from /* c */ '@askturret/mcp-core';\n`);
+    const without = go(`export { oldName } from '@askturret/mcp-core';\n`);
+
+    expect(withComment.findings.filter((f) => f.action === 'manual')).toHaveLength(1);
+    expect(withComment.findings.length).toBe(without.findings.length);
+  });
+
+  // CONTROLS. "Stopped skipping wrongly" and "stopped skipping at all" look
+  // identical without them (#538's own acceptance, and #526's standard).
+  it.each([
+    ['an unrelated module', `import { oldName } from 'other-pkg';\nconst a = oldName;\n`],
+    ['the module named only inside a comment', `// import { oldName } from '@askturret/mcp-core'\nconst a = 1;\n`],
+    ['a namespace import that never names the symbol', `import * as ns from '@askturret/mcp-core';\nconst a = ns;\n`],
+  ])('still skips %s, silently and without editing', (_name, contents) => {
+    const result = go(contents);
+    expect(result.files[0]?.contents).toBe(contents);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  // THE COST SIDE, and it is a regression this change introduced and then
+  // removed rather than a hypothetical. Gating on `commentless` ALONE let a
+  // module named only inside a STRING pass, and an unrelated local of the same
+  // name was renamed into non-compiling code:
+  //
+  //   const b = oldName;   ->   const b = newName;
+  //
+  // Trading a silent skip for a silent corruption would have been a worse
+  // bargain than the defect being repaired, so the gate also requires the
+  // keyword to be real code.
+  it('does NOT enter a file whose only mention of the module is inside a string', () => {
+    const contents =
+      `const s = "import { oldName } from '@askturret/mcp-core'";\nlet oldName = 5;\nconst b = oldName;\n`;
+    const result = go(contents);
+    expect(result.files[0]?.contents).toBe(contents);
+    expect(result.findings).toHaveLength(0);
+  });
+
+  // ...AND THE GATE MAY REFUSE A FILE IT UNDERSTANDS, NEVER ONE IT COULD NOT
+  // READ. Anchoring to code re-introduced the silence one door further out —
+  // an import inside an unterminated string is not code in any view, so the
+  // gate refused and the unanalysable region went unreported.
+  it('REPORTS a file whose import is swallowed by an unterminated string', () => {
+    const result = go(`const s = "oops\nimport { oldName } from '@askturret/mcp-core';\nconst a = oldName;\n`);
+    const manual = result.findings.filter((f) => f.action === 'manual');
+    expect(manual).toHaveLength(1);
+    expect(manual[0]?.detail).toContain('could not be analysed');
+    // Nothing edited, because nothing could be read.
+    expect(result.files[0]?.contents).toContain('const a = oldName;');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The range boundaries are pinned by WHAT THEY COVER (544)
+//
+// Measured across all three range producers, not just the one filed — 544 asks
+// for the adjacent ones to be checked, and they had the same gap:
+//
+//                        end short   start late
+//   importRanges              0           0
+//   reExportRanges            0           1     <- already pinned, via the dedup set
+//   localExportRanges         0           0
+//
+// Pinned by slicing the covered text rather than by asserting offsets: a
+// numeric assertion couples the test to the implementation and breaks on any
+// legitimate refactor, which 544 rules out explicitly. Slicing reddens in BOTH
+// directions — losing the leading `i` of `import` or the last character of the
+// module — while staying agnostic about where the statement sits in the file.
+// ---------------------------------------------------------------------------
+describe('range boundaries cover the whole statement (544)', () => {
+  const STATEMENT = `import { oldName } from '@askturret/mcp-core'`;
+  const RE_EXPORT = `export { oldName } from '@askturret/mcp-core'`;
+  const LOCAL = `export { oldName }`;
+
+  it('importRanges covers the statement exactly', () => {
+    const src = `const before = 1;\n${STATEMENT};\nconst after = 2;\n`;
+    const { commentless, masked } = maskSource(src);
+    const ranges = importRanges(commentless, masked);
+
+    expect(ranges).toHaveLength(1);
+    const [start, end] = ranges[0] as readonly [number, number];
+    expect(src.slice(start, end)).toBe(STATEMENT);
+  });
+
+  it('reExportRanges covers the statement exactly', () => {
+    const src = `const before = 1;\n${RE_EXPORT};\n`;
+    const { commentless, masked } = maskSource(src);
+    const ranges = reExportRanges(commentless, masked);
+
+    expect(ranges).toHaveLength(1);
+    const [start, end] = ranges[0] as readonly [number, number];
+    expect(src.slice(start, end)).toBe(RE_EXPORT);
+  });
+
+  it('localExportRanges covers the statement exactly', () => {
+    const src = `const before = 1;\n${LOCAL};\n`;
+    const { commentless, masked } = maskSource(src);
+    const ranges = localExportRanges(commentless, masked, new Set());
+
+    expect(ranges).toHaveLength(1);
+    const [start, end] = ranges[0] as readonly [number, number];
+    expect(src.slice(start, end)).toBe(LOCAL);
   });
 });

@@ -46,12 +46,20 @@ system, worktree provisioning, and the KB sync layer.
 
 1. File it upstream with `mcp__operum__submit_feedback_issue`.
 
-2. **Carry the evidence inline. This repository is private on a free plan, so
-   the Operum team cannot open a link to it.** That single fact shapes every
-   upstream issue: a pointer is worthless, so the report must be self-contained
-   — timelines, verbatim error text, measurements and the commands that produced
-   them. An upstream issue that says "see askturret/mcp#123" cannot be read by
-   anyone able to act on it.
+2. **Carry the evidence inline — the report must be self-contained:** timelines,
+   verbatim error text, measurements and the commands that produced them. An
+   upstream issue that says "see askturret/mcp#123" and little else makes the
+   reader chase context they do not have, in a repository they do not track.
+
+   The reason changed; the instruction did not. It used to be that this
+   repository was private on a free plan, so a link **could not be opened at
+   all**. That no longer holds — `GET /repos/askturret/mcp` reports
+   `"private": false`, `"visibility": "public"` — so a pointer is now *readable*
+   rather than worthless. Self-containment is still right, for reasons that do
+   not depend on visibility: an upstream reader has none of this repository's
+   context, an issue number here means nothing there, and a link is a dependency
+   on something staying where it is. Treat a link as a **supplement** to the
+   evidence, never a substitute for it (#549).
 
 3. **Group by shared MECHANISM — and let the mechanism decide, not the rate
    limit.** The tool allows 10 issues/hour, which is a real constraint but is

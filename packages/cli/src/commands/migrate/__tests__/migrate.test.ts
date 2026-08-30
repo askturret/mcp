@@ -2130,3 +2130,62 @@ describe('reExportRanges: a string that looks like a re-export (#543)', () => {
     expect(reExportRanges(commentless, masked)).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The length equality is a PROPERTY, not a consequence of the fixtures (534)
+//
+// `masked.length === contents.length` is what makes the mask a VIEW: indices
+// into one are indices into the other, which is the whole reason an edit
+// computed over `masked` can be applied to `contents`. The trailing-backslash
+// case above is today's instance; this table is the class, and it is
+// deliberately weighted towards UNTERMINATED shapes because that is the only
+// state in which the drift could occur.
+// ---------------------------------------------------------------------------
+describe('maskSource: the two views are always the length of the input (534)', () => {
+  const SHAPES: ReadonlyArray<readonly [string, string]> = [
+    ['empty', ''],
+    ['a lone backslash', '\\'],
+    ['trailing escape in a string', "const s = 'a\\"],
+    ['trailing escape in a double-quoted string', 'const s = "a\\'],
+    ['trailing escape in a template', 'const t = `a\\'],
+    ['unterminated string', "const s = 'abc"],
+    ['unterminated template', 'const t = `abc'],
+    ['unterminated template mid-interpolation', 'const t = `a${x'],
+    ['unterminated block comment', 'const x = 1; /* abc'],
+    ['unterminated block comment ending in a backslash', 'const x = 1; /* abc\\'],
+    ['a template that never closes after an interpolation', 'const t = `a${x}b'],
+    ['nested unterminated templates', 'const t = `a${`b${x'],
+    ['file ending exactly at a backtick', 'const t = `'],
+    ['ordinary code', 'const t = `a${x}b`;\nimport { y } from "m";\n'],
+  ];
+
+  for (const [name, src] of SHAPES) {
+    it(`holds for: ${name}`, () => {
+      const { masked, commentless } = maskSource(src);
+      expect(masked).toHaveLength(src.length);
+      expect(commentless).toHaveLength(src.length);
+    });
+  }
+
+  it('leaves newlines in place, so line numbers survive every blanking', () => {
+    const src = 'const t = `a\nb${x}\nc`;\n';
+    const { masked, commentless } = maskSource(src);
+    // Same count in every view — `lineOf` reads these, so a lost newline moves
+    // every reported line below the blanked region.
+    const lines = (s: string): number => s.split('\n').length;
+    expect(lines(masked)).toBe(lines(src));
+    expect(lines(commentless)).toBe(lines(src));
+  });
+
+  it('still reports an unterminated STRING at its opening index, unchanged', () => {
+    // 534 asks that the existing reporting behaviour is asserted as unchanged,
+    // not merely left alone.
+    const { unterminated } = maskSource("const s = 'abc");
+    expect(unterminated).toEqual({ kind: 'string literal', index: 10 });
+  });
+
+  it('still reports an unterminated BLOCK COMMENT at its opening index, unchanged', () => {
+    const { unterminated } = maskSource('const x = 1; /* abc');
+    expect(unterminated).toEqual({ kind: 'block comment', index: 13 });
+  });
+});

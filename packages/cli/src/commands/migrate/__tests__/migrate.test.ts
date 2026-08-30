@@ -26,6 +26,7 @@ import { dirname, join } from 'node:path';
 import {
   applyMigrations,
   blankComments,
+  maskSource,
   reExportRanges,
   type ProjectFile,
 } from '../engine.js';
@@ -2012,5 +2013,179 @@ describe('the registry docstring rests on a checkable premise (#433)', () => {
     // carry the corrected fact, not merely stop carrying the wrong one.
     expect(normalise(registrySource)).toMatch(/never cut a release/i);
     expect(normalise(registrySource)).toMatch(/licenses nothing/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A template interpolation is CODE, and the two views agree on length (#530)
+//
+// OBSERVED FAILING FIRST, on the tree as it stood. `` `x${durability}y` ``
+// masked to `const t =                  ;` — the interpolation blanked with the
+// text, so an occurrence inside it produced no rewrite AND no finding. That is
+// the `findings: []`-over-unhandled-work signature, not a near miss.
+//
+// The nested case failed in the OPPOSITE direction, which is why it is pinned
+// separately rather than assumed to follow: `` `a${`b${x}d`}e` `` masked to
+// `const t =      b${durability}d    ;` — the outer scan took the INNER
+// backtick as its terminator, so the mask stopped early and template TEXT
+// leaked into the code view. A fix that only exposed interpolations would have
+// left that boundary wrong.
+// ---------------------------------------------------------------------------
+describe('maskSource: template interpolations (#530)', () => {
+  it('exposes interpolated code while keeping the surrounding text masked', () => {
+    const { masked } = maskSource('const t = `HEADTEXT${durability}TAILTEXT`;\n');
+
+    // The CODE is visible...
+    expect(masked).toContain('durability');
+    // ...and the TEXT either side of it is not. Both halves are asserted,
+    // because a fix that unmasked the whole template would satisfy the first
+    // one alone and would be wrong in the other direction.
+    expect(masked).not.toContain('HEADTEXT');
+    expect(masked).not.toContain('TAILTEXT');
+  });
+
+  it('handles a template nested inside an interpolation, at both levels', () => {
+    const { masked } = maskSource('const t = `OUTA${`INNB${durability}INND`}OUTE`;\n');
+
+    expect(masked).toContain('durability');
+    for (const text of ['OUTA', 'INNB', 'INND', 'OUTE']) expect(masked).not.toContain(text);
+  });
+
+  it('does not let a backtick inside a plain string open a template', () => {
+    const { masked } = maskSource('const s = "QUOTED `BACKTICKTEXT" + durability;\n');
+    expect(masked).toContain('durability');
+    expect(masked).not.toContain('BACKTICKTEXT');
+  });
+
+  it('does not end a template at an ESCAPED backtick', () => {
+    const { masked } = maskSource('const t = `ESCAPED\\`BACKTICKTEXT${durability}TAILTEXT`;\n');
+    expect(masked).toContain('durability');
+    expect(masked).not.toContain('BACKTICKTEXT');
+  });
+
+  it('treats a comment inside an interpolation as a comment', () => {
+    const { commentless, masked } = maskSource('const t = `HEADTEXT${/* durability */ x}TAILTEXT`;\n');
+    // Blanked in BOTH views — that is what makes it a comment rather than text.
+    expect(commentless).not.toContain('durability');
+    expect(masked).not.toContain('durability');
+    expect(masked).toContain('x');
+  });
+
+  it('counts braces, so an object inside an interpolation does not end it early', () => {
+    const { masked } = maskSource('const t = `HEADTEXT${ {k: durability} }TAILTEXT`;\n');
+    expect(masked).toContain('durability');
+    expect(masked).not.toContain('BACKTICKTEXT');
+  });
+
+  it('REPORTS an unterminated template rather than omitting it', () => {
+    const { unterminated } = maskSource('const t = `HEADTEXT${x}TAILTEXT\n');
+    // The durable half of #530: what cannot be analysed is reported, never
+    // silently skipped.
+    expect(unterminated).not.toBeNull();
+    expect(unterminated?.index).toBe(10);
+  });
+
+  it('returns views the SAME LENGTH as the input, even on a trailing escape (#534)', () => {
+    // A backslash as the final character sent the cursor past the end, and
+    // writing there EXTENDED the buffer — `masked` came back one character
+    // longer, so every offset past the end disagreed between the two views.
+    const src = "const s = 'a\\";
+    const { masked, commentless } = maskSource(src);
+    expect(masked).toHaveLength(src.length);
+    expect(commentless).toHaveLength(src.length);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The masked-keyword guard is REACHABLE, contrary to the filing (#543)
+//
+// #543 held that the guard is unreachable because two neighbouring mechanisms
+// subsume it. Checked rather than inherited, and the claim does not hold: those
+// mechanisms govern the OCCURRENCE scan, while this guard sits in the import
+// and export RANGE scans, which match over `commentless` — the view that keeps
+// string text ON PURPOSE, because the module specifier lives there (#454).
+//
+// So a string whose CONTENT looks like a re-export reaches the regex, and this
+// guard is the only thing that stops it being treated as one. Measured: with
+// the guard removed, `reExportRanges` returns [[11, 32]] for the fixture below
+// and the string is rewritten as if it were code.
+//
+// The guard therefore stays. This test is what makes that decision reviewable —
+// remove the guard and it reddens.
+// ---------------------------------------------------------------------------
+describe('reExportRanges: a string that looks like a re-export (#543)', () => {
+  it('is not treated as a re-export', () => {
+    const src = 'const s = "export { a } from \'m\'";\n';
+    const { commentless, masked } = maskSource(src);
+
+    // The regex CAN see it — `commentless` keeps string text — so the guard is
+    // doing real work rather than sitting behind an impossible input.
+    expect(commentless).toContain('export { a } from');
+    expect(reExportRanges(commentless, masked)).toHaveLength(0);
+  });
+
+  it('still finds a REAL re-export beside it, so the guard is not just refusing everything', () => {
+    const src = 'export { a } from \'m\';\n';
+    const { commentless, masked } = maskSource(src);
+    expect(reExportRanges(commentless, masked)).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The length equality is a PROPERTY, not a consequence of the fixtures (534)
+//
+// `masked.length === contents.length` is what makes the mask a VIEW: indices
+// into one are indices into the other, which is the whole reason an edit
+// computed over `masked` can be applied to `contents`. The trailing-backslash
+// case above is today's instance; this table is the class, and it is
+// deliberately weighted towards UNTERMINATED shapes because that is the only
+// state in which the drift could occur.
+// ---------------------------------------------------------------------------
+describe('maskSource: the two views are always the length of the input (534)', () => {
+  const SHAPES: ReadonlyArray<readonly [string, string]> = [
+    ['empty', ''],
+    ['a lone backslash', '\\'],
+    ['trailing escape in a string', "const s = 'a\\"],
+    ['trailing escape in a double-quoted string', 'const s = "a\\'],
+    ['trailing escape in a template', 'const t = `a\\'],
+    ['unterminated string', "const s = 'abc"],
+    ['unterminated template', 'const t = `abc'],
+    ['unterminated template mid-interpolation', 'const t = `a${x'],
+    ['unterminated block comment', 'const x = 1; /* abc'],
+    ['unterminated block comment ending in a backslash', 'const x = 1; /* abc\\'],
+    ['a template that never closes after an interpolation', 'const t = `a${x}b'],
+    ['nested unterminated templates', 'const t = `a${`b${x'],
+    ['file ending exactly at a backtick', 'const t = `'],
+    ['ordinary code', 'const t = `a${x}b`;\nimport { y } from "m";\n'],
+  ];
+
+  for (const [name, src] of SHAPES) {
+    it(`holds for: ${name}`, () => {
+      const { masked, commentless } = maskSource(src);
+      expect(masked).toHaveLength(src.length);
+      expect(commentless).toHaveLength(src.length);
+    });
+  }
+
+  it('leaves newlines in place, so line numbers survive every blanking', () => {
+    const src = 'const t = `a\nb${x}\nc`;\n';
+    const { masked, commentless } = maskSource(src);
+    // Same count in every view — `lineOf` reads these, so a lost newline moves
+    // every reported line below the blanked region.
+    const lines = (s: string): number => s.split('\n').length;
+    expect(lines(masked)).toBe(lines(src));
+    expect(lines(commentless)).toBe(lines(src));
+  });
+
+  it('still reports an unterminated STRING at its opening index, unchanged', () => {
+    // 534 asks that the existing reporting behaviour is asserted as unchanged,
+    // not merely left alone.
+    const { unterminated } = maskSource("const s = 'abc");
+    expect(unterminated).toEqual({ kind: 'string literal', index: 10 });
+  });
+
+  it('still reports an unterminated BLOCK COMMENT at its opening index, unchanged', () => {
+    const { unterminated } = maskSource('const x = 1; /* abc');
+    expect(unterminated).toEqual({ kind: 'block comment', index: 13 });
   });
 });

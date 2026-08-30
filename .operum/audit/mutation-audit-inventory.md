@@ -41,16 +41,7 @@ previous run. Two runs of the same code in different environments legitimately
 differ — see caveat 2 — so a delta between a local run and a CI one would report
 movement that is an artifact of where it ran. This says which it compared.
 
-| figure | before | after | change |
-|---|---|---|---|
-| failure sites | 160 | 172 | **+12** |
-| witnessed | 114 | 124 | **+10** |
-| unwitnessed | 46 | 48 | **+2** |
-| unreachable sites | 3 | 0 | **-3** |
-| unreachable scripts | 1 | 0 | **-1** |
-| measured guards | 25 | 26 | **+1** |
-
-**The measured population changed**, so the movement above is not only a change of category.
+**No headline figure moved** since the previous revision.
 
 The first recorded movement predates this section and is kept so that it is not
 the undocumented one: **witnessed 73 -> 74** between `8bc9641` and `f2d0fda`.
@@ -97,7 +88,7 @@ Neutralising these changed nothing their self-test could see.
 | `check-audit-append-only.mjs` | 165 | result-code |
 | `check-codeowners.mjs` | 255 | process-exit |
 | `check-concealment-captures.mjs` | 651 | errors-push |
-| `check-concealment-captures.mjs` | 847 | errors-push |
+| `check-concealment-captures.mjs` | 855 | errors-push |
 | `check-concealment-templates.mjs` | 208 | throw |
 | `check-concealment-templates.mjs` | 218 | throw |
 | `check-concealment-templates.mjs` | 232 | throw |

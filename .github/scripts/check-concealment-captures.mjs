@@ -688,7 +688,15 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
         if (!(field in row)) {
           errors.push(
             `${where}: missing required field \`${field}\`. An ABSENT field is not an answer — ` +
-              `\`unknown\` is a value a query can count, a missing field is a row a query silently does not see.`,
+              `\`unknown\` is a value a query can count, a missing field is a row a query silently does not see. ` +
+              // THE SCOPE, stated because the check HAS one and the message did
+              // not say so (#524). Read off the predicate above — `inSchema ||
+              // isAdded` — rather than inferred from the prose around it, which
+              // is how #506 became an inversion.
+              `SCOPE: this applies to any row CARRYING \`factor_1\` — the marker of the current schema — and ` +
+              `to every row a change ADDS, whether or not it carries one. A pre-existing row without ` +
+              `\`factor_1\` predates the schema and is exempt, so an older row missing this field is not a ` +
+              `defect and is not reported.`,
           );
         }
       }
@@ -920,7 +928,14 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
               `through a shell and has no such refusal. ` +
               `If it genuinely must be elided, declare it IN THE SLOT using this corpus's existing convention — a ` +
               `bracketed note naming the elision, e.g. "[ELIDED: <why>]" — so the gap describes itself instead of ` +
-              `being silent.`,
+              `being silent. ` +
+              // THE SCOPE, stated because the check HAS one and the message did
+              // not say so (#524). Read off the predicate `isAdded && verbatim
+              // !== null`, not from the prose around it.
+              `SCOPE: this applies ONLY to rows a change ADDS. The 31 redacted rows already in the corpus are not ` +
+              `reported and are not repairable — their original text is gone, and the frozen log and existing ` +
+              `per-entry files are never rewritten. So this is about the row you are adding now, not a backlog ` +
+              `you have inherited.`,
           );
         }
         // One shape-match is enough: T1/T1C/T1B share the PATH slot and its

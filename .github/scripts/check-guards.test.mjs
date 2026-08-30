@@ -2055,8 +2055,22 @@ export function spawningScripts(scriptsDir) {
  * WHAT THE STALENESS CHECK DOES NOT CHECK — read this before adding an entry.
  * It tests two things: that the script still spawns, and that the probe still
  * cannot reach it. It does NOT test whether the stated REASON is true, and it
- * cannot: the reason is a claim about WHY the probe stops, which is exactly what
- * a run that never reaches the spawn produces no evidence about.
+ * cannot: the reason is a claim about WHY the probe cannot witness the script,
+ * and NOTHING THE PROBE OBSERVES DISCRIMINATES BETWEEN EXPLANATIONS OF WHY.
+ *
+ * The entries below take three shapes, and the justification has to cover all
+ * three because a reader who fits the other two would otherwise read themselves
+ * out of it (#523):
+ *
+ *   never probed at all   `byName` excludes it, so there is no run to learn from
+ *   probed, stops short   the run exits BEFORE the spawn
+ *   probed, spawn WORKS   the run reaches the spawn and it SUCCEEDS
+ *
+ * All three produce a clean probe result, and a clean result is equally
+ * consistent with any explanation of why — including a wrong one. THE THIRD
+ * SHAPE IS THE ONE THAT MOTIVATED THIS PARAGRAPH: the bad entry QA caught
+ * reached its spawn and succeeded, so "a run that never reaches the spawn" —
+ * what this said before — described the one shape the incident was not.
  *
  * So a wrong reason survives here indefinitely, in the one artifact carrying
  * this knowledge forward — and it has already happened once. The first
@@ -2082,8 +2096,11 @@ const PROBE_UNREACHABLE = Object.freeze({
     'under the probe\'s exact conditions: exit 0 in ~24s, "16 package(s): 12 running tests, 4 declared exempt", ' +
     '874 tests executed. There is no spawn failure to surface, because nothing failed to spawn: that is #429\'s ' +
     'fix working as designed, and the script says so itself at the CANNOT-CHECK backstop ("CHILD_PATH above ' +
-    'should make this unreachable for the PATH case"). Witnessable only by injecting a spawn seam — the same ' +
-    'class of remedy as the two execPath scripts above, not a reporting change.',
+    'should make this unreachable for the PATH case"). Witnessable by RELOCATING THE INTERPRETER: hardlink ' +
+    'process.execPath into a directory holding no npm and run the guard with that, and CHILD_PATH resolves ' +
+    'nothing — demonstrated on #531. A symlink will not do, because Node resolves execPath through symlinks. ' +
+    'This works only where npm is absent from /usr/bin and /bin as well, since the guard appends both ' +
+    'unconditionally, so it witnesses the site on some hosts and not others.',
 });
 
 /**

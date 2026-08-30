@@ -1260,6 +1260,94 @@ describe('source rules', () => {
       expect(result.files[0]?.contents ?? '').toContain('console.log(durability)');
     });
   });
+
+  // -------------------------------------------------------------------------
+  // A comment in an IMPORT statement broke the emitted file (#526)
+  //
+  // `importRanges` matched against the raw text, so `import { x } /* c */ from`
+  // was not recognised as an import statement. The specifier was then refused
+  // and reported `manual` — while the file-level scan renamed the reference in
+  // the body regardless. Half of a paired edit.
+  //
+  // WHY THIS IS WORSE THAN #454'S MISROUTE, and why "reported, not silent" is
+  // not the mitigation it sounds like: the output DOES NOT COMPILE. A refusal
+  // is a safe outcome only when it is the whole outcome.
+  //
+  // Measured on the unmodified tree — SIX shapes, not the one filed:
+  //
+  //   import { x } /* c */ from 'm'        block comment in the gap
+  //   import { x } // c \n from 'm'        line comment in the gap
+  //   import /* c */ { x } from 'm'        before the clause
+  //   import/* c */{ x } from 'm'          no whitespace at all
+  //   import type { x } /* c */ from 'm'   the type-only form
+  //   import d, { x } /* c */ from 'm'     default + named
+  //
+  // Three near-misses do NOT break and are kept below as controls, because
+  // "the fix stopped breaking things" and "the fix stopped doing anything" look
+  // identical without them.
+  // -------------------------------------------------------------------------
+  describe('a comment in an import statement no longer breaks the output (#526)', () => {
+    const CORE = '@askturret/mcp-core';
+    const USE = 'console.log(durability);\n';
+
+    /**
+     * THE INVARIANT, asserted directly rather than left implied by fixtures.
+     *
+     * A refused specifier must never coexist with a renamed reference. Stated
+     * as a property over the emitted file, so it holds for shapes nobody
+     * thought to enumerate — which is the whole lesson of #454 turning out to
+     * be six shapes rather than one.
+     */
+    const halfEdited = (out: string): boolean => {
+      const lines = out.split('\n');
+      const specifierStale = lines.some((l) => l.trimStart().startsWith('import') && /\bdurability\b/.test(l));
+      const bodyRenamed = lines.some((l) => !l.trimStart().startsWith('import') && /\bdurable\b/.test(l));
+      return specifierStale && bodyRenamed;
+    };
+
+    it('CONTROL: the invariant check can actually fail', () => {
+      // An invariant that never returns true is decorative. This is the exact
+      // output the unfixed engine produced, pasted as a literal.
+      expect(halfEdited(`import { durability } /* c */ from '${CORE}';\nconsole.log(durable);\n`)).toBe(true);
+      expect(halfEdited(`import { durable } from '${CORE}';\nconsole.log(durable);\n`)).toBe(false);
+    });
+
+    const broke: Array<[string, string]> = [
+      ['a block comment in the gap', `import { durability } /* c */ from '${CORE}';\n${USE}`],
+      ['a line comment in the gap', `import { durability } // c\nfrom '${CORE}';\n${USE}`],
+      ['a comment before the clause', `import /* c */ { durability } from '${CORE}';\n${USE}`],
+      ['a comment and no whitespace at all', `import/* c */{ durability } from '${CORE}';\n${USE}`],
+      ['the type-only form', `import type { durability } /* c */ from '${CORE}';\n${USE}`],
+      ['a default binding alongside', `import d, { durability } /* c */ from '${CORE}';\n${USE}`],
+    ];
+
+    it.each(broke)('the specifier and the reference move together: %s', (_name, src) => {
+      const result = runDurability(src);
+      const out = result.files[0]?.contents ?? '';
+
+      expect(halfEdited(out)).toBe(false);
+      // ...and it moved forward rather than being left alone wholesale: the
+      // invariant is also satisfied by refusing everything, which would be a
+      // different regression.
+      expect(out).toContain('durable');
+      expect(out).not.toContain('durability');
+      // The comment itself survives — the match reads a VIEW, the edit lands on
+      // the original text.
+      expect(out).toContain(src.includes('// c') ? '// c' : '/* c */');
+    });
+
+    const alreadyFine: Array<[string, string]> = [
+      ['a comment inside the braces', `import { durability /* c */ } from '${CORE}';\n${USE}`],
+      ['a comment between specifiers', `import { other /* c */, durability } from '${CORE}';\n${USE}`],
+      ['an aliased specifier', `import { durability as d } /* c */ from '${CORE}';\nconsole.log(d, durability);\n`],
+    ];
+
+    it.each(alreadyFine)('CONTROL: %s was never broken, and still is not', (_name, src) => {
+      const out = runDurability(src).files[0]?.contents ?? '';
+      expect(halfEdited(out)).toBe(false);
+      expect(out).toContain('durable');
+    });
+  });
 });
 
 describe('overlay rules', () => {

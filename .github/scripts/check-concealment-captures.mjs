@@ -42,13 +42,17 @@
  * Both were measured against the real corpus rather than reasoned about, and
  * both would have FAILED CORRECT ROWS as filed:
  *
- *   - "exactly one line per file" is enforced only on files this PR adds.
- *     THREE existing capture files hold several rows each (#328 holds three),
- *     and they are correct. Applied corpus-wide the check would fail them.
- *   - The full required-field set is enforced only on rows this PR adds. Older
- *     rows predate the schema and use different field names; absence of
- *     `factor_1` means "predates the field", which is a different fact from
- *     `unverifiable`, and conflating them corrupts the measurement.
+ *   - "exactly one line per file" is enforced only on files this change ADDS
+ *     OR MODIFIES. THREE existing capture files hold several rows each (#328
+ *     holds three), and they are correct. Applied corpus-wide the check would
+ *     fail them — and note the narrowing is per-FILE, so modifying one of those
+ *     three DOES report its pre-existing rows (#552). Narrower than corpus-wide
+ *     is not the same as "only what you added".
+ *   - The full required-field set is enforced only on rows in a file this change
+ *     ADDS OR MODIFIES. Older rows predate the schema and use different field
+ *     names; absence of `factor_1` means "predates the field", which is a
+ *     different fact from `unverifiable`, and conflating them corrupts the
+ *     measurement.
  *
  * Corpus-wide, every check is scoped to rows CARRYING the field it is about.
  *
@@ -640,12 +644,23 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
 
     const inChangedFile = added !== null && added.has(file.rel);
 
-    // CONDITION 1a — one row per file, on files this PR adds. Three existing
-    // files hold several rows and are correct, so this is not retroactive.
+    // CONDITION 1a — one row per file, on files this change ADDS OR MODIFIES.
+    //
+    // It said "on files this PR adds ... so this is not retroactive". It IS
+    // retroactive: the predicate is per-FILE and covers modified files too, so
+    // MODIFYING one of the three existing multi-row files reports its
+    // pre-existing rows — the ones that same sentence called correct (#552).
+    // Same false by-construction claim this file corrects two conditions down;
+    // the message below now carries the distinction instead of denying it.
     if (inChangedFile && !file.frozen && nonBlank.length !== 1) {
       errors.push(
-        `${file.rel}: a capture file added by this change must hold EXACTLY ONE row, found ${nonBlank.length}. ` +
-          `One file per entry is what keeps two agents capturing at the same moment from colliding.`,
+        `${file.rel}: a capture file this change ADDS OR MODIFIES must hold EXACTLY ONE row, found ` +
+          `${nonBlank.length}. One file per entry is what keeps two agents capturing at the same moment from ` +
+          `colliding. THE SCOPE IS PER-FILE, NOT PER-ROW: if you APPENDED to this file, write a separate file ` +
+          `for your entry instead — appending is what produced the second row and is the collision this rule ` +
+          `exists to prevent. IF YOU DID NOT ADD ANY ROW HERE, the rows are pre-existing and are NOT a defect: ` +
+          `three capture files predate one-file-per-entry and hold several rows correctly. Do not split or ` +
+          `delete them to satisfy this — restore the file you modified.`,
       );
     }
 
@@ -876,14 +891,28 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     // THE INVERSE CHECK — diff-scoped, and skipping superseded rows.
     //
     // A row claiming NO template while one matches is a defect only if that
-    // template existed when the row was written. On a row this PR adds, it did,
-    // by construction.
+    // template existed when the row was written. On a row this change ADDS that
+    // holds by construction — but the predicate is per-FILE and covers MODIFIED
+    // files too, where it does not (#552).
+    //
+    // MEASURED, because this one is the opposite of mild: pass the 75 files
+    // holding a null-template row as changed and this fires 42 times — the same
+    // 42 the header names as correctly anomalous against the allowlist of their
+    // moment. The remedy it would invite is re-classifying history, which is the
+    // corpus corruption that section exists to forbid. Narrowing the predicate
+    // to added-only is the real repair and needs the A and M sets kept apart,
+    // which is a mechanism change; until then the message carries the warning.
     if (inChangedFile && claimed === null && verbatim !== null && !supersededPaths.has(file.rel.replace(/^\.operum\/audit\//, ''))) {
       const matching = [...templates.values()].filter((t) => corpusMatcher(t).exec(verbatim) !== null).map((t) => t.id);
       if (matching.length > 0) {
         errors.push(
           `${where}: claims no template, but ${matching.join(' / ')} matches its \`verbatim\`. ` +
-            `A row added now is classified against the current allowlist, so "no template covers this" is checkable.`,
+            `A row this change ADDS is classified against the current allowlist, so "no template covers this" ` +
+            `is checkable. THE SCOPE IS PER-FILE, NOT PER-ROW (#552): if you MODIFIED a capture file rather ` +
+            `than adding one, a PRE-EXISTING row in it is being judged against an allowlist that did not exist ` +
+            `when it was written, and it may well have been correctly anomalous at the time. DO NOT RE-CLASSIFY ` +
+            `IT to clear this — 42 rows in the corpus predate T1C and re-labelling them corrupts the very ` +
+            `measurement the corpus carries. Restore the file you modified instead.`,
         );
       }
     }

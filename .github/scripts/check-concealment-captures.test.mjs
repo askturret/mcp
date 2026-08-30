@@ -900,6 +900,26 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
       changed !== null && changed.has('.operum/audit/concealment-reminders/a.jsonl'),
       true,
     );
+
+    // ...AND RUN THE CHECK ON IT. The first version of this block built exactly
+    // this state and stopped HERE, one step short — which is precisely where
+    // condition 1a surfaces, and it is why a fourth mismatched sentence
+    // survived the sweep that fixed the other three (#552 re-QA). Building a
+    // state and not exercising it asserts something about the fixture rather
+    // than about the guard.
+    const r = check(dir, { addedFiles: changed });
+    const oneA = errorsMatching(r, /EXACTLY ONE row/);
+    is('scope: ...and condition 1a fires on it, because the predicate is per-FILE', oneA.length, 1);
+    is(
+      'scope: ...and does NOT tell the author they ADDED a file they modified',
+      /added by this change must hold/.test(oneA[0] ?? ''),
+      false,
+    );
+    is(
+      'scope: ...and tells an author who added no row here that the rows are not a defect',
+      /IF YOU DID NOT ADD ANY ROW HERE/.test(oneA[0] ?? ''),
+      true,
+    );
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

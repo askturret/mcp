@@ -301,13 +301,35 @@ const IMPORT_CLAUSE = [
  * Enumerating the clause shapes is what bounds the match to one statement
  * without an AST. The failure direction if a shape is missed is under-reach —
  * the statement stops being an import range, so its specifier is refused and
- * REPORTED rather than rewritten. That is the safe direction, but it is still
- * wrong, so each accepted form is pinned by a test.
+ * REPORTED rather than rewritten.
+ *
+ * ## "REPORTED rather than rewritten" is NOT the safe direction here (#526)
+ *
+ * That sentence used to end "which is the safe direction". It is wrong, and it
+ * is the sentence that made this defect look tolerable for two issues running.
+ *
+ * A refusal is safe when it is the WHOLE outcome. This one is half of a paired
+ * edit: the file-level scan renames the reference in the body whatever this
+ * function decides, so a missed import range means the SPECIFIER keeps the old
+ * name while the body gets the new one. That does not compile:
+ *
+ *   import { durability } / * c * / from 'mod';   <- refused, reported manual
+ *   console.log(durable);                          <- renamed anyway
+ *
+ * Reported, so not silent — but a migration tool whose job is a correct rewrite
+ * emitted a file that does not build. #454 was the same blindness on the export
+ * side and merely misrouted; here it breaks the output.
+ *
+ * ## Matched over the COMMENT-BLANKED view, for that reason
+ *
+ * Comments are whitespace in `commentless` and string literals survive it, so
+ * the module specifier is still matchable — which is the whole reason
+ * `maskSource` emits two views rather than one (#454, #527).
  *
  * A side-effect import matches nothing here BY DESIGN: it has no specifier to
  * rewrite, and its module string is masked before classification anyway.
  */
-function importRanges(contents: string, masked: string): ReadonlyArray<readonly [number, number]> {
+function importRanges(commentless: string, masked: string): ReadonlyArray<readonly [number, number]> {
   const ranges: [number, number][] = [];
   // `\s+` OR a lookahead at `{`/`*`: `import{a}from'x'` is valid and appears in
   // tight or minified source, but a default binding does need the space — there
@@ -320,7 +342,7 @@ function importRanges(contents: string, masked: string): ReadonlyArray<readonly 
   );
   let m: RegExpExecArray | null;
 
-  while ((m = re.exec(contents)) !== null) {
+  while ((m = re.exec(commentless)) !== null) {
     if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
     ranges.push([m.index, m.index + m[0].length]);
   }
@@ -862,7 +884,7 @@ function rewriteSource(
 
   const brackets = bracketContexts(masked);
   const openers = braceOpeners(masked);
-  const imports = importRanges(contents, masked);
+  const imports = importRanges(commentless, masked);
   const reExports = reExportRanges(commentless, masked);
   const localExports = localExportRanges(
     commentless,

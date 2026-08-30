@@ -342,8 +342,24 @@ function importRanges(commentless: string, masked: string): ReadonlyArray<readon
   );
   let m: RegExpExecArray | null;
 
+  // THE MASKED-KEYWORD GUARD IS REACHABLE, and #543 held that it was not (its
+  // reasoning was that two neighbouring mechanisms subsume it). Checked rather
+  // than inherited, and the claim does not survive: both of those mechanisms
+  // govern the OCCURRENCE scan, whereas this runs in the RANGE scans, which
+  // match over `commentless` — the view that keeps string text ON PURPOSE,
+  // because the module specifier lives there (#454).
+  //
+  // So a string whose CONTENT reads like a statement reaches this regex, and
+  // this line is the only thing between it and being rewritten as code.
+  // Measured: with the guard removed, `const s = "export { a } from 'm'"`
+  // yields the range [11, 32] and the string is rewritten. A test pins it, so
+  // the next reader gets a red rather than this paragraph.
+  //
+  // An unreachability claim has to name the INVARIANT that makes the input
+  // impossible. Naming a nearby guard that happens to sit in front of a
+  // DIFFERENT path is how a load-bearing line gets deleted.
   while ((m = re.exec(commentless)) !== null) {
-    if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
+    if (/\s/.test(masked[m.index] as string)) continue; // in a string, not code (#543)
     ranges.push([m.index, m.index + m[0].length]);
   }
 
@@ -480,10 +496,35 @@ export function maskSource(contents: string): SourceViews {
   let unterminated: UnterminatedRegion | null = null;
   let i = 0;
 
+  /**
+   * Where the scanner is, at any depth (#530).
+   *
+   * `template` means the cursor is in literal TEXT — blanked in `masked`, and
+   * `textStart` tracks the span since the last delimiter so it can be blanked
+   * in one go. `interp` means the cursor is in CODE inside a `${…}`, where the
+   * ordinary rules apply and `depth` counts the braces that are not the closer.
+   */
+  type MaskCtx =
+    | { kind: 'template'; readonly openedAt: number; textStart: number }
+    | { kind: 'interp'; depth: number };
+  const stack: MaskCtx[] = [];
+
+  const openTemplate = (at: number): void => {
+    blank([masked], at, at + 1);
+    stack.push({ kind: 'template', openedAt: at, textStart: at + 1 });
+  };
+
   // Newlines survive every blanking, or every line number below the blanked
   // region moves and `lineOf` starts reporting the wrong one.
+  // `to` is CLAMPED to the input length (#534). An escape at the very end sends
+  // the scanner's cursor to `length + 1`, and writing at that index EXTENDS the
+  // array — `masked` came back one character longer than its input, so the two
+  // views disagreed about every offset past the end. Clamping here rather than
+  // at each call site makes "the views are the same length as the input" a
+  // property of the only function that writes them.
   const blank = (buffers: string[][], from: number, to: number): void => {
-    for (let k = from; k < to; k += 1) {
+    const stop = to > length ? length : to;
+    for (let k = from; k < stop; k += 1) {
       if (contents[k] === '\n') continue;
       for (const buffer of buffers) buffer[k] = ' ';
     }
@@ -491,6 +532,32 @@ export function maskSource(contents: string): SourceViews {
 
   while (i < length) {
     const c = contents[i] as string;
+
+    // TEMPLATE TEXT IS HANDLED FIRST, ahead of comments, and the ordering is
+    // load-bearing for the same reason the comments-before-strings ordering
+    // below is: inside template text `//` is not a comment and a quote does not
+    // open a string. It is literal text until a backtick or a `${`.
+    const ctx = stack[stack.length - 1];
+    if (ctx !== undefined && ctx.kind === 'template') {
+      if (c === '\\') {
+        i += 2;
+        continue;
+      }
+      if (c === '`') {
+        blank([masked], ctx.textStart, i + 1);
+        stack.pop();
+        i += 1;
+        continue;
+      }
+      if (c === '$' && contents[i + 1] === '{') {
+        blank([masked], ctx.textStart, i + 2);
+        stack.push({ kind: 'interp', depth: 0 });
+        i += 2;
+        continue;
+      }
+      i += 1;
+      continue;
+    }
 
     // Comments are consumed BEFORE strings, so an apostrophe in `// don't`
     // cannot open a string. That ordering is the whole reason a scan works
@@ -512,7 +579,7 @@ export function maskSource(contents: string): SourceViews {
       continue;
     }
 
-    if (c === '"' || c === "'" || c === '`') {
+    if (c === '"' || c === "'") {
       const start = i;
       i += 1;
       let closed = false;
@@ -538,7 +605,70 @@ export function maskSource(contents: string): SourceViews {
       continue;
     }
 
+    // A TEMPLATE IS NOT ONE SPAN OF TEXT (#530). `` `x${durability}y` `` masked
+    // whole meant the interpolation — which is CODE — was invisible, so an
+    // occurrence there was silently skipped: no rewrite, no finding, the
+    // `findings: []`-over-unhandled-work signature.
+    //
+    // Handled with an explicit context stack rather than a regex or a single
+    // forward scan, because the nesting is genuinely unbounded: a template
+    // holds interpolations, an interpolation holds arbitrary code including
+    // further templates, and each level has DIFFERENT masking rules. A stack
+    // costs one small type and is correct at every depth; the alternative was
+    // correct at one depth and silently wrong below it, which is this same
+    // defect one layer down.
+    //
+    // MEASURED BEFORE THE FIX, and the nested case failed in the OPPOSITE
+    // direction: `` `a${`b${x}d`}e` `` masked as
+    // `const t =      b${durability}d    ;` — the outer template's scan took the
+    // INNER backtick as its terminator, so the mask ended early and template
+    // TEXT leaked into the code view. So this is not only "interpolation was
+    // hidden"; the boundary itself was wrong once templates nested.
+    if (c === '`') {
+      openTemplate(i);
+      i += 1;
+      continue;
+    }
+
+    // Inside an interpolation we are in CODE, so everything above applies —
+    // comments, strings, nested templates. Only the brace depth is extra, and
+    // it is what decides where the code ends and template text resumes.
+    const top = stack[stack.length - 1];
+    if (top !== undefined && top.kind === 'interp') {
+      if (c === '{') {
+        top.depth += 1;
+        i += 1;
+        continue;
+      }
+      if (c === '}') {
+        if (top.depth === 0) {
+          stack.pop();
+          const enclosing = stack[stack.length - 1];
+          // Text resumes after the closing brace.
+          if (enclosing !== undefined && enclosing.kind === 'template') {
+            blank([masked], i, i + 1);
+            enclosing.textStart = i + 1;
+          }
+          i += 1;
+          continue;
+        }
+        top.depth -= 1;
+        i += 1;
+        continue;
+      }
+    }
+
     i += 1;
+  }
+
+  // A template that never closed leaves its context on the stack. Reported as
+  // unanalysable rather than silently accepted, which is the half of #530 that
+  // outlives the fix: what cannot be analysed is REPORTED, never omitted.
+  for (const ctx of stack) {
+    if (ctx.kind === 'template') {
+      blank([masked], ctx.textStart, length);
+      unterminated ??= { kind: 'string literal', index: ctx.openedAt };
+    }
   }
 
   return { commentless: commentless.join(''), masked: masked.join(''), unterminated };
@@ -642,7 +772,7 @@ export function reExportRanges(
   // as it is to the compiler. Strings survive that view, which is why the
   // module specifier is still matchable here.
   while ((m = re.exec(commentless)) !== null) {
-    if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
+    if (/\s/.test(masked[m.index] as string)) continue; // in a string, not code (#543)
     ranges.push([m.index, m.index + m[0].length]);
   }
 
@@ -702,7 +832,7 @@ function localExportRanges(
   let m: RegExpExecArray | null;
 
   while ((m = re.exec(commentless)) !== null) {
-    if (/\s/.test(masked[m.index] as string)) continue; // the keyword was masked
+    if (/\s/.test(masked[m.index] as string)) continue; // in a string, not code (#543)
     if (reExportStarts.has(m.index)) continue; // owned by `reExportRanges`
     ranges.push([m.index, m.index + m[0].length]);
   }

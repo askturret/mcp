@@ -696,6 +696,15 @@ jobs:
           node packages/cli/dist/commands/migrate/generate-docs.js /tmp/migrations.md
           diff -u docs/migrations/README.md /tmp/migrations.md
 
+      # Self-tested first, like every guard above (#531). This one had NO
+      # self-test at all until now: the #431/#443 partition assigned it to #443
+      # "including writing their self-tests", #443 closed via PR #507, and that
+      # PR never touched this script — an omission rather than a descope. It was
+      # the entire remaining unreachable set for the mutation audit, so this
+      # wiring is what clears the #431 precondition.
+      - name: Self-test the test-execution guard
+        run: node .github/scripts/check-test-execution.test.mjs
+
       - name: Every package actually executes its tests
         run: node .github/scripts/check-test-execution.mjs
 

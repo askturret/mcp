@@ -259,7 +259,35 @@ export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
     }
   }
 
+  // DUPLICATES ARE REFUSED, NOT DEDUPLICATED (#541), and the choice is
+  // deliberate rather than incidental.
+  //
+  // The ledger already refuses the mirror case: ONE entry matching SEVERAL
+  // sites is AMBIGUOUS, because it "would silently cover ones nobody examined".
+  // SEVERAL entries matching ONE site was accepted without comment — the same
+  // reasoning was simply never carried across.
+  //
+  // Refusing rather than quietly collapsing them, because two entries for one
+  // site can carry CONTRADICTORY evidence: different `unblockedBy`, different
+  // `maskingExcluded`. Deduplication would pick one arbitrarily and hide the
+  // disagreement, and a disagreement about which claim was actually checked is
+  // exactly the thing this ledger exists to surface.
+  const entryKey = (e) => `${e.script}\u0000${e.kind}\u0000${e.source}`;
+  const seenAt = new Map();
+  for (const [i, e] of exempt.entries()) {
+    if (typeof e.script !== 'string' || typeof e.kind !== 'string' || typeof e.source !== 'string') continue;
+    const k = entryKey(e);
+    if (!seenAt.has(k)) seenAt.set(k, []);
+    seenAt.get(k).push(i + 1);
+  }
+
   let honoured = 0;
+  // Counted as DISTINCT SITES, not as accepted entries. Belt and braces with
+  // the refusal above: the printed figure has to be right even if that refusal
+  // is ever bypassed, because #533 writes 48 entries against it and condition 6
+  // exists so growth is visible without going to look. A count that inflates is
+  // a growth signal that under-reports, which is worse than no signal.
+  const honouredSites = new Set();
   for (const [i, entry] of exempt.entries()) {
     const where = `exemption ${i + 1} (${entry.script ?? '?'} / ${entry.kind ?? '?'})`;
 
@@ -274,6 +302,19 @@ export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
     }
     if (!SITE_KINDS.includes(entry.kind)) {
       errors.push(`${where}: kind is not one of ${SITE_KINDS.join(', ')}.`);
+      continue;
+    }
+
+    const twins = seenAt.get(entryKey(entry)) ?? [];
+    if (twins.length > 1) {
+      errors.push(
+        `${where}: DUPLICATE — exemptions ${twins.join(', ')} all name the same site. One site takes ` +
+          `one entry: two can carry different \`unblockedBy\` or \`maskingExcluded\`, and there is no ` +
+          `way to tell which claim was the one actually checked. Refused rather than collapsed, for ` +
+          `the same reason AMBIGUOUS refuses one entry spanning several sites — and because a ` +
+          `duplicate silently inflates the honoured count, making the undispositioned figure ` +
+          `under-report by one per copy. Keep the entry whose evidence is true and delete the rest.`,
+      );
       continue;
     }
 
@@ -339,16 +380,21 @@ export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
     }
 
     honoured += 1;
+    honouredSites.add(`${entry.script}\u0000${site.line}\u0000${entry.kind}`);
   }
 
   return {
     errors,
     counts: {
       entries: exempt.length,
-      honoured,
+      // DISTINCT SITES (#541). `honoured` counted accepted ENTRIES, so two
+      // copies of one entry counted twice and drove `undispositioned` to -1.
+      // Sites cannot double-count, and because an honoured site is unwitnessed
+      // by construction the subtraction below can no longer go negative.
+      honoured: honouredSites.size,
       // Unwitnessed sites carrying no entry. The growth signal #533 works
       // against, and the reason the count is printed rather than fetched.
-      undispositioned: report.unwitnessed.length - honoured,
+      undispositioned: report.unwitnessed.length - honouredSites.size,
     },
   };
 }

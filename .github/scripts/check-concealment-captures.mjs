@@ -42,13 +42,17 @@
  * Both were measured against the real corpus rather than reasoned about, and
  * both would have FAILED CORRECT ROWS as filed:
  *
- *   - "exactly one line per file" is enforced only on files this PR adds.
- *     THREE existing capture files hold several rows each (#328 holds three),
- *     and they are correct. Applied corpus-wide the check would fail them.
- *   - The full required-field set is enforced only on rows this PR adds. Older
- *     rows predate the schema and use different field names; absence of
- *     `factor_1` means "predates the field", which is a different fact from
- *     `unverifiable`, and conflating them corrupts the measurement.
+ *   - "exactly one line per file" is enforced only on files this change ADDS
+ *     OR MODIFIES. THREE existing capture files hold several rows each (#328
+ *     holds three), and they are correct. Applied corpus-wide the check would
+ *     fail them — and note the narrowing is per-FILE, so modifying one of those
+ *     three DOES report its pre-existing rows (#552). Narrower than corpus-wide
+ *     is not the same as "only what you added".
+ *   - The full required-field set is enforced only on rows in a file this change
+ *     ADDS OR MODIFIES. Older rows predate the schema and use different field
+ *     names; absence of `factor_1` means "predates the field", which is a
+ *     different fact from `unverifiable`, and conflating them corrupts the
+ *     measurement.
  *
  * Corpus-wide, every check is scoped to rows CARRYING the field it is about.
  *
@@ -133,10 +137,11 @@
  *
  * ## The empty pass, and the ONE zero worth reporting (#518)
  *
- * The diff-scoped conditions apply to files a change ADDS, which means COMMITTED
- * files. Run before committing, this guard reports `0 corpus file(s) added or
- * modified` and prints `OK` having examined none of the rows the author came to
- * ask about. QA reproduced it with the exact violation refused on #513 hours
+ * The diff-scoped conditions apply to files a change ADDS OR MODIFIES, which
+ * means COMMITTED files. Run before committing, this guard reports `0 corpus
+ * file(s) added or modified` and prints `OK` having examined none of the rows
+ * the author came to ask about. QA reproduced it with the exact violation
+ * refused on #513 hours
  * earlier and the run stayed green — worse, `validated N row(s)` prints FIRST,
  * so the strongest-sounding line is the one asserting work that did not happen.
  *
@@ -268,7 +273,8 @@ export const REVISION_CANNOT_CHECK_KEY = 'templates_revision NOT VERIFIED:';
 export const UNCOMMITTED_ROWS_CANNOT_CHECK_KEY = 'UNCOMMITTED capture rows:';
 
 /**
- * Required on rows a change ADDS, but NOT corpus-wide (#462).
+ * Required on rows in a capture file a change ADDS OR MODIFIES, but NOT
+ * corpus-wide (#462).
  *
  * `templates_revision` records which revision of the allowlist a row was
  * classified against — the coordinate that makes a past classification
@@ -452,7 +458,16 @@ function nonAscii(s) {
 }
 
 /** Files under the corpus directory that this diff ADDS or MODIFIES. */
-function changedCorpusFiles(rootDir, base) {
+/**
+ * Corpus files this change ADDED **or MODIFIED** — `--diff-filter=AM`.
+ *
+ * EXPORTED so the scope sentences that quote this predicate can be witnessed
+ * against it directly (#552). They previously said "rows a change ADDS", which
+ * is half of what this returns, and nothing could contradict them because the
+ * predicate was reachable only through the wired entry point. A sentence about
+ * a predicate no test can reach is a sentence nothing can falsify.
+ */
+export function changedCorpusFiles(rootDir, base) {
   const r = spawnSync('git', ['diff', '--name-only', '--diff-filter=AM', `${base}...HEAD`, '--', CORPUS_REL], {
     cwd: rootDir,
     encoding: 'utf-8',
@@ -627,14 +642,25 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     const lines = text.split('\n');
     const nonBlank = lines.filter((l) => l.trim() !== '');
 
-    const isAdded = added !== null && added.has(file.rel);
+    const inChangedFile = added !== null && added.has(file.rel);
 
-    // CONDITION 1a — one row per file, on files this PR adds. Three existing
-    // files hold several rows and are correct, so this is not retroactive.
-    if (isAdded && !file.frozen && nonBlank.length !== 1) {
+    // CONDITION 1a — one row per file, on files this change ADDS OR MODIFIES.
+    //
+    // It said "on files this PR adds ... so this is not retroactive". It IS
+    // retroactive: the predicate is per-FILE and covers modified files too, so
+    // MODIFYING one of the three existing multi-row files reports its
+    // pre-existing rows — the ones that same sentence called correct (#552).
+    // Same false by-construction claim this file corrects two conditions down;
+    // the message below now carries the distinction instead of denying it.
+    if (inChangedFile && !file.frozen && nonBlank.length !== 1) {
       errors.push(
-        `${file.rel}: a capture file added by this change must hold EXACTLY ONE row, found ${nonBlank.length}. ` +
-          `One file per entry is what keeps two agents capturing at the same moment from colliding.`,
+        `${file.rel}: a capture file this change ADDS OR MODIFIES must hold EXACTLY ONE row, found ` +
+          `${nonBlank.length}. One file per entry is what keeps two agents capturing at the same moment from ` +
+          `colliding. THE SCOPE IS PER-FILE, NOT PER-ROW: if you APPENDED to this file, write a separate file ` +
+          `for your entry instead — appending is what produced the second row and is the collision this rule ` +
+          `exists to prevent. IF YOU DID NOT ADD ANY ROW HERE, the rows are pre-existing and are NOT a defect: ` +
+          `three capture files predate one-file-per-entry and hold several rows correctly. Do not split or ` +
+          `delete them to satisfy this — restore the file you modified.`,
       );
     }
 
@@ -652,7 +678,7 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
         continue;
       }
       if (isSupersedes(row)) supersededPaths.add(row.supersedes);
-      rows.push({ file, row, index: i + 1, isAdded });
+      rows.push({ file, row, index: i + 1, inChangedFile });
     }
   }
 
@@ -660,7 +686,7 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
   // 40 rows carry the field today across only three distinct values.
   const blobHistory = allowlistBlobHistory(rootDir);
 
-  for (const { file, row, index, isAdded } of rows) {
+  for (const { file, row, index, inChangedFile } of rows) {
     const where = `${file.rel} row ${index}`;
 
     // A supersedes row is an observation ABOUT a capture. It deliberately
@@ -683,7 +709,7 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     // current schema. On rows this PR ADDS it applies in full: a new capture
     // that omits both `factor_1` and `channel` would otherwise escape entirely.
     const inSchema = 'factor_1' in row;
-    if (inSchema || isAdded) {
+    if (inSchema || inChangedFile) {
       for (const field of REQUIRED_FIELDS) {
         if (!(field in row)) {
           errors.push(
@@ -691,12 +717,13 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
               `\`unknown\` is a value a query can count, a missing field is a row a query silently does not see. ` +
               // THE SCOPE, stated because the check HAS one and the message did
               // not say so (#524). Read off the predicate above — `inSchema ||
-              // isAdded` — rather than inferred from the prose around it, which
+              // inChangedFile` — rather than inferred from the prose around it, which
               // is how #506 became an inversion.
               `SCOPE: this applies to any row CARRYING \`factor_1\` — the marker of the current schema — and ` +
-              `to every row a change ADDS, whether or not it carries one. A pre-existing row without ` +
-              `\`factor_1\` predates the schema and is exempt, so an older row missing this field is not a ` +
-              `defect and is not reported.`,
+              `to every row in a capture file this change ADDS OR MODIFIES, whether or not it carries one. ` +
+              `The second clause is per-FILE, not per-row (#552). A pre-existing row without \`factor_1\` ` +
+              `predates the schema and is exempt, so an older row missing this field is not a defect and is ` +
+              `not reported — unless you modified the file it sits in, which pulls it into scope.`,
           );
         }
       }
@@ -710,7 +737,7 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     // fine by the check — divergence with NO author error required. This is the
     // half of the repair that lives in the validator; the README's own wording
     // is amended alongside it.
-    if (isAdded) {
+    if (inChangedFile) {
       for (const field of REQUIRED_ON_ADDED_FIELDS) {
         if (!(field in row)) {
           errors.push(
@@ -719,7 +746,8 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
               `(#410: a stale checkout yields a confidently wrong Factor 2, and nothing else in the row ` +
               `reveals it). Record it with \`git hash-object ${TEMPLATES_PATH}\` — the BLOB hash of the ` +
               `allowlist you actually read, not the commit that last changed it. THE FIELD is required only ` +
-              `on rows a change ADDS; corpus-wide its absence means "predates the field", so history is untouched.`,
+              `on rows in a capture file this change ADDS OR MODIFIES — per-FILE, not per-row (#552); ` +
+              `corpus-wide its absence means "predates the field", so history is untouched.`,
           );
         }
       }
@@ -762,7 +790,7 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
           `are hex object ids and both may name the same revision, but only the blob hash is ` +
           `content-addressed, which is the field's entire purpose. Use \`git hash-object ${TEMPLATES_PATH}\`.`;
 
-        if (isAdded) {
+        if (inChangedFile) {
           errors.push(detail);
         } else {
           // A PRE-EXISTING ROW CANNOT BE REPAIRED. The frozen log is never
@@ -863,14 +891,28 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     // THE INVERSE CHECK — diff-scoped, and skipping superseded rows.
     //
     // A row claiming NO template while one matches is a defect only if that
-    // template existed when the row was written. On a row this PR adds, it did,
-    // by construction.
-    if (isAdded && claimed === null && verbatim !== null && !supersededPaths.has(file.rel.replace(/^\.operum\/audit\//, ''))) {
+    // template existed when the row was written. On a row this change ADDS that
+    // holds by construction — but the predicate is per-FILE and covers MODIFIED
+    // files too, where it does not (#552).
+    //
+    // MEASURED, because this one is the opposite of mild: pass the 75 files
+    // holding a null-template row as changed and this fires 42 times — the same
+    // 42 the header names as correctly anomalous against the allowlist of their
+    // moment. The remedy it would invite is re-classifying history, which is the
+    // corpus corruption that section exists to forbid. Narrowing the predicate
+    // to added-only is the real repair and needs the A and M sets kept apart,
+    // which is a mechanism change; until then the message carries the warning.
+    if (inChangedFile && claimed === null && verbatim !== null && !supersededPaths.has(file.rel.replace(/^\.operum\/audit\//, ''))) {
       const matching = [...templates.values()].filter((t) => corpusMatcher(t).exec(verbatim) !== null).map((t) => t.id);
       if (matching.length > 0) {
         errors.push(
           `${where}: claims no template, but ${matching.join(' / ')} matches its \`verbatim\`. ` +
-            `A row added now is classified against the current allowlist, so "no template covers this" is checkable.`,
+            `A row this change ADDS is classified against the current allowlist, so "no template covers this" ` +
+            `is checkable. THE SCOPE IS PER-FILE, NOT PER-ROW (#552): if you MODIFIED a capture file rather ` +
+            `than adding one, a PRE-EXISTING row in it is being judged against an allowlist that did not exist ` +
+            `when it was written, and it may well have been correctly anomalous at the time. DO NOT RE-CLASSIFY ` +
+            `IT to clear this — 42 rows in the corpus predate T1C and re-labelling them corrupts the very ` +
+            `measurement the corpus carries. Restore the file you modified instead.`,
         );
       }
     }
@@ -889,12 +931,19 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     // So this condition is keyed on the message's SHAPE rather than on any
     // claimed template, which is the only key the redaction cannot erase.
     //
-    // Diff-scoped for the same reason as the inverse check: the 31 redacted
-    // rows already in the corpus predate this, they are not retroactively
-    // fixable (the original text is gone), and the frozen log and existing
-    // per-entry files are NEVER rewritten or backfilled. Scoping by `isAdded`
-    // makes that hold by construction rather than by care.
-    if (isAdded && verbatim !== null) {
+    // Diff-scoped for the same reason as the inverse check: the redacted rows
+    // already in the corpus predate this and are not retroactively fixable —
+    // the original text is gone.
+    //
+    // THIS COMMENT USED TO CLAIM the exclusion holds "BY CONSTRUCTION rather
+    // than by care", on the premise that the frozen log and existing per-entry
+    // files are NEVER rewritten or backfilled. The premise is doctrine, not
+    // mechanism, and the predicate does not enforce it: `changedCorpusFiles`
+    // filters `AM`, so MODIFYING an existing capture brings its pre-existing
+    // rows into scope. By care, then — the doctrine is what keeps existing
+    // files untouched, and the append-only guard refuses any deletion, but
+    // neither is this predicate (#552).
+    if (inChangedFile && verbatim !== null) {
       for (const template of templates.values()) {
         const { names, re } = slotShapeMatcher(template);
         const shaped = re.exec(verbatim);
@@ -930,12 +979,17 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
               `bracketed note naming the elision, e.g. "[ELIDED: <why>]" — so the gap describes itself instead of ` +
               `being silent. ` +
               // THE SCOPE, stated because the check HAS one and the message did
-              // not say so (#524). Read off the predicate `isAdded && verbatim
+              // not say so (#524). Read off the predicate `inChangedFile && verbatim
               // !== null`, not from the prose around it.
-              `SCOPE: this applies ONLY to rows a change ADDS. The 31 redacted rows already in the corpus are not ` +
-              `reported and are not repairable — their original text is gone, and the frozen log and existing ` +
-              `per-entry files are never rewritten. So this is about the row you are adding now, not a backlog ` +
-              `you have inherited.`,
+              `SCOPE: this applies to rows in a capture file this change ADDS OR MODIFIES. The predicate is ` +
+              `per-FILE, not per-row (#552), so MODIFYING an existing capture pulls its EXISTING rows into ` +
+              `scope as well. Normally this is about the row you are adding now, not a backlog you have ` +
+              `inherited: rows in files you did not touch are never reported. ` +
+              `IF YOU REACHED THIS ON A ROW YOU DID NOT WRITE, that is what has happened — and the repair is ` +
+              `NOT to reconstruct the missing text. The original is gone, and a plausible-looking substitute ` +
+              `is the exact thing this check exists to refuse. Restore the file you modified instead: ` +
+              `existing captures are never rewritten or backfilled, so touching one is off-doctrine before it ` +
+              `is a schema problem.`,
           );
         }
         // One shape-match is enough: T1/T1C/T1B share the PATH slot and its

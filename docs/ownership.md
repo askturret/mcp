@@ -123,8 +123,8 @@ looks like coverage that is not there.
 
 ## What CODEOWNERS does and does not do
 
-It **routes review requests** and, when branch protection requires owner
-approval, **blocks merge** without one.
+It **routes review requests**. Whether it also **blocks a merge** is a separate
+question with a specific answer today, and the answer is no — see below.
 
 It does **not**:
 
@@ -141,6 +141,40 @@ own, so adding a package forces an ownership decision rather than letting it
 fall silently to the catch-all.
 
 It cannot check the permissions half. Nothing in the repository can.
+
+## What this file does and does not gate today (#330)
+
+The repository is public and a branch ruleset requires 1 code-owner approval, so
+these rules are honoured by GitHub — where previously the plan tier meant they
+were not. They nonetheless gate **no PR authored in this repository today**, for
+two independent reasons, either alone sufficient:
+
+1. **Self-authorship.** GitHub never requests review from a PR's own author, and
+   every PR here is authored by the same account that owns every path.
+2. **Bypass.** That account is an `always` bypass actor on both rulesets, as are
+   organisation admins and the admin role. The rule does not apply to it even
+   when an approver exists.
+
+So CODEOWNERS is **structure for future maintainers, not a control on today's
+changes**. Adding a second owner fixes (1); removing the bypass entry fixes (2);
+**both are required** before any claim of enforced review is true.
+
+### Why this section names conditions instead of a status
+
+The sentence above used to read *"when branch protection requires owner
+approval, blocks merge without one"*. That was safely hypothetical when written
+and became misleading the morning the ruleset was added: **the antecedent turned
+true and the consequent was false.** Nobody edited the file; the world moved
+underneath it.
+
+That is the failure this section exists to avoid, so it states conditions rather
+than a status. *Dormant* and *live* are each one platform setting away from being
+false, and neither can be re-checked by a reader. Each clause above can: it names
+what is true, and what specifically would change it.
+
+The conditions are also **independently verifiable** — `GET /repos/askturret/mcp`
+for visibility, and `GET /repos/askturret/mcp/rulesets/{id}` for the approval
+requirement and the bypass list. Nothing here asks to be taken on trust.
 
 ---
 *Operum Engineer · [operum.ai](https://operum.ai)*

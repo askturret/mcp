@@ -212,6 +212,49 @@ check_('and it passes the guard', check(repoRoot).code, 0);
 
 // ---------------------------------------------------------------------------
 
+
+// ---------------------------------------------------------------------------
+// The owner-set cardinality note (#330)
+//
+// A NOTE, never a failure: nothing in the repository can remedy a single-owner
+// set, so failing would be a permanent red nobody can clear — which is how an
+// alarm becomes something people route around.
+//
+// The property that makes it worth having is that it is SELF-CLEARING, and that
+// is asserted here rather than promised in a comment. #330 exists because a
+// status word went stale without anyone touching the file; a sentence that
+// recomputes itself every run cannot.
+// ---------------------------------------------------------------------------
+
+console.log('\n# the sole-owner note (#330)\n');
+
+{
+  const sole = check(scratch('*  @solo\npackages/core/  @solo\n'));
+  check_('sole owner: the note is emitted', /name a single owner \(@solo\)/.test(sole.message), true);
+  check_('sole owner: ...and it is a NOTE, not a failure', sole.code, 0);
+  check_(
+    'sole owner: ...and it states the consequence rather than a status',
+    /routes to\nno reviewer/.test(sole.message),
+    true,
+  );
+  check_(
+    'sole owner: ...and it does not claim to cover the bypass half',
+    /only self-authorship/.test(sole.message),
+    true,
+  );
+
+  // THE SELF-CLEARING PROPERTY. This is the whole argument for the check being
+  // worth having, so it is witnessed rather than asserted in prose: add a
+  // second distinct owner and the note goes away with nobody deleting it.
+  const two = check(scratch('*  @solo\npackages/core/  @second\n'));
+  check_('two owners: the note clears itself', /name a single owner/.test(two.message), false);
+  check_('two owners: ...and the guard still passes', two.code, 0);
+
+  // A rule naming two owners on one line is also not a sole-owner set.
+  const shared = check(scratch('*  @solo @second\npackages/core/  @solo\n'));
+  check_('a shared rule counts as two owners', /name a single owner/.test(shared.message), false);
+}
+
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
 
 console.log(`\n${String(passed)} passed, ${String(failed)} failed\n`);

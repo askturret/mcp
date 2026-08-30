@@ -72,6 +72,10 @@ import {
   renderInventory,
   parseInventoryTotals,
   inventoryDelta,
+  evaluateExemptions,
+  siteSource,
+  MUTATION_EXEMPT,
+  SITE_KINDS,
 } from './check-mutation-audit.mjs';
 
 let passed = 0;
@@ -958,6 +962,203 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
   check('the 73 -> 74 flip is recorded retroactively', /witnessed 73 -> 74/.test(out), true);
   check('...with the site QA attributed it to', /interpretProbe/.test(out), true);
   check('...and the section names WHAT it compared against', /the inventory committed in this repository/.test(out), true);
+}
+
+
+/* -------------------------------------------------------------------------
+ * The exemption ledger (#532, conditions 3-6)
+ *
+ * Pure calls over fixture reports — microseconds, which matters here because
+ * every second in this file is charged about ten times over a full audit.
+ * There are no child processes below.
+ *
+ * The live ledger is EMPTY by design (#533 writes the entries), so every
+ * direction has to be exercised against fixtures or the machinery ships
+ * unmeasured — which is the failure this whole issue is about, one level up.
+ * ---------------------------------------------------------------------- */
+{
+  const entry = (over = {}) => ({
+    script: 'check-thing.mjs',
+    kind: 'errors-push',
+    source: "errors.push('boom');",
+    reason: 'the self-test cannot reach this branch',
+    unblockedBy: 'a fixture that supplies a malformed manifest',
+    maskingExcluded: 'ran the guard with the branch forced; no other route reports it',
+    ...over,
+  });
+
+  const reportWith = (results) => ({
+    guards: [{ name: 'check-thing.mjs', results }],
+    unwitnessed: results
+      .filter((r) => r.verdict === 'unwitnessed')
+      .map((r) => ({ name: 'check-thing.mjs', line: r.line, kind: r.kind })),
+    totals: {},
+  });
+
+  const site = (over = {}) => ({
+    kind: 'errors-push',
+    line: 12,
+    source: "errors.push('boom');",
+    verdict: 'unwitnessed',
+    ...over,
+  });
+
+  // --- CONTROL: the shipped ledger is empty and says so cleanly -------------
+  {
+    const r = evaluateExemptions(reportWith([site()]), MUTATION_EXEMPT);
+    check('ledger: the shipped ledger is empty', MUTATION_EXEMPT.length, 0);
+    check('ledger: an empty ledger raises nothing', r.errors.length, 0);
+    check('ledger: ...and every unwitnessed site reads as undispositioned', r.counts.undispositioned, 1);
+  }
+
+  // --- CONTROL: an honest entry is accepted --------------------------------
+  {
+    const r = evaluateExemptions(reportWith([site()]), [entry()]);
+    check('ledger: an entry over an unwitnessed site is honoured', r.errors.join('|'), '');
+    check('ledger: ...and counted', r.counts.honoured, 1);
+    check('ledger: ...and removed from the undispositioned figure', r.counts.undispositioned, 0);
+  }
+
+  // --- THE DECAY DIRECTION, which is the one that gets skipped -------------
+  {
+    const r = evaluateExemptions(reportWith([site({ verdict: 'witnessed' })]), [entry()]);
+    check('ledger: an exempt site that IS witnessed fails', r.errors.length, 1);
+    // Counting errors is NOT enough here, and mutation proved it: with the decay
+    // branch removed the fall-through still produces exactly one error, so the
+    // count assertion stayed green while the direction was gone.
+    check(
+      'ledger: ...and it fails AS the decay case, not as some other error',
+      /THE EXEMPTION IS FALSE/.test(r.errors.join('|')),
+      true,
+    );
+    check(
+      'ledger: ...and says the exemption is false, not that the site is fine',
+      /THE EXEMPTION IS FALSE/.test(r.errors[0] ?? ''),
+      true,
+    );
+    check('ledger: ...and it is not counted as honoured', r.counts.honoured, 0);
+  }
+
+  // --- STALE: the code it exempted has changed (condition 5) ---------------
+  {
+    const r = evaluateExemptions(reportWith([site({ source: "errors.push('different');" })]), [entry()]);
+    check('ledger: an entry whose source no longer exists is STALE', /STALE/.test(r.errors[0] ?? ''), true);
+    check('ledger: ...and removal is by refusal, not by memory', /condition 5/.test(r.errors[0] ?? ''), true);
+  }
+
+  // --- STALE: the script is not measured at all ----------------------------
+  {
+    const r = evaluateExemptions(reportWith([site()]), [entry({ script: 'check-gone.mjs' })]);
+    check('ledger: an entry for an unmeasured script is STALE', /STALE/.test(r.errors[0] ?? ''), true);
+    check('ledger: ...and names the script rather than the site', /check-gone\.mjs/.test(r.errors[0] ?? ''), true);
+  }
+
+  // --- AMBIGUOUS: one entry cannot exempt several sites --------------------
+  {
+    const r = evaluateExemptions(reportWith([site({ line: 12 }), site({ line: 40 })]), [entry()]);
+    check('ledger: an entry matching two sites is refused, not guessed', /AMBIGUOUS/.test(r.errors[0] ?? ''), true);
+    check('ledger: ...and names both lines so it can be disambiguated', /12, 40/.test(r.errors[0] ?? ''), true);
+  }
+
+  // --- CONDITION 4, and the method requirement from the ruling -------------
+  for (const field of ['reason', 'unblockedBy', 'maskingExcluded']) {
+    const bad = entry();
+    bad[field] = '   ';
+    const r = evaluateExemptions(reportWith([site()]), [bad]);
+    check('ledger: an entry with an empty ' + field + ' is refused', r.errors.length, 1);
+    check('ledger: ...and the message names ' + field, new RegExp(field).test(r.errors[0] ?? ''), true);
+  }
+
+  // --- A verdict that is neither witnessed nor unwitnessed -----------------
+  {
+    const r = evaluateExemptions(reportWith([site({ verdict: 'unparseable' })]), [entry()]);
+    check('ledger: an unconfirmable verdict is not read as agreement', /CANNOT CONFIRM/.test(r.errors[0] ?? ''), true);
+  }
+
+  // --- A kind outside the vocabulary ---------------------------------------
+  {
+    const r = evaluateExemptions(reportWith([site()]), [entry({ kind: 'errors-pushh' })]);
+    check('ledger: a mistyped kind is refused', new RegExp(SITE_KINDS[0]).test(r.errors[0] ?? ''), true);
+  }
+
+  // --- WHY IDENTITY IS TEXT: the key survives a line shift ------------------
+  {
+    const src = "a();\nerrors.push('boom');\n";
+    const shifted = '// an unrelated line added above\n' + src;
+    check(
+      'ledger: the identity key is unchanged when unrelated lines move',
+      siteSource(src, src.indexOf('errors.push')),
+      siteSource(shifted, shifted.indexOf('errors.push')),
+    );
+    // ...and it DOES change when that site's own code changes, which is when
+    // the exemption should stop applying.
+    const edited = "a();\nerrors.push('different');\n";
+    check(
+      'ledger: ...and it changes when that site own code changes',
+      siteSource(edited, edited.indexOf('errors.push')) === siteSource(src, src.indexOf('errors.push')),
+      false,
+    );
+  }
+
+
+  // --- THE REAL ENUMERATOR MUST PRODUCE THE KEY THE LEDGER READS -----------
+  //
+  // The shipped ledger is empty, so the loop above never executes against a
+  // real report — every direction is exercised on fixtures I built, and a
+  // fixture proves the code agrees with itself. This is the one assertion that
+  // crosses the seam: the identity key is attached by `enumerateSites` on the
+  // real path, so an entry written in #533 will find its site.
+  {
+    const src = [
+      "if (bad) errors.push('one');",
+      "if (worse) throw new Error('two');",
+      'if (x) process.exit(3);',
+    ].join('\n');
+    const sites = enumerateSites(src);
+    check('ledger: the enumerator finds the fixture sites at all', sites.length > 0, true);
+    check(
+      'ledger: every enumerated site carries a non-empty identity key',
+      sites.every((s) => typeof s.source === 'string' && s.source.length > 0),
+      true,
+    );
+    check(
+      'ledger: ...and the key is the site own source line',
+      sites.find((s) => s.kind === 'throw')?.source,
+      "if (worse) throw new Error('two');",
+    );
+  }
+
+  // --- CONDITION 6: the count is printed every run --------------------------
+  {
+    const rendered = renderInventory(
+      {
+        guards: [],
+        unreachable: [],
+        unwitnessed: [],
+        noFailureWitnesses: [],
+        errors: [],
+        exemptions: { entries: 0, honoured: 0, undispositioned: 3 },
+        totals: {
+          guards: 1,
+          sites: 3,
+          witnessed: 0,
+          unwitnessed: 3,
+          unreachable: 0,
+          unreachableSites: 0,
+          cannotCheck: 0,
+          cannotCheckSites: 0,
+          noSites: 0,
+        },
+      },
+      null,
+    );
+    check('ledger: the inventory prints the exemption count', /exemptions on the ledger/.test(rendered), true);
+    check(
+      'ledger: ...and how many unwitnessed sites carry no entry',
+      /3 unwitnessed site\(s\) carry no entry/.test(rendered),
+      true,
+    );
+  }
 }
 
 console.log('');

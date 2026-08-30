@@ -158,6 +158,201 @@ export function maskCode(src) {
 /** 1-indexed line of a byte offset. */
 const lineOf = (src, index) => src.slice(0, index).split('\n').length;
 
+/**
+ * The site's own source line, whitespace-normalised (#532).
+ *
+ * THE LEDGER'S IDENTITY KEY, and the reason it is text rather than a number.
+ * An exemption names ONE site, and `script + kind` names dozens —
+ * `check-concealment-captures.mjs` alone holds 15 `errors-push` sites. A line
+ * NUMBER identifies one, but it drifts on any edit above it, and the danger is
+ * not that it goes stale: it is that it silently re-points at a DIFFERENT site
+ * of the same kind, so the exemption comes to cover code nobody examined.
+ *
+ * The site's own text goes stale exactly when THAT code changes — which is when
+ * the exemption should be re-examined — and survives unrelated edits elsewhere.
+ * It is also legible in review, which a hash would not be, and 46 dispositions
+ * (#533) are written and read through this field.
+ */
+export const siteSource = (src, index) => {
+  const start = src.lastIndexOf('\n', index - 1) + 1;
+  const end = src.indexOf('\n', index);
+  return src.slice(start, end === -1 ? src.length : end).trim().replace(/\s+/g, ' ');
+};
+
+/* -------------------------------------------------------------------------
+ * The exemption ledger (#532, conditions 3-6)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * Sites this audit cannot witness, each with what would change that.
+ *
+ * ## EMPTY BY DESIGN, and that is a statement rather than a gap
+ *
+ * Dispositioning the 46 unwitnessed sites is #533, and it is deliberately not
+ * done here: the method requirement is that no exemption may be written until
+ * MASKING is excluded for that site, which is per-site work against the #349
+ * prior. Bulk-seeding this from the audit's own unwitnessed list would produce
+ * 46 entries that assert exactly what the audit already said, and would launder
+ * a measurement into a set of claims nobody checked.
+ *
+ * So the machinery ships with nothing in it, the count prints every run
+ * (condition 6), and the entries arrive one at a time with their evidence.
+ *
+ * ## Both directions, and the second is the one that gets skipped
+ *
+ *   covered site   neutralise it -> self-test goes RED
+ *                  if not: unwitnessed. REPORTED here, not failed — the
+ *                  fail-closed flip is #434 and is NOT discharged by this.
+ *
+ *   exempt site    neutralise it -> self-test stays GREEN
+ *                  if not: THE EXEMPTION IS FALSE, and this fails.
+ *
+ * A one-directional ledger cannot notice decay: someone adds a fixture, the
+ * site becomes witnessed, the exemption silently becomes a lie, and nothing
+ * says so. Stage 1 hit that exact shape in `WIRING_EXEMPT`. The decay direction
+ * is the reason this exists at all.
+ *
+ * ## What an entry must carry
+ *
+ *   script            basename of the guard
+ *   kind              one of SITE_KINDS
+ *   source            the site's own source line, whitespace-normalised.
+ *                     See `siteSource` for why identity is text, not a number.
+ *   reason            why the self-test cannot witness it
+ *   unblockedBy       what would have to CHANGE to witness it (condition 4).
+ *                     An exemption that cannot name this is almost always
+ *                     "nobody tried", which is why the field is required rather
+ *                     than encouraged.
+ *   maskingExcluded   how masking was ruled out for THIS site. The method
+ *                     requirement from the #434 ruling: a hidden failure route
+ *                     can make a genuinely witnessed site RECORD as unwitnessed
+ *                     (QA demonstrated it with `process.exitCode = 1`), and an
+ *                     exemption written over one of those is false the day it
+ *                     lands — born wrong rather than gone stale, so the decay
+ *                     check above would never catch it.
+ */
+export const MUTATION_EXEMPT = Object.freeze([]);
+
+/** Fields every entry must carry, non-empty. */
+const EXEMPT_FIELDS = Object.freeze(['script', 'kind', 'source', 'reason', 'unblockedBy', 'maskingExcluded']);
+
+/**
+ * Evaluate the ledger against what the audit actually measured.
+ *
+ * Returns `{ errors, counts }`. Every error here is an INTEGRITY failure of the
+ * ledger — a claim that does not survive contact with the measurement — which
+ * is why they join `report.errors` and fail the run, while unwitnessed sites
+ * themselves stay reported-only.
+ */
+export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
+  const errors = [];
+  const measuredScripts = new Set(report.guards.map((g) => g.name));
+
+  // Index every measured site by its identity key, keeping the verdicts. A key
+  // may address more than one site, which is refused rather than resolved.
+  const byKey = new Map();
+  for (const g of report.guards) {
+    for (const r of g.results) {
+      const key = `${g.name}\u0000${r.kind}\u0000${r.source ?? ''}`;
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(r);
+    }
+  }
+
+  let honoured = 0;
+  for (const [i, entry] of exempt.entries()) {
+    const where = `exemption ${i + 1} (${entry.script ?? '?'} / ${entry.kind ?? '?'})`;
+
+    const missing = EXEMPT_FIELDS.filter((f) => typeof entry[f] !== 'string' || entry[f].trim() === '');
+    if (missing.length > 0) {
+      errors.push(
+        `${where}: missing or empty ${missing.join(', ')}. An exemption that cannot say what would ` +
+          `unblock it, or how masking was excluded for it, is a claim with no evidence attached — ` +
+          `which is the shape this ledger exists to refuse.`,
+      );
+      continue;
+    }
+    if (!SITE_KINDS.includes(entry.kind)) {
+      errors.push(`${where}: kind is not one of ${SITE_KINDS.join(', ')}.`);
+      continue;
+    }
+
+    // A script that was not measured cannot support any claim about its sites.
+    // Distinguished from "site gone" because the remedies differ.
+    if (!measuredScripts.has(entry.script)) {
+      errors.push(
+        `${where}: STALE — ${entry.script} was not measured this run, so nothing here confirms or ` +
+          `denies the exemption. Remove the entry, or find out why the script is no longer audited.`,
+      );
+      continue;
+    }
+
+    const matches = byKey.get(`${entry.script}\u0000${entry.kind}\u0000${entry.source}`) ?? [];
+
+    if (matches.length === 0) {
+      errors.push(
+        `${where}: STALE — no ${entry.kind} site in ${entry.script} now reads \`${entry.source}\`. ` +
+          `The code it exempted has changed, so the exemption no longer describes anything. Re-examine ` +
+          `the site and write a fresh entry, or delete this one. Removal happens by this refusal rather ` +
+          `than by anyone remembering (condition 5).`,
+      );
+      continue;
+    }
+
+    if (matches.length > 1) {
+      errors.push(
+        `${where}: AMBIGUOUS — ${String(matches.length)} ${entry.kind} sites in ${entry.script} read ` +
+          `\`${entry.source}\` (lines ${matches.map((m) => m.line).join(', ')}). One entry cannot exempt ` +
+          `several sites: it would silently cover ones nobody examined. Refused rather than guessed.`,
+      );
+      continue;
+    }
+
+    // Read defensively, because this is an error CHANNEL and a channel that
+    // throws reports nothing. Found by mutation rather than by review:
+    // bypassing the stale branch above turned this line into a TypeError that
+    // killed the whole run, so the ledger crashed instead of reporting — #443
+    // finding 2 in miniature, inside the thing built to make claims fail
+    // loudly. The stale branch still produces the useful message; this only
+    // makes its absence degrade to a report.
+    const site = matches[0];
+    if (site === undefined) {
+      errors.push(`${where}: STALE — the site could not be resolved from this run's measurement.`);
+      continue;
+    }
+    if (site.verdict === 'witnessed') {
+      errors.push(
+        `${where}: THE EXEMPTION IS FALSE — ${entry.script} line ${String(site.line)} IS witnessed. ` +
+          `Neutralising it turns the self-test red, so the claim that it cannot be witnessed is untrue ` +
+          `today whatever it was when written. Delete the entry. This is the decay direction, and it is ` +
+          `the one a one-directional ledger cannot see.`,
+      );
+      continue;
+    }
+    if (site.verdict !== 'unwitnessed') {
+      errors.push(
+        `${where}: CANNOT CONFIRM — ${entry.script} line ${String(site.line)} recorded \`${site.verdict}\`, ` +
+          `which is neither witnessed nor unwitnessed, so this run is no evidence either way. "I could ` +
+          `not check" is not "the exemption holds".`,
+      );
+      continue;
+    }
+
+    honoured += 1;
+  }
+
+  return {
+    errors,
+    counts: {
+      entries: exempt.length,
+      honoured,
+      // Unwitnessed sites carrying no entry. The growth signal #533 works
+      // against, and the reason the count is printed rather than fetched.
+      undispositioned: report.unwitnessed.length - honoured,
+    },
+  };
+}
+
 /** Offset of the `)` matching the `(` at `open`, or -1. */
 function matchParen(masked, open) {
   let depth = 0;
@@ -186,13 +381,13 @@ export function enumerateSites(src) {
   for (const m of masked.matchAll(/\berrors\.push\s*\(/g)) {
     const start = m.index;
     const end = start + 'errors.push'.length;
-    sites.push({ kind: 'errors-push', start, end, token: 'errors.push', replacement: '(()=>{})', line: lineOf(src, start) });
+    sites.push({ kind: 'errors-push', start, end, token: 'errors.push', replacement: '(()=>{})', line: lineOf(src, start), source: siteSource(src, start) });
   }
 
   // throw X -> void X. Still constructs the value, then discards it.
   for (const m of masked.matchAll(/\bthrow\b/g)) {
     const start = m.index;
-    sites.push({ kind: 'throw', start, end: start + 5, token: 'throw', replacement: 'void', line: lineOf(src, start) });
+    sites.push({ kind: 'throw', start, end: start + 5, token: 'throw', replacement: 'void', line: lineOf(src, start), source: siteSource(src, start) });
   }
 
   // process.exit(<arg>) -> process.exit(0). Replacing the ARGUMENT rather than
@@ -210,6 +405,7 @@ export function enumerateSites(src) {
       token: src.slice(open + 1, close),
       replacement: '0',
       line: lineOf(src, open),
+      source: siteSource(src, open),
     });
   }
 
@@ -223,6 +419,7 @@ export function enumerateSites(src) {
       token: m[1],
       replacement: '0',
       line: lineOf(src, numStart),
+      source: siteSource(src, numStart),
     });
   }
 
@@ -252,6 +449,7 @@ export function enumerateSites(src) {
       token: m[1],
       replacement: '0',
       line: lineOf(src, numStart),
+      source: siteSource(src, numStart),
     });
   }
 
@@ -785,6 +983,10 @@ export function renderInventory(report, previousMarkdown = null) {
   lines.push(`- unreachable (no self-test, #431): **${report.totals.unreachableSites}** sites across ${report.totals.unreachable} scripts`);
   lines.push(`- cannot check (non-green baseline): **${report.totals.cannotCheck}** scripts`);
   lines.push(`- cannot check, as sites: **${report.totals.cannotCheckSites}**`);
+  lines.push(
+    `- exemptions on the ledger (#532): **${report.exemptions?.entries ?? 0}** — ` +
+      `${report.exemptions?.undispositioned ?? report.totals.unwitnessed} unwitnessed site(s) carry no entry`,
+  );
   lines.push('');
   lines.push('`witnessed + unwitnessed + cannot-check sites = failure sites`. The site-level');
   lines.push('figure is what closes that identity, and it is what makes a fall in `witnessed`');
@@ -906,7 +1108,15 @@ export async function audit(rootDir, { onProgress = () => {} } = {}) {
     noSites,
   };
 
-  return { guards: measured, unreachable, unwitnessed, noFailureWitnesses, errors, totals };
+  // The ledger is evaluated against THIS run's measurement (#532). Its failures
+  // are audit-integrity failures — a claim that did not survive contact with the
+  // measurement — which is why they join `errors` and fail, while unwitnessed
+  // sites themselves stay reported-only.
+  const report = { guards: measured, unreachable, unwitnessed, noFailureWitnesses, errors, totals };
+  const ledger = evaluateExemptions(report);
+  errors.push(...ledger.errors);
+  report.exemptions = ledger.counts;
+  return report;
 }
 
 async function main(argv) {
@@ -945,7 +1155,8 @@ async function main(argv) {
 
   console.log(
     `check-mutation-audit: OK — ${report.totals.witnessed}/${report.totals.sites} sites witnessed, ` +
-      `${report.totals.unwitnessed} unwitnessed (reported, not failed).`,
+      `${report.totals.unwitnessed} unwitnessed (reported, not failed), ` +
+      `${report.exemptions.entries} exemption(s) on the ledger.`,
   );
   return 0;
 }

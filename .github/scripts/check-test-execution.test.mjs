@@ -52,7 +52,16 @@
  * Run: node .github/scripts/check-test-execution.test.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, linkSync, copyFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  readFileSync,
+  rmSync,
+  existsSync,
+  linkSync,
+  copyFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -170,6 +179,39 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
     }
   }
 
+  // THE PRECONDITION THIS CASE RESTS ON, checked across EVERY directory the
+  // guard will search (#531 re-QA).
+  //
+  // This check used to read `existsSync(join(binDir, 'npm'))` under the name
+  // "so npm is unresolvable". It inspected ONE of the three directories and
+  // claimed all of them. On a Linux runner with an apt/nodesource npm in
+  // /usr/bin it passed while its own claim was false, npm started, and the
+  // guard correctly took the no-tests branch instead — so the case failed and
+  // the failure read as a guard defect. It was not: the name asserted three
+  // times more than the check verified, which is the decorative class swept
+  // five times on #540 and twice more on #541, here guarding the precondition
+  // the whole case rests on.
+  //
+  // `/usr/bin` and `/bin` are appended UNCONDITIONALLY by the guard — my own
+  // #429 PATH repair — so no fixture can remove them. The relocation trick
+  // therefore works only where npm is absent from BOTH, which is true on macOS
+  // (/opt/homebrew/bin) and false on many Linux images.
+  // Deduped: `dirname(relocated)` IS `binDir` here, and a diagnostic that names
+  // the same directory twice reads as a defect in the diagnostic.
+  const childPathDirs = [...new Set([dirname(relocated), binDir, '/usr/bin', '/bin'])];
+  const npmFoundIn = childPathDirs.filter((d) => existsSync(join(d, 'npm')));
+
+  // The list above MIRRORS the guard's CHILD_PATH and cannot import it, because
+  // importing a wired production script executes it. So pin the mirror: if the
+  // guard's fallbacks ever change, this precondition silently goes wrong again
+  // in exactly the way being fixed here.
+  const guardSource = readFileSync(GUARD, 'utf-8');
+  check(
+    'site: the fallback list this fixture mirrors is still the guard\'s own',
+    guardSource.includes("[dirname(process.execPath), process.env.PATH ?? '', '/usr/bin', '/bin']"),
+    true,
+  );
+
   if (rung === null || !existsSync(relocated)) {
     // CANNOT CHECK, said out loud. A case that quietly does not run is the
     // empty pass this repository has spent the week removing.
@@ -178,8 +220,23 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
         'relocated (hardlink and copy both failed), so `dirname(process.execPath)` could not be ' +
         'made npm-free. The site is reachable; this ENVIRONMENT could not reach it.',
     );
+  } else if (npmFoundIn.length > 0) {
+    // THE LADDER'S THIRD RUNG, reached for a second reason. Nothing about the
+    // guard is in question and no expectation is weakened: the site is
+    // reachable, and this HOST cannot reach it because npm sits in a directory
+    // the guard always searches.
+    console.log(
+      `CANNOT CHECK - site: npm-cannot-start is unwitnessed here — npm is present in ` +
+        `${npmFoundIn.join(', ')}, which the guard appends to the child PATH unconditionally, so ` +
+        `no fixture can make npm unresolvable on this host. The site is reachable; this ` +
+        `ENVIRONMENT cannot reach it.`,
+    );
   } else {
-    check(`site: the interpreter relocated via ${rung}, so npm is unresolvable`, existsSync(join(binDir, 'npm')), false);
+    check(
+      `site: the interpreter relocated via ${rung}, and npm is in none of ${childPathDirs.join(', ')}`,
+      npmFoundIn.length,
+      0,
+    );
     const r = run(dir, { execPath: relocated, env: { PATH: binDir } });
     check('site: npm that cannot start exits 2', r.code, 2);
     check('site: ...and says it COULD NOT BE CHECKED', /COULD NOT BE CHECKED/.test(r.out), true);

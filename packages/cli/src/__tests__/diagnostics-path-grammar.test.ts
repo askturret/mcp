@@ -40,7 +40,7 @@
 
 import { describe, it, expect } from '@jest/globals';
 
-import { sanitizeErrorText } from '../commands/diagnostics-bundle.js';
+import { sanitizeErrorText, pathBasenames } from '../commands/diagnostics-bundle.js';
 
 /**
  * Distinctive tokens, so "did a directory survive?" is a substring test rather
@@ -340,34 +340,50 @@ describe('paths abutted by a delimiter are still reduced (#305 controls)', () =>
  * README LIMITS wording in the same change; the two are a pair, and #305 was
  * filed because they had drifted apart.
  */
-describe('#305 residual — a directory name ending in a delimiter still corrupts', () => {
+describe('#305 residual — a directory name ending in a delimiter starts the run mid-token', () => {
   const DIR = 'SECRETDIR';
 
   /**
-   * These three are TRUE CONTROLS — verified by running them against a
-   * reverted tree, where all three pass unchanged. Their output is identical
-   * before and after the fix, because a first segment ending in a delimiter
-   * was matched mid-token either way.
+   * These three are CONTROLS for the run still starting mid-token — the
+   * delimiter list is untouched (#470), so the prefix is still retained.
+   *
+   * RE-POINTED BY #519, and the reason matters more than the new strings. They
+   * asserted `not.toContain('/spec.yaml')` under the name "still leaks a
+   * fragment AND destroys the filename": they pinned the CORRUPTION as the
+   * expected outcome, which was honest while nothing could be done about it.
+   *
+   * #519 removes that half. The reduction is marked, so the retained prefix is
+   * no longer glued to the basename and the filename survives intact. What has
+   * NOT moved is disclosure — measured across all 105 generated cases, zero
+   * changed which secrets survive.
    */
   const residual: Array<[string, string, string]> = [
     // The one that matters: on every Windows machine in existence.
-    ['Program Files (x86)', `Program Files (x86)/${DIR}/spec.yaml`, 'Program Files (x86)spec.yaml'],
-    ['a build number in brackets', `build[1]/${DIR}/spec.yaml`, 'build[1]spec.yaml'],
-    ['a bare trailing paren', `foo(/${DIR}/spec.yaml`, 'foo(spec.yaml'],
+    [
+      'Program Files (x86)',
+      `Program Files (x86)/${DIR}/spec.yaml`,
+      'Program Files (x86)[REDACTED:path]/spec.yaml',
+    ],
+    ['a build number in brackets', `build[1]/${DIR}/spec.yaml`, 'build[1][REDACTED:path]/spec.yaml'],
+    ['a bare trailing paren', `foo(/${DIR}/spec.yaml`, 'foo([REDACTED:path]/spec.yaml'],
   ];
 
   it.each(residual)(
-    'CONTROL: %s still leaks a fragment AND destroys the filename',
+    'CONTROL: %s still starts the run mid-token; the reduction is now marked',
     (_name, input, expected) => {
       const out = sanitizeErrorText(input);
 
       // Pinned exactly, so a change in either direction is visible.
       expect(out).toBe(expected);
 
-      // Spelled out so the assertion states the HARM rather than only a
-      // string: the directory is gone, and the filename did not survive.
+      // THE PROPERTY THAT MUST NOT MOVE: the secret directory is gone. Asserted
+      // first, because it is the half #519 was required to leave alone.
       expect(out).not.toContain(DIR);
-      expect(out).not.toContain('/spec.yaml');
+
+      // ...and the half #519 fixes: the filename is intact rather than glued to
+      // the retained prefix. This REPLACES `not.toContain('/spec.yaml')`, which
+      // asserted the opposite.
+      expect(out).toContain('[REDACTED:path]/spec.yaml');
     },
   );
 
@@ -387,7 +403,7 @@ describe('#305 residual — a directory name ending in a delimiter still corrupt
    */
   it('WITNESS: the residual bites the deepest delimiter segment, not the first', () => {
     expect(sanitizeErrorText(`deep/nested/bar(/${DIR}/spec.yaml`)).toBe(
-      'deep/nested/bar(spec.yaml',
+      'deep/nested/bar([REDACTED:path]/spec.yaml',
     );
   });
 
@@ -467,9 +483,9 @@ describe('narrowing the delimiter list would leak (#470)', () => {
   // Rows the residual CONTROLs above do NOT cover, so this adds coverage
   // rather than restating theirs.
   const wouldLeak: Array<[string, string, string]> = [
-    ['a log-level prefix', `[INFO]/srv/${DIR}/spec.yaml`, '[INFO]spec.yaml'],
-    ['a parenthesised aside in prose', `see (foo)/srv/${DIR}/spec.yaml`, 'see (foo)spec.yaml'],
-    ['a closing paren on a DEEP segment', `deep/nested/bar)/${DIR}/spec.yaml`, 'deep/nested/bar)spec.yaml'],
+    ['a log-level prefix', `[INFO]/srv/${DIR}/spec.yaml`, '[INFO][REDACTED:path]/spec.yaml'],
+    ['a parenthesised aside in prose', `see (foo)/srv/${DIR}/spec.yaml`, 'see (foo)[REDACTED:path]/spec.yaml'],
+    ['a closing paren on a DEEP segment', `deep/nested/bar)/${DIR}/spec.yaml`, 'deep/nested/bar)[REDACTED:path]/spec.yaml'],
   ];
 
   it.each(wouldLeak)(
@@ -518,8 +534,8 @@ describe('narrowing the delimiter list would leak (#470)', () => {
 
     // Same treatment, from the same rule, with no attempt to tell them apart:
     // prefix kept verbatim, secret removed, basename intact, separator lost.
-    expect(asPath).toBe('Program Files (x86)spec.yaml');
-    expect(asProse).toBe('see (foo)spec.yaml');
+    expect(asPath).toBe('Program Files (x86)[REDACTED:path]/spec.yaml');
+    expect(asProse).toBe('see (foo)[REDACTED:path]/spec.yaml');
   });
 
   /**
@@ -536,6 +552,76 @@ describe('narrowing the delimiter list would leak (#470)', () => {
     ['native separators', `C:\\Program Files (x86)\\${DIR}\\spec.yaml`],
     ['mixed separators, as WSL and Node produce', `C:/Program Files (x86)/${DIR}/spec.yaml`],
   ])('a drive-letter path reduces cleanly — %s', (_name, input) => {
-    expect(sanitizeErrorText(input)).toBe('spec.yaml');
+    expect(sanitizeErrorText(input)).toBe('[REDACTED:path]/spec.yaml');
+  });
+});
+
+/**
+ * The reduction is MARKED rather than silent (#519).
+ *
+ * `lastPathSegment` returned a bare basename, so a reduction left no trace and
+ * a retained prefix was joined straight onto the filename. The marker is the
+ * same principle `sanitizeUrlText` already applies to userinfo — "replaced with
+ * a marker rather than dropped silently" — and this function was the exception.
+ *
+ * ## Disclosure is UNCHANGED, and that is measured rather than asserted here
+ *
+ * The claim is about EVERY path shape the tool handles, not about the fixtures
+ * below, so the check belongs where the shapes are enumerated: the generated
+ * grammar above runs all 105 and asserts which tokens survive. Before merging
+ * this, every one of those was dumped before and after the change and compared:
+ * 60 outputs changed FORM, and ZERO changed which secrets survive.
+ *
+ * That is the acceptance item most likely to be assumed. A marker that widens
+ * what survives would be strictly worse than the corruption it fixes, and no
+ * count of hand-written fixtures could rule it out.
+ */
+describe('a reduction is marked, not silent (#519)', () => {
+  const DIR = 'SECRETDIR';
+
+  it('marks a reduced POSIX path', () => {
+    expect(sanitizeErrorText(`/srv/${DIR}/spec.yaml`)).toBe('[REDACTED:path]/spec.yaml');
+  });
+
+  it('marks a reduced Windows path', () => {
+    expect(sanitizeErrorText(`C:\\Users\\${DIR}\\spec.yaml`)).toBe('[REDACTED:path]/spec.yaml');
+  });
+
+  /**
+   * THE NEGATIVE, and it is what stops the marker becoming a lie in the other
+   * direction. A single-segment value had no directory to strip, so claiming a
+   * reduction there would be the inverse defect — a marker asserting that
+   * something was removed when nothing was.
+   */
+  it('does NOT mark a value with nothing to reduce', () => {
+    expect(pathBasenames(['spec.yaml'])).toEqual(['spec.yaml']);
+  });
+
+  /**
+   * A trailing separator has no basename at all, so the whole value is the
+   * marker and there is nothing to append. Unchanged by #519, asserted so the
+   * two marker shapes are not confused for each other.
+   */
+  it('a trailing-separator path is still the bare marker', () => {
+    expect(sanitizeErrorText(`/srv/${DIR}/`)).toBe('[REDACTED:path]');
+  });
+
+  /**
+   * THE ASSERTION THAT CAN TELL MARKED FROM UNMARKED (#540's lesson).
+   *
+   * `toContain('spec.yaml')` would pass against the OLD output too — the
+   * unmarked `spec.yaml` contains it. So the discriminator is the marker
+   * IMMEDIATELY BEFORE the basename, plus the absence of the glued form that
+   * the old code produced.
+   */
+  it('the marked form is distinguishable from the unmarked one', () => {
+    const out = sanitizeErrorText(`Program Files (x86)/${DIR}/spec.yaml`);
+
+    expect(out).toContain('[REDACTED:path]/spec.yaml');
+    // The old output, asserted ABSENT rather than the new one asserted present:
+    // the glued form is the harm, and it is what must not come back.
+    expect(out).not.toContain('(x86)spec.yaml');
+    // ...and disclosure is untouched in the same breath.
+    expect(out).not.toContain(DIR);
   });
 });

@@ -339,18 +339,27 @@ const WINDOWS_RUN = new RegExp(
  *     Measured: `|/srv/DIR/spec.yaml`, `*\/srv/DIR/spec.yaml` pass through.
  *
  *   character PRESENT, but sitting at the END OF A DIRECTORY NAME
- *     -> lookbehind PASSES -> the run matches mid-token after all.  CORRUPTION.
- *     Measured: `Program Files (x86)/SECRETDIR/spec.yaml`
- *                 -> `Program Files (x86)spec.yaml`
- *               `build[1]/SECRETDIR/spec.yaml` -> `build[1]spec.yaml`
+ *     -> lookbehind PASSES -> the run matches mid-token after all.
+ *     Measured, CURRENT output: `Program Files (x86)/SECRETDIR/spec.yaml`
+ *                 -> `Program Files (x86)[REDACTED:path]/spec.yaml`
+ *               `build[1]/SECRETDIR/spec.yaml`
+ *                 -> `build[1][REDACTED:path]/spec.yaml`
  *
  * So `foo(` is the COUNTEREXAMPLE, not an example of the safe direction.
- * `Program Files (x86)` is not contrived — it is on every Windows machine —
- * and the outcome is the #305 signature itself, directory leaked AND filename
- * destroyed, produced by the guard written to stop producing it.
+ * `Program Files (x86)` is not contrived — it is on every Windows machine.
+ *
+ * THE CORRUPTION HALF IS GONE AS OF #519, and this paragraph used to describe
+ * it as current. The run still starts mid-token, so the prefix is still
+ * retained — that part is structural and #470 ruled the delimiter list cannot
+ * fix it in either direction. What changed is the OUTPUT FORM: the reduction is
+ * marked, so the retained prefix is no longer glued to the basename. It was
+ * `Program Files (x86)spec.yaml`, which is the #305 signature — directory
+ * fragment leaked AND filename destroyed — and it is now a fragment, a marker
+ * and an intact filename. Disclosure did not move: measured across all 105
+ * generated grammar cases, 60 changed form and none changed what survives.
  *
  * It is ANY segment, not merely the first:
- * `deep/nested/bar(/DIR/spec.yaml` -> `deep/nested/bar(spec.yaml`.
+ * `deep/nested/bar(/DIR/spec.yaml` -> `deep/nested/bar([REDACTED:path]/spec.yaml`.
  *
  * The root cause is that a lookbehind cannot distinguish a delimiter that
  * PRECEDES a path from one that ENDS a directory name. They are the same
@@ -471,7 +480,37 @@ function lastPathSegment(value: string): string {
   if (/[/\\]$/.test(value)) return '[REDACTED:path]';
 
   const parts = value.split(/[/\\]/).filter((part) => part.length > 0);
-  return parts[parts.length - 1] ?? '[REDACTED:path]';
+  const basename = parts[parts.length - 1];
+  if (basename === undefined) return '[REDACTED:path]';
+
+  // THE REDUCTION IS MARKED, NOT SILENT (#519).
+  //
+  // This used to return the bare basename, so a reduction left no trace. That
+  // is the same principle `sanitizeUrlText` already states one function below,
+  // about userinfo — "replaced with a marker rather than dropped silently:
+  // there were credentials here and we removed them is useful to whoever reads
+  // the bundle" — and this function was the exception to it.
+  //
+  // What it costs: nothing in DISCLOSURE. The directory names removed are
+  // exactly the ones removed before; only the output form changes.
+  //
+  // What it buys is the whole corruption class from #470. When the run starts
+  // mid-token — `Program Files (x86)/DIR/spec.yaml`, where the lookbehind
+  // admits the `)` — the retained prefix used to be joined straight onto the
+  // basename, producing `Program Files (x86)spec.yaml`: a string that reads
+  // like a real path and is not one. Marked, it becomes
+  // `Program Files (x86)[REDACTED:path]/spec.yaml`, which reads as what it is.
+  //
+  // NOT a fix to the delimiter list, deliberately. #470 ruled that the list
+  // decides WHETHER a run matches and never how well, so both directions are
+  // strictly worse — removing a character turns matches into non-matches
+  // (more disclosure), adding one turns non-matches into matches at wrong
+  // offsets (more corruption). The defect was always on the output side.
+  //
+  // Only when something was actually removed. A value with one segment had no
+  // directory to strip, so marking it would claim a reduction that did not
+  // happen — the inverse defect, and just as misleading.
+  return parts.length > 1 ? `[REDACTED:path]/${basename}` : basename;
 }
 
 /**
@@ -710,19 +749,26 @@ export function bundleReadme(inputs: BundleInputs, filenames: readonly string[] 
     '  mixed `/` and `\\` separators, all now covered. The wording is scoped so',
     '  the claim matches what the code can actually do, and each round of',
     '  scoping followed a real finding.',
+    '- Every reduced path is MARKED. `/srv/private/spec.yaml` comes back as',
+    '  `[REDACTED:path]/spec.yaml`, not as a bare `spec.yaml`, so you can tell a',
+    '  reduction from a filename that was always relative.',
     '- "Usually", and here is the exception, because it is common on Windows.',
     '  If one of the path\'s own directory names ENDS in a bracket, quote,',
     '  comma, semicolon, colon or equals sign, the reduction can still start in',
     '  the middle of the path. The everyday case is a Program Files (x86)',
-    '  path, which comes back as `Program Files (x86)spec.yaml` — a directory',
-    '  fragment joined straight onto the filename. Deeper names do the same:',
-    '  `build[1]/private/spec.yaml` becomes `build[1]spec.yaml`.',
-    '- Two consequences, stated separately because they are different risks.',
-    '  An unrecognised path LEAKS its directory names whether or not it is',
-    '  reduced — none of this section is a redaction guarantee. And in the',
-    '  exception above the filename is DESTROYED as well, so if a bundle shows',
-    '  you a filename that looks glued to a directory fragment, that is what',
-    '  happened and the real filename is not recoverable from the bundle.',
+    '  path, which comes back as `Program Files (x86)[REDACTED:path]/spec.yaml`',
+    '  — a retained directory fragment, then the marker, then the filename.',
+    '  Deeper names do the same: `build[1]/private/spec.yaml` becomes',
+    '  `build[1][REDACTED:path]/spec.yaml`.',
+    '- One consequence, and it is a disclosure one. An unrecognised path LEAKS',
+    '  its directory names whether or not it is reduced — none of this section',
+    '  is a redaction guarantee.',
+    '- The filename is NO LONGER destroyed in that exception. It used to come',
+    '  back glued to the directory fragment (`Program Files (x86)spec.yaml`),',
+    '  which read like a real path and was not. The marker separates them, so',
+    '  the filename is recoverable from the bundle again. What was removed is',
+    '  unchanged — the marker altered the FORM of the output, never how much of',
+    '  the path survives.',
     '- A bare host reference with no path (`\\\\SERVER` on its own) is NOT',
     '  reduced. Basename reduction cannot help: the host IS the last segment, so',
     '  redacting it needs a different rule than the one this section describes.',

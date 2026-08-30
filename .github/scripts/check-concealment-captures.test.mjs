@@ -25,6 +25,7 @@ import {
   TEMPLATE_MISMATCH_GUIDANCE_KEY,
   REVISION_CANNOT_CHECK_KEY,
   UNCOMMITTED_ROWS_CANNOT_CHECK_KEY,
+  changedCorpusFiles,
 } from './check-concealment-captures.mjs';
 import { parseStrictToml } from './check-concealment-templates.mjs';
 
@@ -803,7 +804,11 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
   const msg = errorsMatching(added, /missing required field `channel`/)[0] ?? '';
   is('scope: the required-fields refusal states its scope (#524)', /SCOPE:/.test(msg), true);
   is('scope: ...naming rows that carry `factor_1`', /CARRYING `factor_1`/.test(msg), true);
-  is('scope: ...and every row a change ADDS', /every row a change ADDS/.test(msg), true);
+  is(
+    'scope: ...and every row in a file a change ADDS OR MODIFIES (#552)',
+    /every row in a capture file this change ADDS OR MODIFIES/.test(msg),
+    true,
+  );
   is('scope: ...and that an older row without it is exempt', /predates the schema and is exempt/.test(msg), true);
 
   // CLAIM 2: the predicate actually behaves that way. Three rows, one per
@@ -833,7 +838,7 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
   );
 }
 
-// --- CONDITION 6: added rows only -------------------------------------------
+// --- CONDITION 6: rows in a file the change added OR MODIFIED ---------------
 {
   const redacted = row({ verbatim: shaped('<PATH>') });
 
@@ -841,21 +846,63 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
   const added = run({ 'a.jsonl': line(redacted) }, ['a.jsonl']);
   const msg = errorsMatching(added, REDACTED)[0] ?? '';
   is('scope: the placeholder refusal states its scope (#524)', /SCOPE:/.test(msg), true);
-  is('scope: ...naming added rows ONLY', /ONLY to rows a change ADDS/.test(msg), true);
+  is('scope: ...naming added OR MODIFIED files (#552)', /ADDS OR MODIFIES/.test(msg), true);
+  is('scope: ...and saying the predicate is per-FILE, not per-row', /per-FILE, not per-row/.test(msg), true);
   is(
-    'scope: ...and saying the existing redacted rows are not a backlog to fix',
-    /not repairable/.test(msg),
+    'scope: ...and telling a reader who hit it on someone else row what to do instead',
+    /NOT to reconstruct the missing text/.test(msg),
     true,
   );
 
-  // CLAIM 2: the predicate actually behaves that way — the same row, not added,
-  // raises nothing. Without this the sentence above is only a promise.
+  // CLAIM 2: the predicate actually behaves that way — the same row, in a file
+  // the change did not touch, raises nothing. Without this the sentence above is
+  // only a promise.
   const notAdded = run({ 'a.jsonl': line(redacted) }, []);
   is(
-    'scope: ...and the SAME row not added raises nothing, as stated',
+    'scope: ...and the SAME row in an untouched file raises nothing, as stated',
     errorsMatching(notAdded, REDACTED).length,
     0,
   );
+}
+
+// --- THE MODIFIED-FILE CASE, which the old sentence denied (#552) -----------
+//
+// `changedCorpusFiles` runs `--diff-filter=AM`, so the set is added-OR-modified
+// FILES. The scope sentences said "rows a change ADDS" — half of what the
+// predicate returns — and condition 6 went further and told the author that
+// pre-existing redacted rows "are not reported and are not repairable". Modify
+// the file one of those rows sits in and it IS reported, so the author met an
+// error about something the message had just told them they would not get and
+// could not fix.
+//
+// Reachable without doing anything exotic: the append-only guard refuses any
+// DELETION, so a rewritten row is already blocked there — but APPENDING to an
+// existing capture file removes nothing, passes that guard, and pulls the file's
+// existing rows into scope here.
+//
+// Witnessed against the REAL predicate rather than a re-spelling of the git
+// command. Mirroring it in the test is what let the sentence and the code
+// disagree in the first place, and a replica drifts the same way (#553).
+{
+  const { dir, g } = gitCorpus({ 'a.jsonl': line(row()) });
+  try {
+    // MODIFY a committed capture file: append a second row, deleting nothing.
+    writeFileSync(
+      join(dir, '.operum', 'audit', 'concealment-reminders', 'a.jsonl'),
+      `${line(row())}\n${line(row())}\n`,
+    );
+    g(['add', '-A']);
+    g(['commit', '-q', '-m', 'append a row to an existing capture']);
+
+    const changed = changedCorpusFiles(dir, 'HEAD~1');
+    is(
+      'scope: a MODIFIED capture file is in the changed set, so the sentence must say so',
+      changed !== null && changed.has('.operum/audit/concealment-reminders/a.jsonl'),
+      true,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

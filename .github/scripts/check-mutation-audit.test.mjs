@@ -994,12 +994,43 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
  *   ambiguous match        2 red    decay direction        2 red
  *   cannot-confirm         1 red    honoured count         2 red
  *   identity key           4 red    printed count          1 red
+ *   duplicate refusal      8 red    entries count          2 red
  *
- * ONE branch is deliberately unpinned and must stay that way: the defensive
- * `site === undefined` read. It is unreachable by construction because the
- * stale branch precedes it, which is what makes it the ledger's own first
- * candidate for an exemption entry (#533). An assertion for it would have to
- * reach through the branch that prevents it.
+ * ## The sixth and seventh instances, and how they hid (#541)
+ *
+ * THE RECORDED FIGURES ABOVE DID NOT CATCH THEM, and that is the lesson. QA
+ * found the sixth by RECONSTRUCTING this battery from behaviour names instead
+ * of reading the numbers, on the principle that figures produced by the run
+ * that produced a fix cannot independently confirm it.
+ *
+ * Both are the same shape: a behaviour with TWO halves where only one is
+ * pinned, so the recorded red count is reproducible and still hides a gap.
+ *
+ *   printed count   asserted the PHRASE `exemptions on the ledger`, and the
+ *                   fixture supplied `entries: 0` — so hard-coding the count to
+ *                   0 was indistinguishable from correct. The `undispositioned`
+ *                   half WAS witnessed, which is why the row read as covered.
+ *   entries count   pinned nowhere at all: the renderInventory fixture passes
+ *                   an `exemptions` object straight in, so `evaluateExemptions`
+ *                   own count was never exercised.
+ *
+ * One instance in a file is rarely alone. The seventh was found by extending
+ * the battery to a behaviour nobody had mutated, not by reading this comment.
+ *
+ * ## Two things are deliberately unpinned, and both must stay that way
+ *
+ * The defensive `site === undefined` read is unreachable by construction
+ * because the stale branch precedes it, which is what makes it the ledger's own
+ * first candidate for an exemption entry (#533).
+ *
+ * Counting `honoured` as DISTINCT SITES rather than accepted entries reddens
+ * nothing either, and the reason is worth stating rather than leaving as an
+ * apparent gap: duplicates are REFUSED before they can reach the counter, so
+ * the two spellings agree in every reachable case. It is defence in depth, kept
+ * because #533 writes 48 entries against this figure and a count that inflates
+ * is a growth signal that under-reports. If the refusal is ever relaxed to a
+ * deduplication, this is what keeps the number honest — and only then would it
+ * become witnessable.
  *
  * Assertions that no mutation reddens are labelled CONTROL. A control is
  * legitimate — it pins that something does NOT happen — but it must not wear a
@@ -1220,7 +1251,12 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
         unwitnessed: [],
         noFailureWitnesses: [],
         errors: [],
-        exemptions: { entries: 0, honoured: 0, undispositioned: 3 },
+        // NON-ZERO deliberately (#541). With `entries: 0` a degenerate
+        // implementation that always prints 0 was indistinguishable from a
+        // correct one — hard-coding the count reddened nothing. The fixture has
+        // to be able to tell the two apart before the assertion below means
+        // anything.
+        exemptions: { entries: 2, honoured: 2, undispositioned: 3 },
         totals: {
           guards: 1,
           sites: 3,
@@ -1235,12 +1271,64 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
       },
       null,
     );
-    check('ledger: the inventory prints the exemption count', /exemptions on the ledger/.test(rendered), true);
+    // BOTH HALVES OF THE FIGURE, and only one of them used to be pinned (#541).
+    // The phrase assertion below matched `exemptions on the ledger` — which the
+    // line always contains — so the ENTRIES half was invisible while the
+    // UNDISPOSITIONED half was witnessed. That is why the recorded battery
+    // figure for "printed count" was reproducible and still hid a gap.
+    check(
+      'ledger: the inventory prints the exemption count',
+      /exemptions on the ledger \(#532\): \*\*2\*\*/.test(rendered),
+      true,
+    );
     check(
       'ledger: ...and how many unwitnessed sites carry no entry',
       /3 unwitnessed site\(s\) carry no entry/.test(rendered),
       true,
     );
+  }
+
+  // --- DEFECT 1: duplicates inflate the count (#541) -------------------------
+  //
+  // The ledger refused ONE entry spanning SEVERAL sites as AMBIGUOUS, on the
+  // reasoning that it "would silently cover ones nobody examined", and accepted
+  // SEVERAL entries over ONE site without comment. Refused now, symmetrically.
+  {
+    const dup = entry();
+    const r = evaluateExemptions(reportWith([site()]), [dup, { ...dup }]);
+
+    check('ledger: two entries naming one site are refused (#541)', r.errors.length, 2);
+    check('ledger: ...as DUPLICATE, not as some other error', /DUPLICATE/.test(r.errors[0] ?? ''), true);
+    check('ledger: ...and each names the other, so either can be deleted', /exemptions 1, 2/.test(r.errors[0] ?? ''), true);
+    check('ledger: ...and neither is honoured', r.counts.honoured, 0);
+    // A SEVENTH INSTANCE of the same shape, found by extending the battery
+    // rather than by reading (#541). `counts.entries` was pinned nowhere: the
+    // renderInventory fixture passes an `exemptions` object straight in, so
+    // evaluateExemptions own count was never exercised, and hard-coding it to 0
+    // reddened nothing. One instance in a file is rarely alone.
+    check('ledger: ...and the entries count reports what was submitted', r.counts.entries, 2);
+    check('ledger: ...so the undispositioned figure cannot go negative', r.counts.undispositioned, 1);
+  }
+
+  // THE REALISTIC CASE, not only the absurd one. Two copy-pasted duplicates
+  // among a larger set under-report by one and nothing looks wrong — the
+  // extreme case is visibly silly, this one is silent.
+  {
+    const a = entry();
+    const b = entry({ source: "errors.push('other');", line: 40 });
+    const report = reportWith([
+      site(),
+      site({ source: "errors.push('other');", line: 40 }),
+      site({ source: "errors.push('third');", line: 70 }),
+    ]);
+    const r = evaluateExemptions(report, [a, b, { ...a }]);
+
+    check('ledger: a duplicate hidden among distinct entries is still refused', /DUPLICATE/.test(r.errors.join('|')), true);
+    // The honest figure: `b` is honoured, `a` and its copy are refused, so ONE
+    // of three unwitnessed sites is dispositioned.
+    check('ledger: ...and the honoured count is of SITES, not accepted entries', r.counts.honoured, 1);
+    check('ledger: ...so undispositioned reports the true remainder', r.counts.undispositioned, 2);
+    check('ledger: ...and entries counts all three, including the refused copy', r.counts.entries, 3);
   }
 }
 

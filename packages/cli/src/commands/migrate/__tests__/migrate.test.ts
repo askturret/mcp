@@ -1150,6 +1150,116 @@ describe('source rules', () => {
       expect(detail).not.toContain('destructuring pattern');
     });
   });
+  // ---------------------------------------------------------------------------
+  // A `//` INSIDE A STRING blanked a region, and its occurrences vanished (#527)
+  //
+  // `masked` was three chained regexes. The line-comment pass blanked from `//`
+  // to end of line without knowing it was inside a string, so `"https://x"` lost
+  // its closing quote; the string pass then paired the orphaned opener with the
+  // NEXT quote further down and blanked everything between.
+  //
+  // The consequence is the worst class here: the word scan runs over `masked`, so
+  // occurrences in that region were not refused and not reported `manual` — they
+  // were never seen. `findings: []` on a file with unhandled work.
+  //
+  // THE POPULATION IS NARROWER THAN THE FILING ASSUMED, measured on the
+  // unmodified tree before any change. A single such string followed by an
+  // occurrence on a LATER line is fine, because the blanking stops at end of line
+  // and no quote is left to pair with. It takes an occurrence on the SAME line,
+  // or a second string to close the trap.
+  // ---------------------------------------------------------------------------
+  describe('a `//` inside a string no longer blanks the code after it (#527)', () => {
+    const CORE = '@askturret/mcp-core';
+    const IMPORT = `import { durability } from '${CORE}';\n`;
+
+    // WITNESSES. Each was silent before: `durability` survived unrenamed with no
+    // finding of any kind, which is why neither can be caught by asserting on the
+    // findings list alone.
+    const silent: Array<[string, string]> = [
+      ['on the same line as the string', `const u = "https://x"; console.log(durability);\n`],
+      ['between two strings, where the quotes re-pair', `const a = "https://x";\nconsole.log(durability);\nconst b = "https://y";\n`],
+      ["single-quoted, the form a module specifier uses", `const a = 'https://x';\nconsole.log(durability);\nconst b = 'https://y';\n`],
+      ['template literals, which have their own escaping rules', `const a = \`https://x\`;\nconsole.log(durability);\nconst b = \`https://y\`;\n`],
+      ['an escaped quote before the `//`', `const s = "a \\" // b"; console.log(durability);\n`],
+    ];
+
+    it.each(silent)('the occurrence is seen again: %s', (_name, body) => {
+      const result = runDurability(IMPORT + body);
+      const out = result.files[0]?.contents ?? '';
+
+      expect(out).toContain('console.log(durable)');
+      expect(out).not.toContain('durability');
+      // The literal that caused the trouble is untouched — the mask is a VIEW,
+      // and edits land on the original text. Taken from the fixture rather than
+      // hardcoded, so the escaped-quote row asserts its own string.
+      const literal = /(["'`])(.*?)\1/.exec(body)?.[0];
+      expect(literal).toBeDefined();
+      expect(out).toContain(literal as string);
+    });
+
+    // CONTROLS. The mask still has to mask, or the fix is just "stop masking".
+    it('CONTROL: an occurrence genuinely inside a string is still left alone', () => {
+      const result = runDurability(`${IMPORT}const s = "durability is a word";\n`);
+      expect(result.files[0]?.contents ?? '').toContain('"durability is a word"');
+    });
+
+    it('CONTROL: an occurrence inside a comment is still left alone', () => {
+      const result = runDurability(`${IMPORT}// durability lives here\n`);
+      expect(result.files[0]?.contents ?? '').toContain('// durability lives here');
+    });
+
+    it("CONTROL: an apostrophe in a comment does not open a string", () => {
+      // Comments are consumed before strings, so `don't` cannot swallow the rest
+      // of the file as a string literal. This is the ordering the old chained
+      // passes could not express.
+      const result = runDurability(`${IMPORT}// don't panic\nconsole.log(durability);\n`);
+      expect(result.files[0]?.contents ?? '').toContain('console.log(durable)');
+    });
+
+    // ---------------------------------------------------------------------
+    // THE DURABLE HALF: an unanalysable region is REPORTED, never omitted.
+    //
+    // Fixing the mask removes today's silent region. It does not stop the next
+    // one — an unterminated construct still makes everything after it
+    // unanalysable. Before, those matched no regex at all, so NOTHING was
+    // blanked and occurrences past the failure were REWRITTEN: edits made from a
+    // parse that had already failed. Now the region is blanked AND announced.
+    // ---------------------------------------------------------------------
+    const unterminated: Array<[string, string, string]> = [
+      ['string literal', `const s = "oops\nconsole.log(durability);\n`, 'string literal'],
+      ['block comment', `/* oops\nconsole.log(durability);\n`, 'block comment'],
+    ];
+
+    it.each(unterminated)('an unterminated %s is reported, not swallowed', (_name, body, kind) => {
+      const result = runDurability(IMPORT + body);
+      const out = result.files[0]?.contents ?? '';
+
+      // Nothing past the failed parse was edited.
+      expect(out).toContain('console.log(durability)');
+
+      const manual = result.findings.filter((f) => f.action === 'manual');
+      expect(manual.length).toBe(1);
+      expect(manual[0]?.detail).toContain(kind);
+      expect(manual[0]?.detail).toContain('line 2');
+      // It says the region was not examined, rather than implying it was clean.
+      expect(manual[0]?.detail).toContain('could not be analysed');
+    });
+
+    it('...and it is reported even when it is the ONLY thing to say', () => {
+      // THE ASSERTION THAT CLOSES THE CLASS. Here every occurrence lives inside
+      // the unanalysable region, so the rule finds none and takes the
+      // no-occurrences path — the exact path that used to return `findings: []`
+      // about code it never examined. An empty report and a clean file must not
+      // look identical.
+      const result = runDurability(`const s = "oops\n${IMPORT}console.log(durability);\n`);
+
+      expect(result.findings.length).toBe(1);
+      expect(result.findings[0]?.action).toBe('manual');
+      expect(result.findings[0]?.detail).toContain('string literal');
+      // ...and nothing was edited, because nothing could be read.
+      expect(result.files[0]?.contents ?? '').toContain('console.log(durability)');
+    });
+  });
 });
 
 describe('overlay rules', () => {

@@ -159,25 +159,47 @@ this file to the founder — and on this repository, today, **it routes nothing.
 That is not a caveat; it is the present state, and it was verified rather than
 assumed (#326 QA):
 
-- **CODEOWNERS is inert here.** The organisation is on the **free** plan and the
-  repository is **private**. GitHub honours CODEOWNERS only on public
-  repositories, or on private ones under Team or Enterprise. `requested_reviewers`
-  on a PR touching `/.github/` — which already has a rule — is empty.
-- **Even once enabled, it would not fire on our own PRs.** GitHub never requests
-  review from a PR's own author, and every PR in this repository is authored by
-  the founder. Self-authored changes bypass owner routing by construction.
+The rule is honoured by GitHub, and still gates nothing here, for two
+independent reasons — either alone sufficient:
 
-So the honest statement of the compensating control is: **the entry is dormant.**
-It becomes live only if the repository is made public or the organisation moves
-to Team, *and* the widening change arrives from someone other than the file's
-owner. Until then the only real controls on this file are the guard and human
-attention on the diff.
+- **Self-authorship.** GitHub never requests review from a PR's own author, and
+  every PR in this repository is authored by the same account that owns every
+  path. Self-authored changes bypass owner routing by construction.
+- **Bypass.** That account is an `always` bypass actor on both branch rulesets,
+  as are organisation admins and the admin role. The rule does not apply to it
+  even when an approver exists.
+
+Adding a second owner fixes the first; removing the bypass entry fixes the
+second; **both are required** before this entry gates anything. Until then the
+only real controls on this file are the guard and human attention on the diff.
 
 The entry is kept because it is correct and costs nothing — the glob, the
 placement and last-match-wins were all verified — and because the failure mode
 of a *wrong* rule is silent. But it must not be cited as the answer to the
-`attacker_influenceable` gap below while it cannot fire. Repository visibility
-and plan are a founder decision, tracked in #330.
+`attacker_influenceable` gap below. What would close that gap is a second
+reviewing identity which is not a bypass actor; that is a founder decision,
+tracked in #330.
+
+> **This paragraph replaced an obsolete premise, and why the conclusion survived
+> is the part worth keeping (#330).** It used to argue that CODEOWNERS was inert
+> because the organisation was on the **free** plan and the repository was
+> **private**. Both facts flipped on 2026-08-30 — the repository is public and a
+> ruleset now requires code-owner approval — so the reasoning is obsolete.
+> **The conclusion below did not move.**
+>
+> It survived its own premise being inverted because it recorded **the gap**
+> rather than **the mechanism**. Had it said "compensated by CODEOWNERS review",
+> it would have become false the moment the plan changed, and nothing would have
+> noticed. The new reason is also stronger than the old one: *cannot fire* has
+> become *fires, and is explicitly disapplied to the only actor it would
+> constrain*. A control an actor can switch off for themselves is not a control
+> on that actor.
+>
+> Note what is deliberately absent: a **status word**. *Dormant* and *live* are
+> each one platform setting away from being false, and the text this replaces
+> went stale without anyone editing the file. The conditions above can be
+> re-checked — `GET /repos/askturret/mcp/rulesets/{id}` returns both the approval
+> requirement and the bypass list.
 
 **Good.** The failure mode is closed: a missing, unreadable, or invalid file
 means everything routes ANOMALOUS, which is exactly today's behaviour.
@@ -191,7 +213,7 @@ mis-declared slot still reopens the substring hole.
 *present and boolean*; it cannot judge whether the declaration is *true*. A slot
 flipped from `true` to `false` passes every check here. That was disclosed from
 the outset and remains correct — but the compensating control named for it was
-CODEOWNERS review, which is dormant (above). **So this gap is currently
+CODEOWNERS review, which gates no PR authored here (above). **So this gap is currently
 uncompensated by any mechanism**, and rests on whoever reads the diff. Recording
 it that way is the point: an unmitigated risk that is written down can be
 scheduled, while one described as mitigated cannot.

@@ -8,13 +8,27 @@
  * living in an UNPROTECTED path, so this guard is very nearly the ONLY thing
  * standing between it and a quiet widening.
  *
- * "Nearly" because the CODEOWNERS entry that was meant to share the load is
- * DORMANT on this repository: CODEOWNERS is honoured only on public repos or
- * private ones under Team/Enterprise, and this org is on the free plan with a
- * private repo — and even once that changes, GitHub never requests review from
- * a PR's own author, which is every PR here. Do not weaken a check below on
- * the reasoning that a human reviewer will catch it; today, none is summoned.
+ * "Nearly" because the CODEOWNERS entry that was meant to share the load gates
+ * no PR authored here, for two independent reasons — either alone sufficient:
+ *
+ *   1. SELF-AUTHORSHIP. GitHub never requests review from a PR's own author,
+ *      and every PR here is authored by the account that owns every path.
+ *   2. BYPASS. That account is an `always` bypass actor on both branch
+ *      rulesets, so the rule does not apply to it even when an approver exists.
+ *
+ * Adding a second owner fixes the first; removing the bypass entry fixes the
+ * second; BOTH are required before a reviewer is summoned. Do not weaken a
+ * check below on the reasoning that a human reviewer will catch it — that
+ * guidance holds regardless of which of the two conditions changes.
  * See ADR-022 and #330.
+ *
+ * The clause this replaced said the entry was "DORMANT ... this org is on the
+ * free plan with a private repo". Both premises were false by the time anyone
+ * read them — the repository is public and a ruleset requires code-owner
+ * approval — while the guidance above stayed true. That is the worst way for a
+ * security note to age: a reader who checks the premise finds it wrong and may
+ * discount the conclusion with it. Hence conditions, which can be re-checked
+ * (`GET /repos/askturret/mcp/rulesets/{id}`), rather than a status word.
  *
  * ## The structural control, and why it is the point
  *

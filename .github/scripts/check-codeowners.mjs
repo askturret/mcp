@@ -181,8 +181,57 @@ export function check(repoDir = '.') {
 
   return {
     code: 0,
-    message: `.github/CODEOWNERS: ${String(rules.length)} rule(s), all matching real paths; every package owned.`,
+    message:
+      `.github/CODEOWNERS: ${String(rules.length)} rule(s), all matching real paths; every package owned.` +
+      soleOwnerNote(rules),
   };
+}
+
+/**
+ * The owner-set cardinality note (#330).
+ *
+ * ## Why this is a NOTE and never a failure
+ *
+ * Nothing in the repository can remedy it — a second maintainer is a hiring
+ * decision, not a code change — so failing would be a permanent red that no one
+ * can clear, which is how an alarm becomes something people route around. It is
+ * the honest current state, not a defect.
+ *
+ * ## What is and is not expressible here
+ *
+ * The general property — "will this file gate the next PR?" — is NOT expressible.
+ * It needs to know who will author that PR, and it needs the ruleset's bypass
+ * list, which requires credentials CI does not have. Do not write a guard for
+ * either; it would assert something it cannot know.
+ *
+ * The CARDINALITY of the owner set is a different question and is fully static:
+ * if every rule names the same single handle, then a PR authored by that handle
+ * routes to nobody, because GitHub never requests review from a PR's own author.
+ * That is a theorem about this file, decidable from the file alone.
+ *
+ * Three properties make it the right check: decidable without the network,
+ * SELF-CLEARING when a second owner is added (no one has to remember to delete
+ * it), and it states the CONSEQUENCE rather than a status. #330 was filed
+ * because a status word went stale without anyone touching the file; a sentence
+ * that recomputes itself every run cannot.
+ *
+ * Note it covers ONE of the two independent reasons this file gates nothing —
+ * self-authorship. The other, the author being an `always` bypass actor, is not
+ * visible from here. Both must change before enforced review is real, so this
+ * note disappearing is necessary and NOT sufficient. See docs/ownership.md.
+ */
+function soleOwnerNote(rules) {
+  const owners = new Set(rules.flatMap((r) => r.owners));
+  if (owners.size !== 1) return '';
+  const [only] = [...owners];
+  return (
+    `\n\nNote: all ${String(rules.length)} rules name a single owner (${only}). GitHub does not\n` +
+    `request review from a PR's own author, so a PR authored by that account routes to\n` +
+    `no reviewer. This covers only self-authorship — the bypass-actor half is not\n` +
+    `visible from the repository, so this note clearing is NECESSARY BUT NOT SUFFICIENT\n` +
+    `for review to be enforced. It disappears when a second distinct owner is added.\n` +
+    `See docs/ownership.md.`
+  );
 }
 
 function isProcessEntryPoint() {

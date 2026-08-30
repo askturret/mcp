@@ -25,6 +25,28 @@
 # areas are listed separately even though every line names the same handle,
 # because the point is that adding a maintainer becomes a one-line change to an
 # existing boundary rather than an argument about where the boundary goes.
+#
+# ## What this file does and does not gate today (#330)
+#
+# The repository is public and a branch ruleset requires 1 code-owner approval,
+# so these rules are honoured by GitHub — where previously the plan tier meant
+# they were not. They nonetheless gate NO PR authored in this repository today,
+# for two independent reasons, either alone sufficient:
+#
+#   1. SELF-AUTHORSHIP. GitHub never requests review from a PR's own author, and
+#      every PR here is authored by the same account that owns every path.
+#   2. BYPASS. That account is an `always` bypass actor on both rulesets, as are
+#      organisation admins and the admin role. The rule does not apply to it
+#      even when an approver exists.
+#
+# So this file is STRUCTURE FOR FUTURE MAINTAINERS, not a control on today's
+# changes. Adding a second owner fixes (1); removing the bypass entry fixes (2);
+# BOTH are required before any claim of enforced review is true.
+#
+# Deliberately no status word. "Dormant" and "live" are each one platform
+# setting away from being false, and the claim this replaces went stale without
+# anyone touching the file — which is what #330 was filed about. A condition can
+# be re-checked; a status can only be believed.
 
 # ---------------------------------------------------------------------------
 # Default

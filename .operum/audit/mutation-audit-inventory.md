@@ -21,13 +21,14 @@ which `env: node` fails in child processes — several guards then go
 precondition for reproducing anything below. Re-run with a sane `PATH` before
 treating a difference as a real change.
 
-- measured guards: **25**
-- failure sites: **160**
-- witnessed: **114**
-- unwitnessed: **46**
-- unreachable (no self-test, #431): **3** sites across 1 scripts
+- measured guards: **26**
+- failure sites: **172**
+- witnessed: **124**
+- unwitnessed: **48**
+- unreachable (no self-test, #431): **0** sites across 0 scripts
 - cannot check (non-green baseline): **0** scripts
 - cannot check, as sites: **0**
+- exemptions on the ledger (#532): **0** — 48 unwitnessed site(s) carry no entry
 
 `witnessed + unwitnessed + cannot-check sites = failure sites`. The site-level
 figure is what closes that identity, and it is what makes a fall in `witnessed`
@@ -42,12 +43,12 @@ movement that is an artifact of where it ran. This says which it compared.
 
 | figure | before | after | change |
 |---|---|---|---|
-| failure sites | 149 | 160 | **+11** |
-| witnessed | 106 | 114 | **+8** |
-| unwitnessed | 43 | 46 | **+3** |
-| unreachable sites | 7 | 3 | **-4** |
-| unreachable scripts | 2 | 1 | **-1** |
-| measured guards | 23 | 25 | **+2** |
+| failure sites | 160 | 172 | **+12** |
+| witnessed | 114 | 124 | **+10** |
+| unwitnessed | 46 | 48 | **+2** |
+| unreachable sites | 3 | 0 | **-3** |
+| unreachable scripts | 1 | 0 | **-1** |
+| measured guards | 25 | 26 | **+1** |
 
 **The measured population changed**, so the movement above is not only a change of category.
 
@@ -71,7 +72,7 @@ line-number diff, which is why this section exists.
 | `check-licenses.mjs` | 4 | 0 | 4 | measured |
 | `check-markdown-links.mjs` | 2 | 2 | 0 | measured |
 | `check-metric-cardinality.mjs` | 5 | 5 | 0 | measured |
-| `check-mutation-audit.mjs` | 8 | 4 | 4 | measured |
+| `check-mutation-audit.mjs` | 17 | 11 | 6 | measured |
 | `check-network-imports.mjs` | 5 | 5 | 0 | measured |
 | `check-nul-bytes.mjs` | 5 | 5 | 0 | measured |
 | `check-path-filters.mjs` | 2 | 2 | 0 | measured |
@@ -80,6 +81,7 @@ line-number diff, which is why this section exists.
 | `check-runners.mjs` | 3 | 3 | 0 | measured |
 | `check-runtime-marker-ignored.mjs` | 2 | 2 | 0 | measured |
 | `check-sdk-boundary.mjs` | 3 | 2 | 1 | measured |
+| `check-test-execution.mjs` | 3 | 3 | 0 | measured |
 | `check-workspace-artifacts.mjs` | 1 | 1 | 0 | measured |
 | `ci-coverage-status.mjs` | 7 | 6 | 1 | measured |
 | `generate-notice.mjs` | 3 | 3 | 0 | measured |
@@ -93,24 +95,24 @@ Neutralising these changed nothing their self-test could see.
 | script | line | kind |
 |---|---|---|
 | `check-audit-append-only.mjs` | 165 | result-code |
-| `check-codeowners.mjs` | 206 | process-exit |
-| `check-concealment-captures.mjs` | 532 | errors-push |
-| `check-concealment-captures.mjs` | 728 | errors-push |
-| `check-concealment-templates.mjs` | 194 | throw |
-| `check-concealment-templates.mjs` | 204 | throw |
+| `check-codeowners.mjs` | 255 | process-exit |
+| `check-concealment-captures.mjs` | 651 | errors-push |
+| `check-concealment-captures.mjs` | 847 | errors-push |
+| `check-concealment-templates.mjs` | 208 | throw |
 | `check-concealment-templates.mjs` | 218 | throw |
-| `check-concealment-templates.mjs` | 224 | throw |
-| `check-concealment-templates.mjs` | 235 | throw |
-| `check-concealment-templates.mjs` | 261 | throw |
-| `check-concealment-templates.mjs` | 271 | throw |
-| `check-concealment-templates.mjs` | 273 | throw |
-| `check-concealment-templates.mjs` | 279 | throw |
-| `check-concealment-templates.mjs` | 289 | throw |
-| `check-concealment-templates.mjs` | 585 | errors-push |
-| `check-concealment-templates.mjs` | 592 | errors-push |
-| `check-concealment-templates.mjs` | 597 | errors-push |
-| `check-concealment-templates.mjs` | 602 | errors-push |
-| `check-concealment-templates.mjs` | 681 | errors-push |
+| `check-concealment-templates.mjs` | 232 | throw |
+| `check-concealment-templates.mjs` | 238 | throw |
+| `check-concealment-templates.mjs` | 249 | throw |
+| `check-concealment-templates.mjs` | 275 | throw |
+| `check-concealment-templates.mjs` | 285 | throw |
+| `check-concealment-templates.mjs` | 287 | throw |
+| `check-concealment-templates.mjs` | 293 | throw |
+| `check-concealment-templates.mjs` | 303 | throw |
+| `check-concealment-templates.mjs` | 599 | errors-push |
+| `check-concealment-templates.mjs` | 606 | errors-push |
+| `check-concealment-templates.mjs` | 611 | errors-push |
+| `check-concealment-templates.mjs` | 616 | errors-push |
+| `check-concealment-templates.mjs` | 695 | errors-push |
 | `check-dashboard-metrics.mjs` | 75 | throw |
 | `check-dashboard-metrics.mjs` | 84 | throw |
 | `check-dashboard-metrics.mjs` | 122 | throw |
@@ -121,10 +123,12 @@ Neutralising these changed nothing their self-test could see.
 | `check-licenses.mjs` | 110 | process-exit |
 | `check-licenses.mjs` | 145 | process-exit |
 | `check-licenses.mjs` | 183 | process-exit |
-| `check-mutation-audit.mjs` | 517 | throw |
-| `check-mutation-audit.mjs` | 879 | errors-push |
-| `check-mutation-audit.mjs` | 943 | return-code |
-| `check-mutation-audit.mjs` | 955 | process-exit |
+| `check-mutation-audit.mjs` | 320 | errors-push |
+| `check-mutation-audit.mjs` | 715 | throw |
+| `check-mutation-audit.mjs` | 1081 | errors-push |
+| `check-mutation-audit.mjs` | 1117 | errors-push |
+| `check-mutation-audit.mjs` | 1153 | return-code |
+| `check-mutation-audit.mjs` | 1166 | process-exit |
 | `check-sdk-boundary.mjs` | 215 | process-exit |
 | `ci-coverage-status.mjs` | 74 | errors-push |
 | `generate-sbom.mjs` | 109 | process-exit |
@@ -147,15 +151,6 @@ site here is unwitnessed", reported rather than failed, because it is the
 measurement and not an integrity fault.
 
 - `check-licenses.mjs`
-
-## Unreachable — failure sites with no self-test (#431)
-
-Reported rather than omitted: there is nothing here to turn red, so no
-re-keying of this audit reaches them. Separately owned by #431.
-
-| script | sites |
-|---|---|
-| `check-test-execution.mjs` | 3 |
 
 ---
 *Operum Engineer · [operum.ai](https://operum.ai)*

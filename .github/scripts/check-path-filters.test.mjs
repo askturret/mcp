@@ -143,7 +143,18 @@ const git = (dir, ...args) =>
  * reached (#349) — before that override there was no way to exercise it, since
  * the fixture could only ever pass a valid ref.
  */
-function laneFixture({ labels, changedPaths, filtersBlock, packages = { core: [] }, baseRef = 'main' }) {
+function laneFixture({
+  labels,
+  changedPaths,
+  filtersBlock,
+  packages = { core: [] },
+  baseRef = 'main',
+  // Run the guard with no PATH, so ITS `git` cannot be found (#510). The
+  // fixture's own git calls run in this process and are unaffected; only the
+  // child loses the ability to start one. `process.execPath` is absolute, so
+  // node itself still runs — the trap #361 and #509 both name.
+  pathless = false,
+}) {
   // `workspace` must be a declared output or the pre-existing check C fires and
   // masks what these cases are actually asserting.
   const dir = fixture(packages, filtersBlock, { outputs: [...Object.keys(packages), 'workspace'] });
@@ -164,12 +175,18 @@ function laneFixture({ labels, changedPaths, filtersBlock, packages = { core: []
 
   // The payload Actions writes for a pull_request event, which every step can
   // read via GITHUB_EVENT_PATH — no workflow wiring needed.
+  mkdirSync(join(dir, 'no-bin'), { recursive: true });
   const eventPath = join(dir, 'event.json');
   writeFileSync(eventPath, JSON.stringify({ pull_request: { labels: labels.map((name) => ({ name })) } }));
 
+  // PATH pointed at an EMPTY DIRECTORY, not unset. Found by running it:
+  // DELETING `PATH` does not make a binary unfindable, because libc falls back
+  // to a default search path (`/usr/bin:/bin`) and git is on it — the guard
+  // then ran normally and the case proved nothing. An empty directory is a
+  // PATH that exists and contains nothing, which is the state being modelled.
   const r = spawnSync(process.execPath, [GUARD, dir, baseRef], {
     encoding: 'utf-8',
-    env: { ...process.env, GITHUB_EVENT_PATH: eventPath },
+    env: { ...process.env, GITHUB_EVENT_PATH: eventPath, ...(pathless ? { PATH: join(dir, 'no-bin') } : {}) },
   });
   rmSync(dir, { recursive: true, force: true });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
@@ -682,12 +699,72 @@ check(
   check('lane: an unresolvable base ref is CANNOT CHECK, not a silent pass (#349)', r.code, 2);
   check(
     'lane: ...and names the ref it could not diff against',
-    /could not diff against 'origin\/no-such-base-ref'/.test(r.out),
+    /diff against 'origin\/no-such-base-ref'/.test(r.out),
+    true,
+  );
+
+  // RE-POINTED, NOT JUST UPDATED (#510). This assertion used to read "...and
+  // names the shallow checkout as the likely cause" — it pinned the defect.
+  // git ran and refused here, so shallow is ONE of two explanations and the
+  // guard is not entitled to pick; what it must do is offer both and quote the
+  // evidence that separates them.
+  check(
+    'lane: ...and offers both explanations rather than asserting shallow',
+    r.out.includes('fetch-depth: 0') && /may not exist here/.test(r.out),
     true,
   );
   check(
-    'lane: ...and names the shallow checkout as the likely cause',
+    "lane: ...and quotes git's own words, which are what distinguish them",
+    /unknown revision|ambiguous argument|fatal:/.test(r.out),
+    true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// A cannot-check that names the WRONG cause (#510)
+//
+// Three conditions reached one sentence blaming a shallow checkout, and it was
+// right about one of them. The guard already failed closed — this was never a
+// false pass — but #281's point is not merely to refuse. The reader ACTS on the
+// sentence, and two in three were sent to deepen a checkout that was already
+// deep enough.
+//
+// The unstartable-git row is the one that matters most: it produces the most
+// misleading output, and it is the row where "shallow" is not merely unproven
+// but impossible — the diff never ran at all.
+// ---------------------------------------------------------------------------
+
+{
+  const r = laneFixture({
+    labels: ['ci:cheap'],
+    changedPaths: ['docs/thing.md'],
+    filtersBlock: LANE_FILTERS,
+    pathless: true,
+  });
+
+  check('lane: git that never starts is CANNOT CHECK (#510)', r.code, 2);
+  check(
+    'lane: ...and says the diff never ran, rather than blaming the checkout',
+    /could not be started/.test(r.out),
+    true,
+  );
+
+  // THE ASSERTION THAT BITES. Asserting the good sentence is present is weak —
+  // the old message would have satisfied a loose match too. Assert the HARMFUL
+  // claim is ABSENT: nothing here may tell the reader to deepen a checkout.
+  check(
+    'lane: ...and does NOT tell the reader to deepen the checkout',
     r.out.includes('fetch-depth: 0'),
+    false,
+  );
+  check(
+    'lane: ...and says explicitly that this is not a shallow checkout',
+    /NOT a shallow checkout/.test(r.out),
+    true,
+  );
+  check(
+    'lane: ...and points at the cause it actually has, the PATH',
+    /on PATH/.test(r.out),
     true,
   );
 }

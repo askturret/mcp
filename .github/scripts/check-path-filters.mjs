@@ -53,6 +53,11 @@ import { spawnSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Imported, never re-derived (#464/#510). `status === null` is true both for a
+// spawn that never started and for one killed by a signal, and only the first
+// sets `error` — so a hand-rolled check crashes on the second.
+import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
+
 /** Workspace packages are first-party. Kept in step with the supply-chain lib. */
 const FIRST_PARTY_SCOPE = '@askturret/';
 
@@ -333,14 +338,57 @@ function pullRequestLabels() {
     .filter((n) => typeof n === 'string');
 }
 
-/** Files this PR changes against its base, or null when that cannot be determined. */
+/**
+ * Files this PR changes against its base, or WHY that could not be determined.
+ *
+ * ## Why this carries a cause instead of returning null (#510)
+ *
+ * It used to return `null` for every failure, and the caller printed one
+ * sentence blaming a shallow checkout. Three conditions reach that sentence and
+ * it is right about one of them:
+ *
+ *   shallow clone missing the base commit   "shallow checkout"   correct
+ *   the ref does not resolve                "shallow checkout"   WRONG
+ *   git not on PATH, never started          "shallow checkout"   WRONG
+ *
+ * Two in three send the reader to deepen a checkout that is already deep
+ * enough. The guard fails closed either way — `null` routes to `cannotCheck`,
+ * so this was never a false pass — but #281's point is not merely to refuse.
+ * **A cannot-check that names the wrong cause is only marginally better than
+ * one that says nothing**, because the reader acts on the sentence.
+ *
+ * ## The cost objection did not survive measurement
+ *
+ * #510 lists "change the return contract" first and notes it touches every
+ * caller. Measured: `changedFiles` is module-private with exactly ONE call
+ * site. The contract change costs this function and one branch below.
+ *
+ * ## What is classified, and what is deliberately not
+ *
+ * `didNotStart` is a STRUCTURAL fact — the process never ran, so there is no
+ * exit status — and it is imported rather than re-derived (#464), because
+ * `status === null` is also true of a signal kill and only one of those sets
+ * `error`.
+ *
+ * Everything else is git running and refusing, and this does NOT guess between
+ * "shallow clone" and "no such ref" by matching stderr. That would be a
+ * hand-rolled pattern over a structural question, which this repository has
+ * been bitten by four times this week. Instead git's own stderr is carried
+ * through as the evidence, and the caller names both possibilities without
+ * asserting either.
+ */
 function changedFiles(baseRef) {
   const r = spawnSync('git', ['diff', '--name-only', `${baseRef}...HEAD`], {
     cwd: repoRoot,
     encoding: 'utf-8',
   });
-  if (r.status !== 0) return null;
-  return r.stdout.split('\n').map((s) => s.trim()).filter((s) => s !== '');
+
+  if (didNotStart(r)) return { files: null, cause: 'git-did-not-start', detail: spawnFailureDetail(r) };
+  if (r.status !== 0) {
+    return { files: null, cause: 'git-refused', detail: (r.stderr || '').trim() || `exit ${String(r.status)}` };
+  }
+
+  return { files: r.stdout.split('\n').map((s) => s.trim()).filter((s) => s !== ''), cause: null, detail: '' };
 }
 
 /**
@@ -451,15 +499,28 @@ if (labels !== null && labels.includes(CHEAP_LABEL)) {
     process.argv[3] ??
     (process.env['GITHUB_BASE_REF'] ? `origin/${process.env['GITHUB_BASE_REF']}` : 'origin/main');
 
-  const changed = changedFiles(baseRef);
-  if (changed === null) {
+  const diff = changedFiles(baseRef);
+  if (diff.files === null) {
     // The lane claim cannot be checked, and an unverifiable claim is not a
-    // verified one. Same rule the rest of this file follows.
+    // verified one. Same rule the rest of this file follows — but the SENTENCE
+    // has to survive being acted on, so it names the cause it actually has
+    // rather than the one that is most often right (#510).
+    if (diff.cause === 'git-did-not-start') {
+      cannotCheck(
+        `git could not be started, so the lane could not be classified: ${diff.detail}. ` +
+          'This is NOT a shallow checkout — the diff never ran. Check that git is on PATH ' +
+          'for this step; a space-separated PATH has caused exactly this here before (#429).',
+      );
+    }
     cannotCheck(
-      `could not diff against '${baseRef}' to classify the lane — a shallow checkout will do this; ` +
-        'the guards job uses fetch-depth: 0 for exactly this reason',
+      `git refused to diff against '${baseRef}', so the lane could not be classified: ${diff.detail}. ` +
+        'Two things produce this and the message does not guess between them: the checkout may be ' +
+        'shallow and missing the base commit (the guards job uses fetch-depth: 0 for exactly that ' +
+        "reason), or the ref may not exist here. git's own words are quoted above — they distinguish " +
+        'the two.',
     );
   }
+  const changed = diff.files;
 
   const tripped = [];
   for (const [name, globs] of Object.entries(filters)) {

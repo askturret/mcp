@@ -773,5 +773,90 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
   is('...and says what could not be established', /could not be established/.test(UNCOMMITTED(r)[0]), true);
 }
 
+
+// ---------------------------------------------------------------------------
+// The two refusals that stated NO scope where the check HAS one (#524)
+//
+// Lower class than #506's inversion: an omission offers no wrong action, it
+// just leaves the reader to re-derive which rows the rule covers — with 176+
+// corpus rows, most predating `templates_revision`, and diff-scoping existing
+// precisely because an author's obligations differ from the corpus's state.
+//
+// TWO CLAIMS, TWO SETS OF EVIDENCE (#539). "Both refusals now state their
+// scope" is a claim about the MESSAGES; "and the scope is correct" is a claim
+// about the PREDICATES. Asserting the first alone would let a confidently
+// wrong scope sentence pass — which is exactly how #506 happened. So each
+// block below asserts the sentence AND demonstrates the predicate beside it.
+//
+// The scopes were read off the code, never inferred from the surrounding prose:
+//   condition 2  `if (inSchema || isAdded)`, inSchema = 'factor_1' in row
+//   condition 6  `if (isAdded && verbatim !== null)`
+// ---------------------------------------------------------------------------
+
+// --- CONDITION 2: rows carrying `factor_1`, plus every added row ------------
+{
+  const withoutChannel = row();
+  delete withoutChannel.channel;
+
+  // CLAIM 1: the message says what it covers.
+  const added = run({ 'a.jsonl': line(withoutChannel) }, ['a.jsonl']);
+  const msg = errorsMatching(added, /missing required field `channel`/)[0] ?? '';
+  is('scope: the required-fields refusal states its scope (#524)', /SCOPE:/.test(msg), true);
+  is('scope: ...naming rows that carry `factor_1`', /CARRYING `factor_1`/.test(msg), true);
+  is('scope: ...and every row a change ADDS', /every row a change ADDS/.test(msg), true);
+  is('scope: ...and that an older row without it is exempt', /predates the schema and is exempt/.test(msg), true);
+
+  // CLAIM 2: the predicate actually behaves that way. Three rows, one per
+  // clause of the sentence above.
+  const historicalWithFactor1 = run({ 'a.jsonl': line(withoutChannel) }, []);
+  is(
+    'scope: ...and a NOT-added row CARRYING factor_1 is reported, as stated',
+    errorsMatching(historicalWithFactor1, /missing required field `channel`/).length,
+    1,
+  );
+
+  const preSchema = row();
+  delete preSchema.factor_1;
+  delete preSchema.channel;
+  const historicalPreSchema = run({ 'a.jsonl': line(preSchema) }, []);
+  is(
+    'scope: ...and a NOT-added row WITHOUT factor_1 is exempt, as stated',
+    errorsMatching(historicalPreSchema, /missing required field/).length,
+    0,
+  );
+
+  const addedPreSchema = run({ 'a.jsonl': line(preSchema) }, ['a.jsonl']);
+  is(
+    'scope: ...while the SAME row ADDED is reported, as stated',
+    errorsMatching(addedPreSchema, /missing required field/).length > 0,
+    true,
+  );
+}
+
+// --- CONDITION 6: added rows only -------------------------------------------
+{
+  const redacted = row({ verbatim: shaped('<PATH>') });
+
+  // CLAIM 1: the message says what it covers.
+  const added = run({ 'a.jsonl': line(redacted) }, ['a.jsonl']);
+  const msg = errorsMatching(added, REDACTED)[0] ?? '';
+  is('scope: the placeholder refusal states its scope (#524)', /SCOPE:/.test(msg), true);
+  is('scope: ...naming added rows ONLY', /ONLY to rows a change ADDS/.test(msg), true);
+  is(
+    'scope: ...and saying the existing redacted rows are not a backlog to fix',
+    /not repairable/.test(msg),
+    true,
+  );
+
+  // CLAIM 2: the predicate actually behaves that way — the same row, not added,
+  // raises nothing. Without this the sentence above is only a promise.
+  const notAdded = run({ 'a.jsonl': line(redacted) }, []);
+  is(
+    'scope: ...and the SAME row not added raises nothing, as stated',
+    errorsMatching(notAdded, REDACTED).length,
+    0,
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

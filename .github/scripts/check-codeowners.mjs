@@ -227,8 +227,9 @@ function soleOwnerNote(rules) {
   return (
     `\n\nNote: all ${String(rules.length)} rules name a single owner (${only}). GitHub does not\n` +
     `request review from a PR's own author, so a PR authored by that account routes to\n` +
-    `no reviewer. This note disappears when a second distinct owner is added. It covers\n` +
-    `only self-authorship — the bypass-actor half is not visible from the repository.\n` +
+    `no reviewer. This covers only self-authorship — the bypass-actor half is not\n` +
+    `visible from the repository, so this note clearing is NECESSARY BUT NOT SUFFICIENT\n` +
+    `for review to be enforced. It disappears when a second distinct owner is added.\n` +
     `See docs/ownership.md.`
   );
 }

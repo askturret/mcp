@@ -23,12 +23,13 @@
  * Run: node .github/scripts/sdk-upgrade-drill.test.mjs
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { spawnSync, spawn } from 'node:child_process';
 
-import { didNotStart, couldNotRun, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
+import { didNotStart, couldNotRun, spawnFailureDetail, runDrill } from './sdk-upgrade-drill.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const DRILL = join(here, 'sdk-upgrade-drill.mjs');
@@ -241,6 +242,163 @@ check(
     threw = e.constructor.name;
   }
   check('the inlined `result.error.message` THROWS on this row', threw, 'TypeError');
+}
+
+// ---------------------------------------------------------------------------
+// runDrill's OWN OUTCOMES, which nothing here exercised (#560, D3)
+//
+// This file imported `didNotStart`, `couldNotRun` and `spawnFailureDetail` and
+// asserted on the drill's SOURCE TEXT — but never called `runDrill`. Seven of
+// its eight sites were unwitnessed, and the script sat on the inventory's
+// "observes no failure at all" list until a single witness removed it. That is
+// a THRESHOLD metric, so leaving the list said nothing about what remained: 7
+// of 8 were still uncovered afterwards.
+//
+// The fixture seam is `build()`, which runs `node_modules/typescript/bin/tsc`
+// RELATIVE TO THE ROOT IT IS GIVEN. So a temp root carrying a fake `tsc` — an
+// ordinary JS file, since the drill invokes it with `process.execPath` — drives
+// every outcome without touching production code and without PATH games.
+// ---------------------------------------------------------------------------
+{
+  const BOUNDARY = 'packages/transports/src/http/index.ts';
+  const WITH_BREAK = 'import type { Server as _McpSdkServer } from "@modelcontextprotocol/sdk";\n';
+
+  /** A throwaway repo root, optionally with a boundary file and a fake compiler. */
+  const drillRoot = ({ boundary = null, tsc = null } = {}) => {
+    const dir = mkdtempSync(join(tmpdir(), 'drill-'));
+    if (boundary !== null) {
+      mkdirSync(join(dir, 'packages', 'transports', 'src', 'http'), { recursive: true });
+      writeFileSync(join(dir, BOUNDARY), boundary);
+    }
+    if (tsc !== null) {
+      mkdirSync(join(dir, 'node_modules', 'typescript', 'bin'), { recursive: true });
+      writeFileSync(join(dir, 'node_modules', 'typescript', 'bin', 'tsc'), tsc);
+    }
+    return dir;
+  };
+
+  // --- the boundary file is absent: the drill did not run --------------------
+  {
+    const dir = drillRoot();
+    try {
+      const r = runDrill(dir);
+      check('drill: a missing boundary file is CANNOT CHECK, not a pass', r.code, 2);
+      check('drill: ...and says the drill did not run', /did not run/.test(r.message), true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // --- the break pattern is absent: the drill would measure nothing ----------
+  {
+    const dir = drillRoot({ boundary: 'export const nothing = 1;\n' });
+    try {
+      const r = runDrill(dir);
+      check('drill: a boundary file without the break pattern is CANNOT CHECK', r.code, 2);
+      // Distinguished from the missing-file case by its own wording, so the two
+      // cannot-check routes are told apart rather than merely both being 2.
+      check('drill: ...and does NOT report it as a missing file', /Boundary file not found/.test(r.message), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // --- the workspace does not build BEFORE the drill -------------------------
+  //
+  // The most valuable of the three: a failing BASELINE means a failure afterwards
+  // proves nothing about the SDK, so reporting it as a drill result would be
+  // "could not check" resolving as a finding.
+  {
+    const dir = drillRoot({ boundary: WITH_BREAK, tsc: 'process.exit(1);\n' });
+    try {
+      const r = runDrill(dir);
+      check('drill: a baseline that does not build is CANNOT CHECK', r.code, 2);
+      check('drill: ...and says so before attributing anything to the SDK', /does not build BEFORE/.test(r.message), true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // --- the synthetic break did not fail the build AT ALL --------------------
+  //
+  // code 1 rather than 2, and the distinction is the point: the drill RAN, and
+  // what it learned is that the boundary import is not type-checked. Reported as
+  // a failure precisely because it would otherwise read as a pass forever.
+  {
+    const dir = drillRoot({ boundary: WITH_BREAK, tsc: 'process.exit(0);\n' });
+    try {
+      const r = runDrill(dir);
+      check('drill: a break that fails NOTHING is a failure, not a pass', r.code, 1);
+      check('drill: ...and says the drill is measuring nothing', /measuring nothing/.test(r.message), true);
+      check('drill: ...and is NOT reported as cannot-check', r.code === 2, false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // --- the break escaped the transport boundary -----------------------------
+  //
+  // The fake compiler counts its own invocations through a marker file: the
+  // baseline must PASS and the post-break run must FAIL, which is the only way
+  // to reach this branch rather than the one above.
+  {
+    const tsc = [
+      "const { existsSync, writeFileSync } = require('node:fs');",
+      "const marker = 'baseline-done';",
+      'if (!existsSync(marker)) { writeFileSync(marker, ""); process.exit(0); }',
+      "console.log('packages/gateway/src/a.ts(1,1): error TS2307: broken');",
+      'process.exit(2);',
+    ].join('\n');
+    const dir = drillRoot({ boundary: WITH_BREAK, tsc });
+    try {
+      const r = runDrill(dir);
+      check('drill: a break escaping the transport is a failure', r.code, 1);
+      check('drill: ...and NAMES the package that escaped', /packages\/gateway/.test(r.message), true);
+      // The allowed package must not be reported as an escape — otherwise the
+      // check would fire on the drill working exactly as intended.
+      check('drill: ...and does not name the transport itself', /^\s+packages\/transports$/m.test(r.message), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+  // --- THE ENTRY POINT ITSELF ----------------------------------------------
+  //
+  // `process.exit(result.code)` stayed unwitnessed even after the outcomes
+  // above, because those call `runDrill` DIRECTLY — the line converting a
+  // result into an EXIT STATUS is only reached by running the script. Measured:
+  // neutralising it reddened NOTHING until this case existed.
+  {
+    const dir = drillRoot();
+    try {
+      const r = spawnSync(process.execPath, [DRILL, dir], { encoding: 'utf-8' });
+      check('drill: the entry point exits NON-ZERO on a cannot-check result', r.status, 2);
+      check('drill: ...and says the drill did not pass', /did not pass/.test(r.stderr), true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  // CONTROL. Without a passing run, neutralising the exit to 0 would still
+  // satisfy nothing above — but a guard that exited non-zero unconditionally
+  // would also pass, so the zero case is what makes the code meaningful.
+  {
+    const dir = drillRoot({
+      boundary: WITH_BREAK,
+      tsc: [
+        "const { existsSync, writeFileSync } = require('node:fs');",
+        "const marker = 'baseline-done';",
+        'if (!existsSync(marker)) { writeFileSync(marker, ""); process.exit(0); }',
+        "console.log('packages/transports/src/http/index.ts(1,1): error TS2307: broken');",
+        'process.exit(2);',
+      ].join('\n'),
+    });
+    try {
+      const r = spawnSync(process.execPath, [DRILL, dir], { encoding: 'utf-8' });
+      check('drill: CONTROL — a drill that passes exits 0 through the entry point', r.status, 0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

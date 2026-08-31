@@ -457,28 +457,49 @@ function nonAscii(s) {
   return [...out].sort();
 }
 
-/** Files under the corpus directory that this diff ADDS or MODIFIES. */
 /**
- * Corpus files this change ADDED **or MODIFIED** — `--diff-filter=AM`.
+ * Corpus files this change touched, with ADDED kept apart from MODIFIED (#562).
+ *
+ * It returned ONE set for `--diff-filter=AM`, and collapsing the two is what
+ * made the inverse check unfixable in wording alone: that check's reasoning is
+ * that a row added NOW was classified against the CURRENT allowlist, which is
+ * true of an added row and false of a pre-existing one sitting in a file the
+ * change happened to modify. With one set there was no predicate to narrow it
+ * to — hence `--name-status`, which reports the letter alongside the path.
+ *
+ * MEASURED before the split: passing the 75 files that hold a null-template row
+ * as changed made the inverse check fire 42 TIMES, against a control of 0. That
+ * 42 is the count this file's header names as correctly anomalous against the
+ * allowlist of their moment — so the site did not merely emit noise, it invited
+ * the re-classification the header calls corpus corruption.
  *
  * EXPORTED so the scope sentences that quote this predicate can be witnessed
- * against it directly (#552). They previously said "rows a change ADDS", which
- * is half of what this returns, and nothing could contradict them because the
- * predicate was reachable only through the wired entry point. A sentence about
- * a predicate no test can reach is a sentence nothing can falsify.
+ * against it directly (#552): a sentence about a predicate no test can reach is
+ * a sentence nothing can falsify.
+ *
+ * The unquoted `--name-status` output is kept as it was. Corpus filenames are
+ * generated ASCII timestamps, so the C-quoting a path with a space would
+ * trigger cannot arise here — the sibling `uncommittedCorpusRows` uses `-z`
+ * because it scans a directory a human can drop any name into. Left unchanged
+ * rather than widened, and stated so the asymmetry reads as deliberate.
  */
 export function changedCorpusFiles(rootDir, base) {
-  const r = spawnSync('git', ['diff', '--name-only', '--diff-filter=AM', `${base}...HEAD`, '--', CORPUS_REL], {
+  const r = spawnSync('git', ['diff', '--name-status', '--diff-filter=AM', `${base}...HEAD`, '--', CORPUS_REL], {
     cwd: rootDir,
     encoding: 'utf-8',
   });
   if (r.status !== 0) return null;
-  return new Set(
-    r.stdout
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.endsWith('.jsonl')),
-  );
+
+  const added = new Set();
+  const modified = new Set();
+  for (const line of r.stdout.split('\n')) {
+    const [status, ...rest] = line.split('\t');
+    const path = rest.join('\t').trim();
+    if (!path.endsWith('.jsonl')) continue;
+    if (status === 'A') added.add(path);
+    else if (status === 'M') modified.add(path);
+  }
+  return { added, modified };
 }
 
 /**
@@ -522,7 +543,7 @@ export function uncommittedCorpusRows(rootDir) {
   return { files: files.sort() };
 }
 
-export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
+export function check(rootDir, { diffBase = null, addedFiles = null, modifiedFiles = null } = {}) {
   const errors = [];
   const notes = [];
   const cannotCheck = [];
@@ -589,11 +610,22 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
   // this justification keeps reproducing it. Worth knowing before editing it a
   // third time: check the claim against `main()` and the self-test rather than
   // against how reasonable it reads.
+  // TWO SETS SINCE #562, because one predicate cannot express two scopes. Most
+  // conditions legitimately cover added-or-modified; the inverse check covers
+  // added ONLY, and while both lived in one set there was nothing to narrow it
+  // to. `addedFiles` keeps its name and meaning for the self-test; a fixture
+  // that names no modified files simply has none.
   let added = addedFiles;
+  let modified = modifiedFiles;
   if (added === null) {
     if (diffBase !== null) {
-      added = changedCorpusFiles(rootDir, diffBase);
-      if (added === null) cannotCheck.push(`could not diff against '${diffBase}', so no diff-scoped check ran`);
+      const changed = changedCorpusFiles(rootDir, diffBase);
+      if (changed === null) {
+        cannotCheck.push(`could not diff against '${diffBase}', so no diff-scoped check ran`);
+      } else {
+        added = changed.added;
+        modified = changed.modified;
+      }
     } else {
       cannotCheck.push('no diff base supplied, so no diff-scoped check ran');
     }
@@ -642,7 +674,13 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
     const lines = text.split('\n');
     const nonBlank = lines.filter((l) => l.trim() !== '');
 
-    const inChangedFile = added !== null && added.has(file.rel);
+    // TWO PREDICATES, and the difference is the whole of #562. `inChangedFile`
+    // is added-OR-modified and is right for the conditions whose subject is the
+    // FILE — one row per file, the required-field set, the placeholder shape.
+    // `isAddedFile` is the narrower one, and only the inverse check uses it,
+    // because only that check's reasoning depends on WHEN the row was written.
+    const isAddedFile = added !== null && added.has(file.rel);
+    const inChangedFile = isAddedFile || (modified !== null && modified.has(file.rel));
 
     // CONDITION 1a — one row per file, on files this change ADDS OR MODIFIES.
     //
@@ -678,7 +716,7 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
         continue;
       }
       if (isSupersedes(row)) supersededPaths.add(row.supersedes);
-      rows.push({ file, row, index: i + 1, inChangedFile });
+      rows.push({ file, row, index: i + 1, inChangedFile, isAddedFile });
     }
   }
 
@@ -686,7 +724,7 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
   // 40 rows carry the field today across only three distinct values.
   const blobHistory = allowlistBlobHistory(rootDir);
 
-  for (const { file, row, index, inChangedFile } of rows) {
+  for (const { file, row, index, inChangedFile, isAddedFile } of rows) {
     const where = `${file.rel} row ${index}`;
 
     // A supersedes row is an observation ABOUT a capture. It deliberately
@@ -888,31 +926,40 @@ export function check(rootDir, { diffBase = null, addedFiles = null } = {}) {
       }
     }
 
-    // THE INVERSE CHECK — diff-scoped, and skipping superseded rows.
+    // THE INVERSE CHECK — ADDED-ONLY, and skipping superseded rows (#562).
     //
     // A row claiming NO template while one matches is a defect only if that
     // template existed when the row was written. On a row this change ADDS that
-    // holds by construction — but the predicate is per-FILE and covers MODIFIED
-    // files too, where it does not (#552).
+    // holds BY CONSTRUCTION, and this is the one condition whose reasoning turns
+    // on WHEN the row was written rather than on what it contains — which is why
+    // it alone reads `isAddedFile` while its neighbours read `inChangedFile`.
     //
-    // MEASURED, because this one is the opposite of mild: pass the 75 files
-    // holding a null-template row as changed and this fires 42 times — the same
-    // 42 the header names as correctly anomalous against the allowlist of their
-    // moment. The remedy it would invite is re-classifying history, which is the
-    // corpus corruption that section exists to forbid. Narrowing the predicate
-    // to added-only is the real repair and needs the A and M sets kept apart,
-    // which is a mechanism change; until then the message carries the warning.
-    if (inChangedFile && claimed === null && verbatim !== null && !supersededPaths.has(file.rel.replace(/^\.operum\/audit\//, ''))) {
+    // MEASURED BEFORE AND AFTER, because the predicate was the defect rather
+    // than the wording: passing the 75 files holding a null-template row as
+    // MODIFIED made this fire 42 times against a control of 0. Those 42 are the
+    // ones the header names as correctly anomalous against the allowlist of
+    // their moment, so the site did not merely emit noise — it invited the
+    // re-classification that section calls corpus corruption, and the cheapest
+    // way out was the destructive one. Now: 0.
+    //
+    // THE MODIFIED-FILE GUIDANCE IS GONE WITH IT, deliberately. It told an
+    // author what to do when a pre-existing row was reported at them, and that
+    // can no longer happen — keeping it would leave a comment describing a
+    // situation the surrounding code prevents, which is #543 exactly, arriving
+    // on the mitigation written to prevent something else.
+    if (isAddedFile && claimed === null && verbatim !== null && !supersededPaths.has(file.rel.replace(/^\.operum\/audit\//, ''))) {
       const matching = [...templates.values()].filter((t) => corpusMatcher(t).exec(verbatim) !== null).map((t) => t.id);
       if (matching.length > 0) {
         errors.push(
           `${where}: claims no template, but ${matching.join(' / ')} matches its \`verbatim\`. ` +
-            `A row this change ADDS is classified against the current allowlist, so "no template covers this" ` +
-            `is checkable. THE SCOPE IS PER-FILE, NOT PER-ROW (#552): if you MODIFIED a capture file rather ` +
-            `than adding one, a PRE-EXISTING row in it is being judged against an allowlist that did not exist ` +
-            `when it was written, and it may well have been correctly anomalous at the time. DO NOT RE-CLASSIFY ` +
-            `IT to clear this — 42 rows in the corpus predate T1C and re-labelling them corrupts the very ` +
-            `measurement the corpus carries. Restore the file you modified instead.`,
+            `SCOPE: rows in a capture file this change ADDS, and only those (#562) — a row you are adding now ` +
+            `is classified against the CURRENT allowlist, so "no template covers this" is checkable of it. ` +
+            `Rows in files you merely modified are NOT reported here, because a pre-existing row was judged ` +
+            `against the allowlist of ITS moment and may have been correctly anomalous then. ` +
+            `So this is about the row you are adding: re-read its \`verbatim\` against ${matching.join(' / ')} ` +
+            `and set \`template_id\` if it genuinely matches. Never re-label a row to clear an error you did ` +
+            `not cause — the corpus is a measurement, and editing history to green a build destroys the thing ` +
+            `it measures.`,
         );
       }
     }

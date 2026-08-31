@@ -176,5 +176,18 @@ The conditions are also **independently verifiable** — `GET /repos/askturret/m
 for visibility, and `GET /repos/askturret/mcp/rulesets/{id}` for the approval
 requirement and the bypass list. Nothing here asks to be taken on trust.
 
+Since #535 they are also verified on a schedule, rather than left to a reader
+who may never check. The block below declares what this section depends on, and
+`check-platform-claims.mjs --live` fails the nightly run when live state has
+moved away from it. A claim tagged `declared-unverifiable` is one CI holds no
+credential to read; it is declared anyway, so that "nothing verified this" is
+visible rather than absent.
+
+<!-- platform-claims
+repository_visibility: public (verifiable)
+code_owner_review_required: true (declared-unverifiable)
+author_is_bypass_actor: true (declared-unverifiable)
+-->
+
 ---
 *Operum Engineer · [operum.ai](https://operum.ai)*

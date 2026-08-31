@@ -200,6 +200,19 @@ tracked in #330.
 > went stale without anyone editing the file. The conditions above can be
 > re-checked — `GET /repos/askturret/mcp/rulesets/{id}` returns both the approval
 > requirement and the bypass list.
+>
+> Since #535 they are re-checked ON A SCHEDULE rather than only being
+> re-checkable. The block below declares this section's platform dependencies;
+> `check-platform-claims.mjs --live` fails the nightly run when live state moves
+> away from them. It closes the gap this paragraph is about — the previous text
+> went stale with nothing watching — for DECLARED claims. It cannot make anyone
+> declare one.
+
+<!-- platform-claims
+repository_visibility: public (verifiable)
+code_owner_review_required: true (declared-unverifiable)
+author_is_bypass_actor: true (declared-unverifiable)
+-->
 
 **Good.** The failure mode is closed: a missing, unreadable, or invalid file
 means everything routes ANOMALOUS, which is exactly today's behaviour.

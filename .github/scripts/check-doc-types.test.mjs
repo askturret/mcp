@@ -15,6 +15,8 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 import { check, memberNames, aliasMembers, stripNonCode, typescriptBlocks } from './check-doc-types.mjs';
 
@@ -238,6 +240,41 @@ is('typescriptBlocks: finds a ts-tagged fence', typescriptBlocks('```ts\nlet a;\
   writeFileSync(join(dir, 'docs', 'g.md'), fence('interface X { a: string; }'));
   const r = check(dir);
   is('an empty type index exits 2 rather than passing everything', r.code, 2);
+}
+
+// ---------------------------------------------------------------------------
+// THE ENTRY POINT ITSELF (#560, D3)
+//
+// `process.exit(result.code)` was unwitnessed: this file only calls `check()`,
+// so the line converting a result into an EXIT STATUS never ran. #110's shape —
+// the exported function covered, the thing CI runs not.
+// ---------------------------------------------------------------------------
+{
+  const SCRIPT = fileURLToPath(new URL('check-doc-types.mjs', import.meta.url));
+  const runIt = (dir) => spawnSync(process.execPath, [SCRIPT, dir], { encoding: 'utf-8' });
+
+  const bad = mkdtempSync(join(tmpdir(), 'doctypes-entry-'));
+  tmpDirs.push(bad);
+  mkdirSync(join(bad, 'docs'), { recursive: true });
+  writeFileSync(join(bad, 'docs', 'g.md'), fence('interface X { a: string; }'));
+  is('entry: a repo the guard rejects exits NON-ZERO through the entry point', runIt(bad).status !== 0, true);
+
+  // CONTROL: without it, neutralising the exit to 0 could still satisfy the
+  // assertion above if the guard happened to reject everything.
+  // The CONTROL uses this file own known-passing pair rather than an empty
+  // repo: an empty type index legitimately exits 2, so an empty fixture would
+  // have asserted the control against the wrong reason.
+  const okDir = scratch(
+    SOURCE,
+    fence(
+      'interface OperationDefinition {\n' +
+        '  readonly id: OperationId;\n' +
+        '  readonly effects: EffectMetadata;\n' +
+        '  readonly executor: ExecutorBinding;\n' +
+        '}',
+    ),
+  );
+  is('entry: CONTROL — a repo it accepts exits 0', runIt(okDir).status, 0);
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });

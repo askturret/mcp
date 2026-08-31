@@ -15,6 +15,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { check, matches, parseCodeowners } from './check-codeowners.mjs';
@@ -256,6 +257,29 @@ console.log('\n# the sole-owner note (#330)\n');
 }
 
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
+
+// ---------------------------------------------------------------------------
+// THE ENTRY POINT ITSELF (#560, D3)
+//
+// `process.exit(result.code)` was unwitnessed because this file only ever calls
+// `check()` directly — so the line that turns a result into an EXIT STATUS
+// never executed. That is #110's shape: the exported function had thorough
+// coverage while the thing CI actually runs had none.
+//
+// Both directions, because neutralising this exit makes every run report 0:
+// without the passing case the assertion could be satisfied by a guard that
+// exits non-zero unconditionally.
+// ---------------------------------------------------------------------------
+{
+  const SCRIPT = join(here, 'check-codeowners.mjs');
+  const runIt = (dir) => spawnSync(process.execPath, [SCRIPT, dir], { encoding: 'utf-8' });
+
+  const bad = scratch('* @founder\n/packages/sources/openapi/ @founder\n', ['sources-openapi']);
+  check_('entry: a failing repo exits NON-ZERO through the entry point', runIt(bad).status, 1);
+
+  const good = scratch('* @founder\n/packages/core/ @founder\n', ['core']);
+  check_('entry: CONTROL — a passing repo exits 0', runIt(good).status, 0);
+}
 
 console.log(`\n${String(passed)} passed, ${String(failed)} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

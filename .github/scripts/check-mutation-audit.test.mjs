@@ -1063,6 +1063,31 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
     ...over,
   });
 
+  // --- THE NON-NEGATIVITY INVARIANT, asserted directly (#558) --------------
+  //
+  // `undispositioned` counts unwitnessed sites carrying no entry, so it can
+  // never be negative. #541 established that by counting DISTINCT SITES; this
+  // pins it as a property instead, because #558 broke it again from a direction
+  // counting could not see — a new `not-mutatable` verdict made a site HONOURED
+  // without it being UNWITNESSED, so it subtracted from a population it was
+  // never in and the figure went to -1.
+  //
+  // The lesson is why this is a property assertion and not another arithmetic
+  // fix: the previous repair was correct and still did not survive a new
+  // verdict. What must hold is the inequality, whatever the verdict vocabulary
+  // grows into next.
+  {
+    const gated = { kind: 'throw', line: 7, source: 'boom();', verdict: 'not-mutatable' };
+    const r = evaluateExemptions(reportWith([gated]), [
+      entry({ kind: 'throw', source: 'boom();', mutationDoesNotTerminate: true }),
+    ]);
+    check('ledger: a ledger-gated site is honoured without an error', r.errors.length, 0);
+    check('ledger: ...and is counted as honoured', r.counts.honoured, 1);
+    check('ledger: ...and undispositioned is NEVER negative', r.counts.undispositioned >= 0, true);
+    // ...and it does not consume an unwitnessed slot it never occupied.
+    check('ledger: ...and does not subtract from the unwitnessed population', r.counts.undispositioned, 0);
+  }
+
   // --- CONTROL: the SHIPPED ledger is well-formed ---------------------------
   //
   // This asserted `MUTATION_EXEMPT.length === 0`, which was a FACT WHEN WRITTEN

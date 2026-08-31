@@ -891,5 +891,127 @@ rejects(
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE TOML PARSER'S REFUSALS ARE WITNESSED (closes #558)
+//
+// RE-MEASURED AT DISPATCH rather than inherited: the audit reports this file as
+// 42 sites, 27 witnessed, 15 unwitnessed, and the 15 line numbers match the
+// enumeration this work was dispatched with one-for-one. So the set was right —
+// but it was checked, because the #533 family's own scope moved 38 -> 46 -> 48
+// inside a day, and the rule that came out of it is to put the measurement
+// rather than the figure.
+//
+// EACH FIXTURE WAS MAPPED TO ITS SITE BY RUNNING IT, not by reading the parser
+// and reasoning about which branch it ought to reach. A shape I expected to
+// land on `expected a quoted string` in fact reaches `unsupported value` — and
+// a fixture that witnesses a different site than intended still passes, quietly
+// covering the wrong thing.
+//
+// The parser is driven DIRECTLY through the exported `parseStrictToml`: these
+// are refusals about document syntax, so a fixture repository would add a
+// subprocess and a temp directory per case without changing what is asserted.
+// ---------------------------------------------------------------------------
+{
+  const LITERAL_UNCLOSED = 'schema_version = 1\n[[template]]\nid = ' + "'".repeat(3) + 'unclosed\n';
+
+  const PARSER_REFUSALS = [
+    ['a bad \\u escape', 'schema_version = 1\n[[template]]\nid = "a\\uZZZZb"\n', /bad \\u escape/],
+    ['an unterminated string', 'schema_version = 1\n[[template]]\nid = "unclosed\n', /unterminated string/],
+    ['text after a value', 'schema_version = 1\n[[template]]\nid = "a" junk\n', /unexpected text after value: junk/],
+    ['a non-string array element', 'schema_version = 1\n[[template]]\nevidence = [ 1 ]\n', /arrays hold .*quoted strings only/],
+    ['a slot before any template', 'schema_version = 1\n[[template.slot]]\nname = "x"\n', /\[\[template\.slot\]\] before any \[\[template\]\]/],
+    ['a line that is not key/value', 'schema_version = 1\n[[template]]\njust some words\n', /not a key\/value line: just some words/],
+    ['a key outside the supported shape', 'schema_version = 1\n[[template]]\nBadKey = "x"\n', /unsupported key: BadKey/],
+    ['a literal string spanning lines', LITERAL_UNCLOSED, /literal strings must open and close on one line/],
+    ['an array that never closes', 'schema_version = 1\n[[template]]\nevidence = [\n  "a",\n', /unterminated array/],
+  ];
+
+  for (const [desc, doc, expect] of PARSER_REFUSALS) {
+    let message = null;
+    try {
+      parseStrictToml(doc);
+    } catch (e) {
+      message = String(e.message);
+    }
+    check('parser: refuses ' + desc, message !== null, true);
+    // THE MESSAGE, not merely that something threw. Neutralising one throw
+    // usually leaves the parser to fail later on the same document, so "it
+    // threw" is satisfied by a different site entirely — which witnesses
+    // nothing while looking green.
+    check('parser: ...and says which, for ' + desc, expect.test(message ?? ''), true);
+    // ...and every refusal carries its line, because a parser error without one
+    // sends the reader to a document rather than to a line of it.
+    check('parser: ...and names the line, for ' + desc, /^line \d+: /.test(message ?? ''), true);
+  }
+
+  // THE CONTROL. Nine refusals prove nothing if the parser rejects everything:
+  // a well-formed document must still parse, and yield what it declared.
+  const ok = parseStrictToml('schema_version = 1\n[[template]]\nid = "X"\nevidence = [\n  "a.jsonl",\n]\n');
+  check('parser: CONTROL — a well-formed document parses', ok.schema_version, 1);
+  check('parser: CONTROL — ...and carries its template', ok.template[0].id, 'X');
+  check('parser: CONTROL — ...and its multi-line array', ok.template[0].evidence.length, 1);
+}
+
+// ---------------------------------------------------------------------------
+// THE DOCUMENT-LEVEL REFUSALS ARE WITNESSED (#558)
+//
+// The other five of D1's fifteen. These run END-TO-END through `rejects`,
+// unlike the parser block above, and the difference is not stylistic: each of
+// these is a judgement about a document that PARSES, so the guard's own exit
+// code is part of what is being asserted. The parser cases cannot reach an exit
+// code at all — the document never becomes a document.
+//
+// Line 606 is the TEMPLATE required-key check. Its neighbour at 686 is the SLOT
+// required-key check, which is already witnessed and belongs to #430 — closed.
+// Adjacent names, opposite status, eighty lines apart; noted so the next reader
+// does not "fix" the one that is already covered.
+// ---------------------------------------------------------------------------
+
+// An allowlist with no templates at all. The guard's own reason is the point:
+// an empty allowlist passes every check vacuously, which is the empty-pass
+// family (#514) at the top of this file rather than inside it.
+rejects(
+  'an allowlist declaring NO templates is refused',
+  () => 'schema_version = 1\n',
+  /no \[\[template\]\] entries/,
+);
+
+// Every TEMPLATE required key, one at a time. A loop rather than one case,
+// because a single missing key witnesses the branch for one key and says
+// nothing about the other seven — and the check is a loop itself.
+for (const key of ['family', 'concealment_clause', 'first_seen', 'corpus_matches', 'trailing_attachment']) {
+  rejects(
+    `a template missing \`${key}\` is refused`,
+    (t) => t.split('\n').filter((l) => !l.startsWith(`${key} =`)).join('\n'),
+    new RegExp(`missing required key \\\`${key}\\\``),
+  );
+}
+
+// corpus_matches counts evidence. Zero is not "no evidence yet" — it is a
+// template asserting it was never observed, which is a contradiction with
+// having been written down.
+rejects(
+  'a template claiming corpus_matches = 0 is refused',
+  (t) => t.replace('corpus_matches = 1', 'corpus_matches = 0'),
+  /corpus_matches must be >= 1/,
+);
+
+// `attachment_required` decides whether a capture must exhibit the trailing
+// listing, so a non-boolean leaves that undecided rather than defaulted.
+rejects(
+  'a non-boolean attachment_required is refused',
+  (t) => t.replace('attachment_required = true', 'attachment_required = "yes"'),
+  /without a boolean attachment_required/,
+);
+
+// A slot pattern that does not compile. Reported rather than thrown: one
+// unusable slot must not take the whole allowlist down with it, and the message
+// carries the engine's own reason so the author can see WHY it did not compile.
+rejects(
+  'a slot pattern that does not compile is refused',
+  (t) => t.replace("pattern = '''/[^\\n]+'''", "pattern = '''/[unclosed'''"),
+  /pattern does not compile/,
+);
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

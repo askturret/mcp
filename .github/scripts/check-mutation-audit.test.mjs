@@ -266,7 +266,7 @@ process.exit(failed > 0 ? 1 : 0);
 {
   const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
   try {
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     const fixture = report.guards.find((g) => g.name === 'check-fixture.mjs');
 
     check('the fixture guard is measured', fixture?.status, 'measured');
@@ -359,7 +359,7 @@ process.exit(0);
     );
     check(
       '...and it is an audit-integrity error, not a measurement',
-      (await audit(dir)).errors.length >= 0 && result.results[0]?.detail !== undefined,
+      (await audit(dir, { exempt: [] })).errors.length >= 0 && result.results[0]?.detail !== undefined,
       true,
     );
 
@@ -389,7 +389,7 @@ process.exit(1);
     check('a guard whose baseline is red is CANNOT CHECK', result.status, 'cannot-check');
     check('...and no site is claimed as witnessed', result.results.length, 0);
 
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     check('...and cannot-check IS an audit-integrity error', report.errors.some((e) => reHits(/CANNOT CHECK/, e)), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -403,7 +403,7 @@ process.exit(1);
   const inert = `#!/usr/bin/env node\nconsole.log('nothing can fail here');\n`;
   const dir = withFixture(inert, FIXTURE_TEST);
   try {
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     check('an empty site set REFUSES rather than reporting all clean', report.errors.length >= 1, true);
     check(
       '...and says so by name',
@@ -432,7 +432,7 @@ process.exit(1);
     // Sites, no self-test.
     writeFileSync(join(dir, '.github', 'scripts', 'check-lonely.mjs'), `process.exit(1);\n`);
 
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     check('a guard with sites but no self-test is reported UNREACHABLE', report.unreachable.length, 1);
     check('...by name', report.unreachable[0]?.name, 'check-lonely.mjs');
     check('...with its site count, so the omission has a size', report.unreachable[0]?.sites, 1);
@@ -497,7 +497,7 @@ process.exit(1);
     // ...and it is REPORTED, not failed. It is the aggregate of "every site
     // here is unwitnessed", which stage 1 measures rather than fails on.
     check('...and it is NOT an integrity error', interpretProbe(result).length, 0);
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     check('...but it IS surfaced by name in the report', report.noFailureWitnesses.includes('check-fixture.mjs'), true);
     check('...and the inventory renders it', reHits(/observe no failure at all/, renderInventory(report)), true);
   } finally {
@@ -591,7 +591,7 @@ process.exit(failed > 0 ? 1 : 0);
     );
     check(
       '...and it is reported as an audit-integrity error, not a measurement',
-      (await audit(dir)).errors.some((e) => reHits(/unknown failure path/, e)),
+      (await audit(dir, { exempt: [] })).errors.some((e) => reHits(/unknown failure path/, e)),
       true,
     );
 
@@ -1063,12 +1063,38 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
     ...over,
   });
 
-  // --- CONTROL: the shipped ledger is empty and says so cleanly -------------
+  // --- CONTROL: the SHIPPED ledger is well-formed ---------------------------
+  //
+  // This asserted `MUTATION_EXEMPT.length === 0`, which was a FACT WHEN WRITTEN
+  // rather than a property: the ledger was empty because nothing had been
+  // dispositioned yet. The first two entries (#558) turned three green
+  // assertions red with nothing wrong — an assertion named "an empty ledger
+  // raises nothing" that fails the moment the ledger stops being empty was
+  // pinning the wrong noun.
+  //
+  // What is durable is that every SHIPPED entry is complete and names a known
+  // kind. That holds at zero entries and at any number.
   {
-    const r = evaluateExemptions(reportWith([site()]), MUTATION_EXEMPT);
-    check('ledger: the shipped ledger is empty', MUTATION_EXEMPT.length, 0);
-    check('ledger: an empty ledger raises nothing', r.errors.length, 0);
-    check('ledger: ...and every unwitnessed site reads as undispositioned', r.counts.undispositioned, 1);
+    for (const [i, e] of MUTATION_EXEMPT.entries()) {
+      for (const field of ['script', 'kind', 'source', 'reason', 'unblockedBy', 'maskingExcluded']) {
+        check(
+          `ledger: shipped entry ${i + 1} carries a non-empty \`${field}\``,
+          typeof e[field] === 'string' && e[field].trim() !== '',
+          true,
+        );
+      }
+      check(`ledger: shipped entry ${i + 1} names a known site kind`, SITE_KINDS.includes(e.kind), true);
+    }
+
+    // ...and a ledger with NO entries raises nothing about an unrelated site,
+    // which is the behaviour the old "the shipped ledger is empty" assertion was
+    // really reaching for. Written with `[]` rather than the shipped ledger on
+    // purpose: this fixture report measures only `check-fixture.mjs`, so the
+    // shipped entries would correctly report as unmeasured-and-stale here, and
+    // the assertion would then be about scope rather than about emptiness.
+    const r = evaluateExemptions(reportWith([site()]), []);
+    check('ledger: a ledger with no entries says nothing about an unrelated site', r.errors.length, 0);
+    check('ledger: ...and that site reads as undispositioned', r.counts.undispositioned, 1);
   }
 
   // --- CONTROL: an honest entry is accepted --------------------------------

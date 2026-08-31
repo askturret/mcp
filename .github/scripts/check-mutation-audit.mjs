@@ -231,7 +231,50 @@ export const siteSource = (src, index) => {
  *                     lands — born wrong rather than gone stale, so the decay
  *                     check above would never catch it.
  */
-export const MUTATION_EXEMPT = Object.freeze([]);
+export const MUTATION_EXEMPT = Object.freeze([
+  // THE FIRST TWO ENTRIES THIS LEDGER HAS EVER CARRIED (#558). Both come from
+  // check-concealment-templates' fifteen, and they are exempt for DIFFERENT
+  // reasons — one cannot be reached, the other cannot be mutated. Writing them
+  // as one category would have hidden that.
+  {
+    script: 'check-concealment-templates.mjs',
+    kind: 'throw',
+    source: `if (s[i] !== '"') throw new TomlError(\`line \${lineNo}: expected a '"'-quoted string\`);`,
+    reason:
+      'UNREACHABLE from the module\'s public surface. `readBasicString` has exactly two call sites and both ' +
+      'establish the precondition first: the array reader throws its own "arrays hold quoted strings only" ' +
+      'immediately above its call, and the value parser only calls it under `rest.startsWith(\'"\')`. So no ' +
+      'document can enter this function with a non-quote at `i`. This names the INVARIANT rather than a ' +
+      'neighbouring guard that happens to sit in front of a different path — the distinction #543 turned on.',
+    unblockedBy:
+      'Exporting `readBasicString` and calling it directly with a non-quote would witness it, and is ' +
+      'deliberately NOT done: it reaches through the invariant that makes the branch unreachable, which is ' +
+      'the fabricated witness #543 declined. A THIRD call site that does not pre-check would make it ' +
+      'genuinely reachable, and is what should re-open this entry.',
+    maskingExcluded:
+      'Instrumented the branch and ran the full self-test: 0 entries across 164 passing assertions. The same ' +
+      'instrumentation on line 249 — a site the corpus does reach — records 1, so the zero is a measurement ' +
+      'rather than a probe that cannot see. A suppressed red would still have executed the branch.',
+  },
+  {
+    script: 'check-concealment-templates.mjs',
+    kind: 'throw',
+    source: 'if (idx >= lines.length) throw new TomlError(`line ${lineNo}: unterminated array`);',
+    reason:
+      'NOT MUTATABLE, which is different from not reachable — a fixture reaches it easily and the self-test ' +
+      'has one. This throw is the ONLY exit from `while (!rest.trimEnd().endsWith(\']\'))`. Neutralised, `idx` ' +
+      'runs past `lines.length`, `lines[idx]` is undefined, and `rest` grows by "\\nundefined" forever. The ' +
+      'mutant does not compute a wrong answer; it does not terminate, so no assertion is ever reached to redden.',
+    unblockedBy:
+      'A second bound on that loop — a maximum line count, or hoisting the length test into the condition — ' +
+      'would make the mutant terminate and the existing fixture would then witness it. The fixture is already ' +
+      'written ("an array that never closes"), so this entry is about the mutation, not about coverage.',
+    maskingExcluded:
+      'Masking is a red that gets swallowed; here no red is produced because the process never completes. ' +
+      'Measured with a 25s cap: the mutant does not terminate, while the unmutated self-test finishes in ' +
+      'under a second. Non-termination is observable from outside, unlike a suppressed exit code.',
+  },
+]);
 
 /** Fields every entry must carry, non-empty. */
 const EXEMPT_FIELDS = Object.freeze(['script', 'kind', 'source', 'reason', 'unblockedBy', 'maskingExcluded']);
@@ -329,6 +372,7 @@ export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
     }
 
     const matches = byKey.get(`${entry.script}\u0000${entry.kind}\u0000${entry.source}`) ?? [];
+
 
     if (matches.length === 0) {
       errors.push(
@@ -1094,7 +1138,19 @@ export function renderInventory(report, previousMarkdown = null) {
   return `${lines.join('\n')}\n`;
 }
 
-export async function audit(rootDir, { onProgress = () => {} } = {}) {
+/**
+ * `exempt` is a parameter so a run over a SUBSET of guards can say which ledger
+ * applies to it (#558).
+ *
+ * It defaulted to the shipped ledger unconditionally, which is right for the
+ * whole-tree run `main()` performs and wrong for every fixture run: the audit
+ * then judges real entries against a measurement that never looked at their
+ * scripts, and correctly-written entries report as stale. That stayed invisible
+ * while the ledger was empty — the first two entries surfaced it immediately.
+ *
+ * The default is unchanged, so production behaviour is identical.
+ */
+export async function audit(rootDir, { onProgress = () => {}, exempt = MUTATION_EXEMPT } = {}) {
   const guards = discoverGuards(rootDir);
   const errors = [];
   const measured = [];
@@ -1159,7 +1215,7 @@ export async function audit(rootDir, { onProgress = () => {} } = {}) {
   // measurement — which is why they join `errors` and fail, while unwitnessed
   // sites themselves stay reported-only.
   const report = { guards: measured, unreachable, unwitnessed, noFailureWitnesses, errors, totals };
-  const ledger = evaluateExemptions(report);
+  const ledger = evaluateExemptions(report, exempt);
   errors.push(...ledger.errors);
   report.exemptions = ledger.counts;
   return report;

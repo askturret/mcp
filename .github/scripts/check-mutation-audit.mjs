@@ -654,11 +654,11 @@ function runNodeCheck(file) {
  */
 const SELF_TEST_TIMEOUT_MS = 90_000;
 
-function runSelfTest(testPath, cwd) {
+function runSelfTest(testPath, cwd, timeoutMs = SELF_TEST_TIMEOUT_MS) {
   const r = spawnSync(process.execPath, [testPath], {
     encoding: 'utf-8',
     cwd,
-    timeout: SELF_TEST_TIMEOUT_MS,
+    timeout: timeoutMs,
   });
   // A TIMED-OUT RUN IS NOT A FAILING RUN, and conflating them is the trap in
   // the obvious fix. `spawnSync` reports a killed child with a non-zero-ish
@@ -669,7 +669,7 @@ function runSelfTest(testPath, cwd) {
     return {
       code: null,
       timedOut: true,
-      out: `self-test DID NOT TERMINATE within ${String(SELF_TEST_TIMEOUT_MS / 1000)}s`,
+      out: `self-test DID NOT TERMINATE within ${String(timeoutMs / 1000)}s`,
     };
   }
   // `code: null` propagated into "baseline self-test is not green (exit null)",
@@ -711,6 +711,11 @@ export async function auditGuard({
   onProgress = () => {},
   mutate = applyMutations,
   exempt = MUTATION_EXEMPT,
+  // A SEAM, for the same reason `mutate` is one (#558). Witnessing the
+  // did-not-terminate verdict otherwise costs the full 90s cap per assertion,
+  // which is why that verdict shipped unwitnessed: the mechanism that prevents
+  // a false "THE EXEMPTION IS FALSE" could be deleted with the suite green.
+  selfTestTimeoutMs = SELF_TEST_TIMEOUT_MS,
 }) {
   const original = readFileSync(guardPath, 'utf-8');
   const sites = enumerateSites(original);
@@ -721,7 +726,7 @@ export async function auditGuard({
     return { name, status: 'no-sites', sites: [], results: [] };
   }
 
-  const baseline = runSelfTest(testPath, rootDir);
+  const baseline = runSelfTest(testPath, rootDir, selfTestTimeoutMs);
   if (baseline.code !== 0) {
     // "Red under mutation" is meaningless without a green baseline.
     return {
@@ -853,7 +858,7 @@ export async function auditGuard({
         continue;
       }
 
-      const run = runSelfTest(testPath, rootDir);
+      const run = runSelfTest(testPath, rootDir, selfTestTimeoutMs);
       const newly = failingAssertions(run.out).filter((a) => !baselineFailures.has(a));
       results.push({
         ...site,
@@ -880,7 +885,7 @@ export async function auditGuard({
     if (!parsedAll.ok) {
       probe = { status: 'unparseable', detail: parsedAll.out.trim().split('\n')[0] ?? '' };
     } else {
-      const all = runSelfTest(testPath, rootDir);
+      const all = runSelfTest(testPath, rootDir, selfTestTimeoutMs);
       probe = {
         status: all.code === 0 ? 'no-failure-witnesses' : 'ok',
         exitCode: all.code,
@@ -1250,7 +1255,12 @@ export function renderInventory(report, previousMarkdown = null) {
  *
  * The default is unchanged, so production behaviour is identical.
  */
-export async function audit(rootDir, { onProgress = () => {}, exempt = MUTATION_EXEMPT } = {}) {
+export async function audit(rootDir, {
+  onProgress = () => {},
+  exempt = MUTATION_EXEMPT,
+  mutate = applyMutations,
+  selfTestTimeoutMs = SELF_TEST_TIMEOUT_MS,
+} = {}) {
   const guards = discoverGuards(rootDir);
   const errors = [];
   const measured = [];
@@ -1264,7 +1274,7 @@ export async function audit(rootDir, { onProgress = () => {}, exempt = MUTATION_
       else noSites += 1;
       continue;
     }
-    const result = await auditGuard({ ...g, rootDir, onProgress });
+    const result = await auditGuard({ ...g, rootDir, onProgress, exempt, mutate, selfTestTimeoutMs });
     if (result.status === 'no-sites') { noSites += 1; continue; }
     measured.push(result);
   }

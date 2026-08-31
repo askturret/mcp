@@ -1088,6 +1088,115 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
     check('ledger: ...and does not subtract from the unwitnessed population', r.counts.undispositioned, 0);
   }
 
+// ---------------------------------------------------------------------------
+// THE FIX'S OWN MECHANISMS ARE WITNESSED (#558)
+//
+// The hang repair shipped with only its LEDGER ACCEPTANCE witnessed. QA
+// mutated the rest and measured: neutering the gate reddened 0, and collapsing
+// `did-not-terminate` back into `witnessed` reddened 0. Both could be deleted
+// with the suite green at 154/0 — the hang able to return silently, inside the
+// workstream whose whole subject is unwitnessed failure paths.
+//
+// This file has learned the same lesson before, and `mutate`'s own docblock
+// records it: removing the `node --check` gate once "left the suite at 48/0".
+// Same shape, same seam — which is why `mutate` is a parameter at all.
+//
+// Neither witness pays the hang cost. The gate is observed through a SPY
+// asserted never-called; the verdict through a deliberately tiny timeout, so a
+// sleeping fixture reaches it in under a second rather than in 90.
+// ---------------------------------------------------------------------------
+{
+  const GATED_SOURCE = "if (flags.includes('--trip-orphan')) errors.push('the orphan check fired');";
+  const gatedEntry = {
+    script: 'check-fixture.mjs',
+    kind: 'errors-push',
+    source: GATED_SOURCE,
+    reason: 'fixture',
+    unblockedBy: 'fixture',
+    maskingExcluded: 'fixture',
+    mutationDoesNotTerminate: true,
+  };
+
+  const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
+  try {
+    // A SPY, so "was this site mutated?" is observed rather than inferred from
+    // the verdict — the verdict alone could be produced by a different route.
+    const mutatedLines = [];
+    const spy = (src, sites) => {
+      for (const s of sites) mutatedLines.push(s.line);
+      return applyMutations(src, sites);
+    };
+
+    const g = await audit(dir, { exempt: [gatedEntry], mutate: spy });
+    const fixture = g.guards.find((x) => x.name === 'check-fixture.mjs');
+    const gated = fixture?.results.find((r) => r.source === GATED_SOURCE);
+
+    check('gate: a ledger-gated site is NOT passed to mutate', mutatedLines.includes(gated?.line), false);
+    check('gate: ...and records `not-mutatable`', gated?.verdict, 'not-mutatable');
+    // The CONTROL, and it is what stops the assertion above passing vacuously:
+    // the spy must have mutated the OTHER sites, or "never called for this one"
+    // would be satisfied by a spy that was never called at all.
+    check('gate: ...while other sites in the same guard WERE mutated', mutatedLines.length > 0, true);
+    // ...and the gate must not silently swallow the rest of the guard.
+    check('gate: ...and the guard is still measured', fixture?.status, 'measured');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --- the did-not-terminate verdict ----------------------------------------
+//
+// A timed-out run must NOT record as `witnessed`. That is the trap in the
+// obvious fix: a killed child exits non-zero, so the naive reading calls the
+// site witnessed and the ledger then raises a false "THE EXEMPTION IS FALSE"
+// against a true entry — red instead of hung, the same defect louder.
+{
+  // A guard whose throw is the ONLY exit from its loop — the shape of the real
+  // site this repair exists for. It terminates instantly UNMUTATED, and does not
+  // terminate once the throw is neutralised, so the baseline stays green and only
+  // the mutated run is killed. A fixture that merely slept would time out its own
+  // baseline, and a non-green baseline is CANNOT CHECK — no sites measured, and
+  // the assertion would pass for the wrong reason.
+  const HANGING_GUARD = [
+    '#!/usr/bin/env node',
+    'export function bounded(limit) {',
+    '  let i = 0;',
+    '  while (true) {',
+    '    i += 1;',
+    "    if (i > limit) throw new Error('bound reached');",
+    '  }',
+    '}',
+    '',
+  ].join(String.fromCharCode(10));
+
+  const HANGING_TEST = [
+    '#!/usr/bin/env node',
+    "import { bounded } from './check-fixture.mjs';",
+    'let threw = false;',
+    'try { bounded(3); } catch { threw = true; }',
+    "console.log(threw ? 'ok   - bounded' : 'FAIL - unbounded');",
+    'process.exit(threw ? 0 : 1);',
+    '',
+  ].join(String.fromCharCode(10));
+
+  const dir = withFixture(HANGING_GUARD, HANGING_TEST);
+  try {
+    const g = await audit(dir, { exempt: [], selfTestTimeoutMs: 400 });
+    const fixture = g.guards.find((x) => x.name === 'check-fixture.mjs');
+    const verdicts = new Set((fixture?.results ?? []).map((r) => r.verdict));
+
+    check('timeout: a run that does not terminate records \`did-not-terminate\`', verdicts.has('did-not-terminate'), true);
+    // THE WHOLE POINT: it is not \`witnessed\`. Nothing was learned, and calling
+    // it witnessed is what turns a true exemption into a false refusal.
+    check('timeout: ...and NOT \`witnessed\`', verdicts.has('witnessed'), false);
+    // ...and the baseline was green, so the run above measured something rather
+    // than bailing out as cannot-check.
+    check('timeout: ...and the guard was measured, not bailed out of', fixture?.status, 'measured');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
   // --- CONTROL: the SHIPPED ledger is well-formed ---------------------------
   //
   // This asserted `MUTATION_EXEMPT.length === 0`, which was a FACT WHEN WRITTEN

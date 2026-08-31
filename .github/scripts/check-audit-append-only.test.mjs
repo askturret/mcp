@@ -416,5 +416,64 @@ function guardRepo() {
 
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
 
+// ---------------------------------------------------------------------------
+// `git diff` FAILING IS CANNOT CHECK, NOT AN APPEND-ONLY PASS (#560, D3)
+//
+// The tenth of D3's `exit(2)`/`code: 2` sites, and the only one in this file.
+// Every other route out of this checker was witnessed; this one was not,
+// because reaching it needs `merge-base` to SUCCEED and `diff` to FAIL — a
+// state no real repository produces on demand.
+//
+// `git` is spawned BY NAME, so a shadowing `git` that answers the first call
+// and refuses the second reaches it exactly. The counter is a marker file
+// rather than an environment variable, because each call is a fresh process.
+// ---------------------------------------------------------------------------
+{
+  const dir = mkdtempSync(join(tmpdir(), 'append-'));
+  const bin = join(dir, 'bin');
+  try {
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(
+      join(bin, 'git'),
+      [
+        '#!/bin/sh',
+        '# merge-base answers; diff refuses. Anything else succeeds silently.',
+        'case "$1" in',
+        '  merge-base) echo "0000000000000000000000000000000000000000"; exit 0 ;;',
+        '  diff) echo "fatal: bad revision" >&2; exit 128 ;;',
+        '  *) exit 0 ;;',
+        'esac',
+      ].join('\n'),
+      { mode: 0o755 },
+    );
+
+    const r = spawnSync(process.execPath, ['-e', `
+      process.env.PATH = ${JSON.stringify(`${bin}:/usr/bin:/bin`)};
+      const { check: runCheck } = await import(${JSON.stringify(join(here, 'check-audit-append-only.mjs'))});
+      const out = runCheck('origin/main', ${JSON.stringify(dir)});
+      console.log(JSON.stringify({ code: out.code, message: out.message }));
+    `.replace(/\n\s+/g, ' ')], { encoding: 'utf-8', env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` } });
+
+    let result = null;
+    try {
+      result = JSON.parse((r.stdout ?? '').trim().split('\n').pop() ?? '');
+    } catch {
+      result = null;
+    }
+
+    check_('append-only: a `git diff` that FAILS is CANNOT CHECK', result?.code, 2);
+    check_('append-only: ...and reports the git failure', /git diff failed/.test(result?.message ?? ''), true);
+    // The distinction the exit exists for: a diff that could not be taken must
+    // not read as a diff that found no deletions.
+    check_(
+      'append-only: ...and does NOT report the log as append-only',
+      /append-only/i.test(result?.message ?? '') && result?.code === 0,
+      false,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 console.log(`\n${String(passed)} passed, ${String(failed)} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

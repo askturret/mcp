@@ -371,5 +371,24 @@ console.log('\n# the script actually RUNS when invoked as CI invokes it\n');
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// A MISSING `changes` JOB IS A REFUSAL, NOT A COVERAGE VERDICT (#560, D3)
+//
+// `evaluate` is called fourteen times in this file and every one supplies a
+// `changes` job, so the branch that fires when it is ABSENT had no witness. It
+// is the cannot-determine route: without that job there is no filter output to
+// read, and reporting coverage anyway would be a verdict derived from nothing.
+// ---------------------------------------------------------------------------
+{
+  const r = evaluate({});
+  check_('coverage: a `needs` without the changes job is refused', r.ok, false);
+  check_('coverage: ...and says coverage cannot be determined', /coverage cannot be determined/.test(r.errors.join(' ')), true);
+  // Reported as an ERROR rather than a warning: a warning would let the job go
+  // green while nothing had been evaluated.
+  check_('coverage: ...as an error, not a warning', r.errors.length > 0 && r.warnings.length === 0, true);
+  // ...and it does not invent rows for jobs it never saw.
+  check_('coverage: ...and reports no rows', r.rows.length, 0);
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

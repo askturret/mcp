@@ -886,20 +886,41 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
 {
   const { dir, g } = gitCorpus({ 'a.jsonl': line(row()) });
   try {
+    // ONE COMMIT CARRYING BOTH STATUSES, so the A and M buckets are each
+    // witnessed against the REAL git output rather than one of them being
+    // inferred from the other (#562). With only a modified file present, a
+    // mutation that files ADDED paths under `modified` reddens nothing — there
+    // is no added path in the fixture for it to misplace.
+    //
     // MODIFY a committed capture file: append a second row, deleting nothing.
     writeFileSync(
       join(dir, '.operum', 'audit', 'concealment-reminders', 'a.jsonl'),
       `${line(row())}\n${line(row())}\n`,
     );
+    // ...and ADD a new one in the same commit.
+    writeFileSync(
+      join(dir, '.operum', 'audit', 'concealment-reminders', 'b.jsonl'),
+      line(row({ ts: '2026-08-27T00:00:00Z' })),
+    );
     g(['add', '-A']);
-    g(['commit', '-q', '-m', 'append a row to an existing capture']);
+    g(['commit', '-q', '-m', 'append a row to one capture and add another']);
 
     const changed = changedCorpusFiles(dir, 'HEAD~1');
+    const REL = '.operum/audit/concealment-reminders/a.jsonl';
+    const NEW = '.operum/audit/concealment-reminders/b.jsonl';
+
+    is('scope: a newly ADDED capture file lands in the added set (#562)', changed !== null && changed.added.has(NEW), true);
+    is('scope: ...and NOT in the modified set', changed !== null && changed.modified.has(NEW), false);
     is(
       'scope: a MODIFIED capture file is in the changed set, so the sentence must say so',
-      changed !== null && changed.has('.operum/audit/concealment-reminders/a.jsonl'),
+      changed !== null && changed.modified.has(REL),
       true,
     );
+    // ...AND IT IS IN THE **MODIFIED** SET, NOT THE ADDED ONE (#562). The two
+    // were one set until the inverse check needed to tell them apart, and that
+    // is the distinction the whole issue turns on — asserted here rather than
+    // left implicit, so collapsing them again reddens.
+    is('scope: ...and NOT in the added set, which is what #562 separates', changed.added.has(REL), false);
 
     // ...AND RUN THE CHECK ON IT. The first version of this block built exactly
     // this state and stopped HERE, one step short — which is precisely where
@@ -907,7 +928,7 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
     // survived the sweep that fixed the other three (#552 re-QA). Building a
     // state and not exercising it asserts something about the fixture rather
     // than about the guard.
-    const r = check(dir, { addedFiles: changed });
+    const r = check(dir, { addedFiles: changed.added, modifiedFiles: changed.modified });
     const oneA = errorsMatching(r, /EXACTLY ONE row/);
     is('scope: ...and condition 1a fires on it, because the predicate is per-FILE', oneA.length, 1);
     is(
@@ -925,5 +946,85 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE INVERSE CHECK IS ADDED-ONLY (#562)
+//
+// It read `inChangedFile`, which is added-OR-modified, while its justification
+// is that a row added NOW was classified against the CURRENT allowlist — true
+// of an added row and false of a pre-existing one in a file the change merely
+// touched. Measured against the real corpus before the split: passing the 75
+// files that hold a null-template row as MODIFIED made it fire 42 TIMES against
+// a control of 0.
+//
+// Those 42 are the rows this guard's own header names as correctly anomalous
+// against the allowlist of their moment, and whose cheapest remedy it calls
+// corpus corruption. So the site did not emit noise — it pointed an author at
+// 42 errors they did not cause, with a destructive way out.
+//
+// BOTH DIRECTIONS ARE PINNED. "Narrowed" and "disabled" look identical if only
+// the negative is asserted.
+// ---------------------------------------------------------------------------
+{
+  // A row that claims no template while F1 matches its verbatim.
+  const inverse = row({ template_id: null, classification: 'anomalous' });
+
+  const asAdded = run({ 'a.jsonl': line(inverse) }, ['a.jsonl']);
+  is(
+    'inverse: FIRES on a row in a file the change ADDS',
+    errorsMatching(asAdded, /claims no template, but/).length,
+    1,
+  );
+
+  // THE 42-FIRE CASE. Same row, same content — only the A-vs-M classification
+  // differs, which is the entire subject of #562.
+  const modDir = withCorpus({ 'a.jsonl': line(inverse) });
+  const asModified = check(modDir, {
+    addedFiles: new Set(),
+    modifiedFiles: new Set(['.operum/audit/concealment-reminders/a.jsonl']),
+  });
+  rmSync(modDir, { recursive: true, force: true });
+  is(
+    'inverse: does NOT fire on a row in a file the change only MODIFIES (#562)',
+    errorsMatching(asModified, /claims no template, but/).length,
+    0,
+  );
+
+  // ...and the file IS in scope for the conditions that legitimately cover
+  // modified files, so the narrowing is specific to this check rather than the
+  // modified set being ignored wholesale. Without this, dropping `modifiedFiles`
+  // entirely would satisfy the assertion above.
+  const twoRows = line(row()) + line(row({ ts: '2026-08-26T00:00:01Z' }));
+  const twoDir = withCorpus({ 'a.jsonl': twoRows });
+  const modifiedTwoRow = check(twoDir, {
+    addedFiles: new Set(),
+    modifiedFiles: new Set(['.operum/audit/concealment-reminders/a.jsonl']),
+  });
+  rmSync(twoDir, { recursive: true, force: true });
+  is(
+    'inverse: ...while a MODIFIED file is still in scope for the per-FILE conditions',
+    errorsMatching(modifiedTwoRow, /EXACTLY ONE row/).length,
+    1,
+  );
+
+  // THE GUIDANCE IS WITNESSED, which QA found it was not (#562 comment). The
+  // clause standing between an author and re-labelling history had no assertion
+  // behind it, so a future edit could remove it with every test still green —
+  // erosion of the exact mitigation this file's header depends on.
+  const msg = errorsMatching(asAdded, /claims no template, but/)[0] ?? '';
+  is('inverse: the refusal states its scope', /SCOPE: rows in a capture file this change ADDS/.test(msg), true);
+  is('inverse: ...and says modified files are NOT reported here', /Rows in files you merely modified are NOT reported/.test(msg), true);
+  is('inverse: ...and forbids re-labelling a row to clear it', /Never re-label a row to clear an error you did not cause/.test(msg), true);
+  is('inverse: ...and says why — the corpus is a measurement', /destroys the thing it measures/.test(msg), true);
+
+  // THE DEAD CLAUSE IS GONE. It told an author what to do when a pre-existing
+  // row was reported at them, which can no longer happen — keeping it would be
+  // a comment describing a situation the code now prevents (#543's shape),
+  // arriving on the mitigation written to prevent something else.
+  is('inverse: ...and no longer carries the modified-file instruction it cannot reach', /Restore the file you modified instead/.test(msg), false);
+  is('inverse: ...nor the stale 42-row figure', /42 rows in the corpus/.test(msg), false);
+}
+
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
+

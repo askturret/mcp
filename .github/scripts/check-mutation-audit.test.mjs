@@ -266,7 +266,7 @@ process.exit(failed > 0 ? 1 : 0);
 {
   const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
   try {
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     const fixture = report.guards.find((g) => g.name === 'check-fixture.mjs');
 
     check('the fixture guard is measured', fixture?.status, 'measured');
@@ -359,7 +359,7 @@ process.exit(0);
     );
     check(
       '...and it is an audit-integrity error, not a measurement',
-      (await audit(dir)).errors.length >= 0 && result.results[0]?.detail !== undefined,
+      (await audit(dir, { exempt: [] })).errors.length >= 0 && result.results[0]?.detail !== undefined,
       true,
     );
 
@@ -389,7 +389,7 @@ process.exit(1);
     check('a guard whose baseline is red is CANNOT CHECK', result.status, 'cannot-check');
     check('...and no site is claimed as witnessed', result.results.length, 0);
 
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     check('...and cannot-check IS an audit-integrity error', report.errors.some((e) => reHits(/CANNOT CHECK/, e)), true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -403,7 +403,7 @@ process.exit(1);
   const inert = `#!/usr/bin/env node\nconsole.log('nothing can fail here');\n`;
   const dir = withFixture(inert, FIXTURE_TEST);
   try {
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     check('an empty site set REFUSES rather than reporting all clean', report.errors.length >= 1, true);
     check(
       '...and says so by name',
@@ -432,7 +432,7 @@ process.exit(1);
     // Sites, no self-test.
     writeFileSync(join(dir, '.github', 'scripts', 'check-lonely.mjs'), `process.exit(1);\n`);
 
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     check('a guard with sites but no self-test is reported UNREACHABLE', report.unreachable.length, 1);
     check('...by name', report.unreachable[0]?.name, 'check-lonely.mjs');
     check('...with its site count, so the omission has a size', report.unreachable[0]?.sites, 1);
@@ -497,7 +497,7 @@ process.exit(1);
     // ...and it is REPORTED, not failed. It is the aggregate of "every site
     // here is unwitnessed", which stage 1 measures rather than fails on.
     check('...and it is NOT an integrity error', interpretProbe(result).length, 0);
-    const report = await audit(dir);
+    const report = await audit(dir, { exempt: [] });
     check('...but it IS surfaced by name in the report', report.noFailureWitnesses.includes('check-fixture.mjs'), true);
     check('...and the inventory renders it', reHits(/observe no failure at all/, renderInventory(report)), true);
   } finally {
@@ -591,7 +591,7 @@ process.exit(failed > 0 ? 1 : 0);
     );
     check(
       '...and it is reported as an audit-integrity error, not a measurement',
-      (await audit(dir)).errors.some((e) => reHits(/unknown failure path/, e)),
+      (await audit(dir, { exempt: [] })).errors.some((e) => reHits(/unknown failure path/, e)),
       true,
     );
 
@@ -1063,12 +1063,172 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
     ...over,
   });
 
-  // --- CONTROL: the shipped ledger is empty and says so cleanly -------------
+  // --- THE NON-NEGATIVITY INVARIANT, asserted directly (#558) --------------
+  //
+  // `undispositioned` counts unwitnessed sites carrying no entry, so it can
+  // never be negative. #541 established that by counting DISTINCT SITES; this
+  // pins it as a property instead, because #558 broke it again from a direction
+  // counting could not see — a new `not-mutatable` verdict made a site HONOURED
+  // without it being UNWITNESSED, so it subtracted from a population it was
+  // never in and the figure went to -1.
+  //
+  // The lesson is why this is a property assertion and not another arithmetic
+  // fix: the previous repair was correct and still did not survive a new
+  // verdict. What must hold is the inequality, whatever the verdict vocabulary
+  // grows into next.
   {
-    const r = evaluateExemptions(reportWith([site()]), MUTATION_EXEMPT);
-    check('ledger: the shipped ledger is empty', MUTATION_EXEMPT.length, 0);
-    check('ledger: an empty ledger raises nothing', r.errors.length, 0);
-    check('ledger: ...and every unwitnessed site reads as undispositioned', r.counts.undispositioned, 1);
+    const gated = { kind: 'throw', line: 7, source: 'boom();', verdict: 'not-mutatable' };
+    const r = evaluateExemptions(reportWith([gated]), [
+      entry({ kind: 'throw', source: 'boom();', mutationDoesNotTerminate: true }),
+    ]);
+    check('ledger: a ledger-gated site is honoured without an error', r.errors.length, 0);
+    check('ledger: ...and is counted as honoured', r.counts.honoured, 1);
+    check('ledger: ...and undispositioned is NEVER negative', r.counts.undispositioned >= 0, true);
+    // ...and it does not consume an unwitnessed slot it never occupied.
+    check('ledger: ...and does not subtract from the unwitnessed population', r.counts.undispositioned, 0);
+  }
+
+// ---------------------------------------------------------------------------
+// THE FIX'S OWN MECHANISMS ARE WITNESSED (#558)
+//
+// The hang repair shipped with only its LEDGER ACCEPTANCE witnessed. QA
+// mutated the rest and measured: neutering the gate reddened 0, and collapsing
+// `did-not-terminate` back into `witnessed` reddened 0. Both could be deleted
+// with the suite green at 154/0 — the hang able to return silently, inside the
+// workstream whose whole subject is unwitnessed failure paths.
+//
+// This file has learned the same lesson before, and `mutate`'s own docblock
+// records it: removing the `node --check` gate once "left the suite at 48/0".
+// Same shape, same seam — which is why `mutate` is a parameter at all.
+//
+// Neither witness pays the hang cost. The gate is observed through a SPY
+// asserted never-called; the verdict through a deliberately tiny timeout, so a
+// sleeping fixture reaches it in under a second rather than in 90.
+// ---------------------------------------------------------------------------
+{
+  const GATED_SOURCE = "if (flags.includes('--trip-orphan')) errors.push('the orphan check fired');";
+  const gatedEntry = {
+    script: 'check-fixture.mjs',
+    kind: 'errors-push',
+    source: GATED_SOURCE,
+    reason: 'fixture',
+    unblockedBy: 'fixture',
+    maskingExcluded: 'fixture',
+    mutationDoesNotTerminate: true,
+  };
+
+  const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
+  try {
+    // A SPY, so "was this site mutated?" is observed rather than inferred from
+    // the verdict — the verdict alone could be produced by a different route.
+    const mutatedLines = [];
+    const spy = (src, sites) => {
+      for (const s of sites) mutatedLines.push(s.line);
+      return applyMutations(src, sites);
+    };
+
+    const g = await audit(dir, { exempt: [gatedEntry], mutate: spy });
+    const fixture = g.guards.find((x) => x.name === 'check-fixture.mjs');
+    const gated = fixture?.results.find((r) => r.source === GATED_SOURCE);
+
+    check('gate: a ledger-gated site is NOT passed to mutate', mutatedLines.includes(gated?.line), false);
+    check('gate: ...and records `not-mutatable`', gated?.verdict, 'not-mutatable');
+    // The CONTROL, and it is what stops the assertion above passing vacuously:
+    // the spy must have mutated the OTHER sites, or "never called for this one"
+    // would be satisfied by a spy that was never called at all.
+    check('gate: ...while other sites in the same guard WERE mutated', mutatedLines.length > 0, true);
+    // ...and the gate must not silently swallow the rest of the guard.
+    check('gate: ...and the guard is still measured', fixture?.status, 'measured');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// --- the did-not-terminate verdict ----------------------------------------
+//
+// A timed-out run must NOT record as `witnessed`. That is the trap in the
+// obvious fix: a killed child exits non-zero, so the naive reading calls the
+// site witnessed and the ledger then raises a false "THE EXEMPTION IS FALSE"
+// against a true entry — red instead of hung, the same defect louder.
+{
+  // A guard whose throw is the ONLY exit from its loop — the shape of the real
+  // site this repair exists for. It terminates instantly UNMUTATED, and does not
+  // terminate once the throw is neutralised, so the baseline stays green and only
+  // the mutated run is killed. A fixture that merely slept would time out its own
+  // baseline, and a non-green baseline is CANNOT CHECK — no sites measured, and
+  // the assertion would pass for the wrong reason.
+  const HANGING_GUARD = [
+    '#!/usr/bin/env node',
+    'export function bounded(limit) {',
+    '  let i = 0;',
+    '  while (true) {',
+    '    i += 1;',
+    "    if (i > limit) throw new Error('bound reached');",
+    '  }',
+    '}',
+    '',
+  ].join(String.fromCharCode(10));
+
+  const HANGING_TEST = [
+    '#!/usr/bin/env node',
+    "import { bounded } from './check-fixture.mjs';",
+    'let threw = false;',
+    'try { bounded(3); } catch { threw = true; }',
+    "console.log(threw ? 'ok   - bounded' : 'FAIL - unbounded');",
+    'process.exit(threw ? 0 : 1);',
+    '',
+  ].join(String.fromCharCode(10));
+
+  const dir = withFixture(HANGING_GUARD, HANGING_TEST);
+  try {
+    const g = await audit(dir, { exempt: [], selfTestTimeoutMs: 400 });
+    const fixture = g.guards.find((x) => x.name === 'check-fixture.mjs');
+    const verdicts = new Set((fixture?.results ?? []).map((r) => r.verdict));
+
+    check('timeout: a run that does not terminate records \`did-not-terminate\`', verdicts.has('did-not-terminate'), true);
+    // THE WHOLE POINT: it is not \`witnessed\`. Nothing was learned, and calling
+    // it witnessed is what turns a true exemption into a false refusal.
+    check('timeout: ...and NOT \`witnessed\`', verdicts.has('witnessed'), false);
+    // ...and the baseline was green, so the run above measured something rather
+    // than bailing out as cannot-check.
+    check('timeout: ...and the guard was measured, not bailed out of', fixture?.status, 'measured');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+  // --- CONTROL: the SHIPPED ledger is well-formed ---------------------------
+  //
+  // This asserted `MUTATION_EXEMPT.length === 0`, which was a FACT WHEN WRITTEN
+  // rather than a property: the ledger was empty because nothing had been
+  // dispositioned yet. The first two entries (#558) turned three green
+  // assertions red with nothing wrong — an assertion named "an empty ledger
+  // raises nothing" that fails the moment the ledger stops being empty was
+  // pinning the wrong noun.
+  //
+  // What is durable is that every SHIPPED entry is complete and names a known
+  // kind. That holds at zero entries and at any number.
+  {
+    for (const [i, e] of MUTATION_EXEMPT.entries()) {
+      for (const field of ['script', 'kind', 'source', 'reason', 'unblockedBy', 'maskingExcluded']) {
+        check(
+          `ledger: shipped entry ${i + 1} carries a non-empty \`${field}\``,
+          typeof e[field] === 'string' && e[field].trim() !== '',
+          true,
+        );
+      }
+      check(`ledger: shipped entry ${i + 1} names a known site kind`, SITE_KINDS.includes(e.kind), true);
+    }
+
+    // ...and a ledger with NO entries raises nothing about an unrelated site,
+    // which is the behaviour the old "the shipped ledger is empty" assertion was
+    // really reaching for. Written with `[]` rather than the shipped ledger on
+    // purpose: this fixture report measures only `check-fixture.mjs`, so the
+    // shipped entries would correctly report as unmeasured-and-stale here, and
+    // the assertion would then be about scope rather than about emptiness.
+    const r = evaluateExemptions(reportWith([site()]), []);
+    check('ledger: a ledger with no entries says nothing about an unrelated site', r.errors.length, 0);
+    check('ledger: ...and that site reads as undispositioned', r.counts.undispositioned, 1);
   }
 
   // --- CONTROL: an honest entry is accepted --------------------------------

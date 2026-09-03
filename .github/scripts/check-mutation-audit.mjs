@@ -231,7 +231,57 @@ export const siteSource = (src, index) => {
  *                     lands — born wrong rather than gone stale, so the decay
  *                     check above would never catch it.
  */
-export const MUTATION_EXEMPT = Object.freeze([]);
+export const MUTATION_EXEMPT = Object.freeze([
+  // THE FIRST TWO ENTRIES THIS LEDGER HAS EVER CARRIED (#558). Both come from
+  // check-concealment-templates' fifteen, and they are exempt for DIFFERENT
+  // reasons — one cannot be reached, the other cannot be mutated. Writing them
+  // as one category would have hidden that.
+  {
+    script: 'check-concealment-templates.mjs',
+    kind: 'throw',
+    source: `if (s[i] !== '"') throw new TomlError(\`line \${lineNo}: expected a '"'-quoted string\`);`,
+    reason:
+      'UNREACHABLE from the module\'s public surface. `readBasicString` has exactly two call sites and both ' +
+      'establish the precondition first: the array reader throws its own "arrays hold quoted strings only" ' +
+      'immediately above its call, and the value parser only calls it under `rest.startsWith(\'"\')`. So no ' +
+      'document can enter this function with a non-quote at `i`. This names the INVARIANT rather than a ' +
+      'neighbouring guard that happens to sit in front of a different path — the distinction #543 turned on.',
+    unblockedBy:
+      'Exporting `readBasicString` and calling it directly with a non-quote would witness it, and is ' +
+      'deliberately NOT done: it reaches through the invariant that makes the branch unreachable, which is ' +
+      'the fabricated witness #543 declined. A THIRD call site that does not pre-check would make it ' +
+      'genuinely reachable, and is what should re-open this entry.',
+    maskingExcluded:
+      'Instrumented the branch and ran the full self-test: 0 entries across 164 passing assertions. The same ' +
+      'instrumentation on line 249 — a site the corpus does reach — records 1, so the zero is a measurement ' +
+      'rather than a probe that cannot see. A suppressed red would still have executed the branch.',
+  },
+  {
+    script: 'check-concealment-templates.mjs',
+    kind: 'throw',
+    source: 'if (idx >= lines.length) throw new TomlError(`line ${lineNo}: unterminated array`);',
+    // READ BY `auditGuard`, which does not mutate this site at all (#558).
+    // Without it the audit neutralises the throw and never returns — measured:
+    // the same neutralisation terminates in ~2s against the PREVIOUS self-test
+    // and does not terminate against the one this change ships. The
+    // non-termination is a property of SITE x FIXTURE, and this ledger entry
+    // described it as a property of the site alone.
+    mutationDoesNotTerminate: true,
+    reason:
+      'NOT MUTATABLE, which is different from not reachable — a fixture reaches it easily and the self-test ' +
+      'has one. This throw is the ONLY exit from `while (!rest.trimEnd().endsWith(\']\'))`. Neutralised, `idx` ' +
+      'runs past `lines.length`, `lines[idx]` is undefined, and `rest` grows by "\\nundefined" forever. The ' +
+      'mutant does not compute a wrong answer; it does not terminate, so no assertion is ever reached to redden.',
+    unblockedBy:
+      'A second bound on that loop — a maximum line count, or hoisting the length test into the condition — ' +
+      'would make the mutant terminate and the existing fixture would then witness it. The fixture is already ' +
+      'written ("an array that never closes"), so this entry is about the mutation, not about coverage.',
+    maskingExcluded:
+      'Masking is a red that gets swallowed; here no red is produced because the process never completes. ' +
+      'Measured with a 25s cap: the mutant does not terminate, while the unmutated self-test finishes in ' +
+      'under a second. Non-termination is observable from outside, unlike a suppressed exit code.',
+  },
+]);
 
 /** Fields every entry must carry, non-empty. */
 const EXEMPT_FIELDS = Object.freeze(['script', 'kind', 'source', 'reason', 'unblockedBy', 'maskingExcluded']);
@@ -288,6 +338,7 @@ export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
   // exists so growth is visible without going to look. A count that inflates is
   // a growth signal that under-reports, which is worse than no signal.
   const honouredSites = new Set();
+  const gatedSites = new Set();
   for (const [i, entry] of exempt.entries()) {
     const where = `exemption ${i + 1} (${entry.script ?? '?'} / ${entry.kind ?? '?'})`;
 
@@ -330,6 +381,7 @@ export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
 
     const matches = byKey.get(`${entry.script}\u0000${entry.kind}\u0000${entry.source}`) ?? [];
 
+
     if (matches.length === 0) {
       errors.push(
         `${where}: STALE — no ${entry.kind} site in ${entry.script} now reads \`${entry.source}\`. ` +
@@ -370,6 +422,22 @@ export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
       );
       continue;
     }
+    // A LEDGER-GATED SITE IS HONOURED, not queried. It was deliberately not
+    // mutated because its mutation does not terminate, so there is no verdict
+    // to compare and demanding one would fail every such entry by construction
+    // (#558).
+    if (site.verdict === 'not-mutatable' && entry.mutationDoesNotTerminate === true) {
+      honoured += 1;
+      // TRACKED APART FROM `honouredSites` DELIBERATELY. That set feeds the
+      // undispositioned subtraction, whose non-negativity (#541) rests on every
+      // honoured site also being UNWITNESSED. A ledger-gated site is not
+      // unwitnessed — it was never measured — so counting it there subtracts
+      // from a population it is not in and drives the figure negative. Measured:
+      // it produced undispositioned = -1 on the first version of this change,
+      // which is the very defect #541 fixed, reintroduced by a new verdict.
+      gatedSites.add(`${entry.script}\u0000${site.line}\u0000${entry.kind}`);
+      continue;
+    }
     if (site.verdict !== 'unwitnessed') {
       errors.push(
         `${where}: CANNOT CONFIRM — ${entry.script} line ${String(site.line)} recorded \`${site.verdict}\`, ` +
@@ -391,7 +459,7 @@ export function evaluateExemptions(report, exempt = MUTATION_EXEMPT) {
       // copies of one entry counted twice and drove `undispositioned` to -1.
       // Sites cannot double-count, and because an honoured site is unwitnessed
       // by construction the subtraction below can no longer go negative.
-      honoured: honouredSites.size,
+      honoured: honouredSites.size + gatedSites.size,
       // Unwitnessed sites carrying no entry. The growth signal #533 works
       // against, and the reason the count is printed rather than fetched.
       undispositioned: report.unwitnessed.length - honouredSites.size,
@@ -571,8 +639,39 @@ function runNodeCheck(file) {
   return { ok: r.status === 0, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
 }
 
-function runSelfTest(testPath, cwd) {
-  const r = spawnSync(process.execPath, [testPath], { encoding: 'utf-8', cwd });
+/**
+ * How long a mutated self-test may run before the audit stops waiting (#558).
+ *
+ * A NEUTRALISED SITE CAN REMOVE A LOOP'S ONLY EXIT, and the result is not a
+ * wrong answer but a program that never ends. Without a bound the audit blocks
+ * forever on a single-runner CI, which is what this PR's own fixture caused:
+ * the same neutralised site terminates in ~2s against the previous self-test
+ * and never terminates against the new one.
+ *
+ * Generous on purpose. The slowest legitimate self-test here is the audit's own
+ * at ~11s, so 90s is far outside normal variance — a run that reaches it has
+ * not run slowly, it has stopped ending.
+ */
+const SELF_TEST_TIMEOUT_MS = 90_000;
+
+function runSelfTest(testPath, cwd, timeoutMs = SELF_TEST_TIMEOUT_MS) {
+  const r = spawnSync(process.execPath, [testPath], {
+    encoding: 'utf-8',
+    cwd,
+    timeout: timeoutMs,
+  });
+  // A TIMED-OUT RUN IS NOT A FAILING RUN, and conflating them is the trap in
+  // the obvious fix. `spawnSync` reports a killed child with a non-zero-ish
+  // status, so a bare timeout would record the site as WITNESSED — and the
+  // ledger would then raise "THE EXEMPTION IS FALSE" against an entry that is
+  // true. Red instead of hung is the same defect, louder.
+  if (r.signal === 'SIGTERM' || r.error?.code === 'ETIMEDOUT') {
+    return {
+      code: null,
+      timedOut: true,
+      out: `self-test DID NOT TERMINATE within ${String(timeoutMs / 1000)}s`,
+    };
+  }
   // `code: null` propagated into "baseline self-test is not green (exit null)",
   // which reads as a self-test that FAILED rather than one that never ran. The
   // routing was already right — trap 5 makes a non-green baseline CANNOT CHECK
@@ -605,7 +704,19 @@ function runSelfTest(testPath, cwd) {
  * exactly what QA found: removing the gate entirely left the suite at 48/0.
  * Production callers pass nothing.
  */
-export async function auditGuard({ guardPath, testPath, rootDir, onProgress = () => {}, mutate = applyMutations }) {
+export async function auditGuard({
+  guardPath,
+  testPath,
+  rootDir,
+  onProgress = () => {},
+  mutate = applyMutations,
+  exempt = MUTATION_EXEMPT,
+  // A SEAM, for the same reason `mutate` is one (#558). Witnessing the
+  // did-not-terminate verdict otherwise costs the full 90s cap per assertion,
+  // which is why that verdict shipped unwitnessed: the mechanism that prevents
+  // a false "THE EXEMPTION IS FALSE" could be deleted with the suite green.
+  selfTestTimeoutMs = SELF_TEST_TIMEOUT_MS,
+}) {
   const original = readFileSync(guardPath, 'utf-8');
   const sites = enumerateSites(original);
   const name = basename(guardPath);
@@ -615,7 +726,7 @@ export async function auditGuard({ guardPath, testPath, rootDir, onProgress = ()
     return { name, status: 'no-sites', sites: [], results: [] };
   }
 
-  const baseline = runSelfTest(testPath, rootDir);
+  const baseline = runSelfTest(testPath, rootDir, selfTestTimeoutMs);
   if (baseline.code !== 0) {
     // "Red under mutation" is meaningless without a green baseline.
     return {
@@ -666,6 +777,14 @@ export async function auditGuard({ guardPath, testPath, rootDir, onProgress = ()
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
 
+  // Sites the ledger says must not be mutated at all (#558).
+  const siteKey = (st) => `${name}\u0000${st.kind}\u0000${st.source ?? ''}`;
+  const skipMutation = new Set(
+    exempt
+      .filter((e) => e.mutationDoesNotTerminate === true)
+      .map((e) => `${e.script}\u0000${e.kind}\u0000${e.source}`),
+  );
+
   const results = [];
   let probe = null;
   try {
@@ -707,6 +826,27 @@ export async function auditGuard({ guardPath, testPath, rootDir, onProgress = ()
       // documented in `check-mutation-audit.test.mjs`.
       await new Promise((resolve) => setImmediate(resolve));
 
+      // THE LEDGER GATES THE MUTATION (#558). A site declared
+      // `mutationDoesNotTerminate` is NOT mutated, because neutralising it
+      // removes a loop's only exit and the run never comes back.
+      //
+      // Narrow on purpose: this skips only entries carrying that flag, never
+      // exempt sites generally. An `unreachable` entry is still mutated, so the
+      // ledger's decay direction — an exemption that has become false must FAIL
+      // — keeps working for it.
+      //
+      // The cost, stated because it is real: for a skipped site that decay
+      // check is gone. It is unavoidable rather than a concession — you cannot
+      // measure a mutation that does not terminate — and it is why the flag is
+      // per-entry and justified rather than a blanket skip over the ledger. The
+      // entry's `unblockedBy` names what would restore mutability, and the flag
+      // comes off when someone does it.
+      if (skipMutation.has(siteKey(site))) {
+        results.push({ ...site, verdict: 'not-mutatable' });
+        onProgress(`${name} ${i + 1}/${sites.length} (line ${site.line}, ${site.kind}) — ledger-gated, not mutated`);
+        continue;
+      }
+
       onProgress(`${name} ${i + 1}/${sites.length} (line ${site.line}, ${site.kind})`);
       writeFileSync(guardPath, mutate(original, [site]), 'utf-8');
 
@@ -718,11 +858,15 @@ export async function auditGuard({ guardPath, testPath, rootDir, onProgress = ()
         continue;
       }
 
-      const run = runSelfTest(testPath, rootDir);
+      const run = runSelfTest(testPath, rootDir, selfTestTimeoutMs);
       const newly = failingAssertions(run.out).filter((a) => !baselineFailures.has(a));
       results.push({
         ...site,
-        verdict: run.code === 0 ? 'unwitnessed' : 'witnessed',
+        // A run that DID NOT TERMINATE gets its own verdict. It is neither
+        // witnessed nor unwitnessed: nothing was learned, and calling it
+        // witnessed would make the ledger raise a false "THE EXEMPTION IS
+        // FALSE" against a true entry (#558).
+        verdict: run.timedOut === true ? 'did-not-terminate' : run.code === 0 ? 'unwitnessed' : 'witnessed',
         newlyFailing: newly,
         namesAvailable: newly.length > 0 || run.code === 0,
       });
@@ -730,13 +874,18 @@ export async function auditGuard({ guardPath, testPath, rootDir, onProgress = ()
 
     // THE COMPLETENESS PROBE. See `interpretProbe` for why the polarity here is
     // not the one #428's review states.
+    // THE PROBE MUTATES EVERY SITE AT ONCE, so a ledger-gated site has to be
+    // excluded here too (#558). Skipping it per-site above and then neutralising
+    // it again here would hang exactly as before — the per-site gate alone looks
+    // sufficient and is not.
+    const probeSites = sites.filter((st) => !skipMutation.has(siteKey(st)));
     onProgress(`${name} completeness probe`);
-    writeFileSync(guardPath, mutate(original, sites), 'utf-8');
+    writeFileSync(guardPath, mutate(original, probeSites), 'utf-8');
     const parsedAll = runNodeCheck(guardPath);
     if (!parsedAll.ok) {
       probe = { status: 'unparseable', detail: parsedAll.out.trim().split('\n')[0] ?? '' };
     } else {
-      const all = runSelfTest(testPath, rootDir);
+      const all = runSelfTest(testPath, rootDir, selfTestTimeoutMs);
       probe = {
         status: all.code === 0 ? 'no-failure-witnesses' : 'ok',
         exitCode: all.code,
@@ -1094,7 +1243,24 @@ export function renderInventory(report, previousMarkdown = null) {
   return `${lines.join('\n')}\n`;
 }
 
-export async function audit(rootDir, { onProgress = () => {} } = {}) {
+/**
+ * `exempt` is a parameter so a run over a SUBSET of guards can say which ledger
+ * applies to it (#558).
+ *
+ * It defaulted to the shipped ledger unconditionally, which is right for the
+ * whole-tree run `main()` performs and wrong for every fixture run: the audit
+ * then judges real entries against a measurement that never looked at their
+ * scripts, and correctly-written entries report as stale. That stayed invisible
+ * while the ledger was empty — the first two entries surfaced it immediately.
+ *
+ * The default is unchanged, so production behaviour is identical.
+ */
+export async function audit(rootDir, {
+  onProgress = () => {},
+  exempt = MUTATION_EXEMPT,
+  mutate = applyMutations,
+  selfTestTimeoutMs = SELF_TEST_TIMEOUT_MS,
+} = {}) {
   const guards = discoverGuards(rootDir);
   const errors = [];
   const measured = [];
@@ -1108,7 +1274,7 @@ export async function audit(rootDir, { onProgress = () => {} } = {}) {
       else noSites += 1;
       continue;
     }
-    const result = await auditGuard({ ...g, rootDir, onProgress });
+    const result = await auditGuard({ ...g, rootDir, onProgress, exempt, mutate, selfTestTimeoutMs });
     if (result.status === 'no-sites') { noSites += 1; continue; }
     measured.push(result);
   }
@@ -1159,7 +1325,7 @@ export async function audit(rootDir, { onProgress = () => {} } = {}) {
   // measurement — which is why they join `errors` and fail, while unwitnessed
   // sites themselves stay reported-only.
   const report = { guards: measured, unreachable, unwitnessed, noFailureWitnesses, errors, totals };
-  const ledger = evaluateExemptions(report);
+  const ledger = evaluateExemptions(report, exempt);
   errors.push(...ledger.errors);
   report.exemptions = ledger.counts;
   return report;

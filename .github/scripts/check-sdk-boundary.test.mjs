@@ -20,6 +20,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { check } from './check-sdk-boundary.mjs';
@@ -199,6 +200,30 @@ console.log('\n# this repository\n');
 // ---------------------------------------------------------------------------
 
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
+
+// ---------------------------------------------------------------------------
+// THE ENTRY POINT ITSELF (#560, D3)
+//
+// `process.exit(result.code)` was unwitnessed: this file only calls `check()`,
+// so the line converting a result into an EXIT STATUS never ran. #110's shape —
+// the exported function covered, the thing CI runs not.
+// ---------------------------------------------------------------------------
+{
+  const SCRIPT = join(here, 'check-sdk-boundary.mjs');
+  const runIt = (dir) => spawnSync(process.execPath, [SCRIPT, dir], { encoding: 'utf-8' });
+
+  const bad = scratch(
+    {
+      'packages/transports/src/http/index.ts': COMPLIANT_IMPORT,
+      'packages/core/src/leak.ts': "import { Server } from '@modelcontextprotocol/sdk';",
+    },
+    CLEAN_DTS,
+  );
+  check_('entry: a leak outside the transport exits NON-ZERO through the entry point', runIt(bad).status, 1);
+
+  const good = scratch({ 'packages/transports/src/http/index.ts': COMPLIANT_IMPORT }, CLEAN_DTS);
+  check_('entry: CONTROL — a compliant repo exits 0', runIt(good).status, 0);
+}
 
 console.log(`\n${String(passed)} passed, ${String(failed)} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

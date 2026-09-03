@@ -12,8 +12,15 @@
  * Run: node .github/scripts/check-licenses.test.mjs
  */
 
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import { classifyExpression, classifyId } from './lib/license-policy.mjs';
 import { parseExceptions, findException } from './check-licenses.mjs';
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 let passed = 0;
 let failed = 0;
@@ -153,6 +160,128 @@ check(
   findException(exceptions, dep({ name: 'something-else' })),
   undefined,
 );
+
+// ---------------------------------------------------------------------------
+// THE TWO CANNOT-CHECK EXITS (#560, D3)
+//
+// Both are `exit(2)` — the #281 class. This file exercised the policy
+// classifier and the exceptions parser and never drove `main`, so neither
+// route out of "the inventory is unusable" had a witness.
+//
+// `check-licenses.mjs <repoRoot>` takes its root positionally and `inventory()`
+// shells out to npm BY NAME, so a fixture root plus a shadowing `npm` decides
+// both outcomes without touching production code.
+//
+// The two are distinguished deliberately: an inventory that THREW and one that
+// came back EMPTY are different facts about the world, and collapsing them is
+// how "no dependencies" and "npm never ran" become the same report.
+// ---------------------------------------------------------------------------
+{
+  const licFixture = (npm) => {
+    const dir = mkdtempSync(join(tmpdir(), 'lic-'));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0' }));
+    writeFileSync(join(bin, 'npm'), npm, { mode: 0o755 });
+    return { dir, bin };
+  };
+  const runLicenses = ({ dir, bin }) =>
+    spawnSync(process.execPath, [join(here, 'check-licenses.mjs'), dir], {
+      encoding: 'utf-8',
+      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+    });
+
+  {
+    const f = licFixture('#!/bin/sh\necho "npm exploded" >&2\nexit 1\n');
+    try {
+      const r = runLicenses(f);
+      check('licenses: an inventory that cannot be built is CANNOT CHECK', r.status, 2);
+      check('licenses: ...and says so rather than reporting a clean build', /could not build the dependency inventory/.test(r.stderr), true);
+      // The distinction this exit exists for: a failure to MEASURE must not
+      // read as a measurement that found nothing wrong.
+      check('licenses: ...and does NOT report zero violations', /0 violations/.test(r.stdout), false);
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true });
+    }
+  }
+
+  {
+    const f = licFixture('#!/bin/sh\necho \'{"dependencies":{}}\'\nexit 0\n');
+    try {
+      const r = runLicenses(f);
+      check('licenses: an EMPTY inventory is CANNOT CHECK, not a clean pass', r.status, 2);
+      check('licenses: ...and names the missing node_modules as the likely cause', /inventory is empty/.test(r.stderr), true);
+      // Told apart from the throwing case above by its own wording, so one
+      // fixture cannot satisfy both assertions.
+      check('licenses: ...and is NOT reported as a build failure', /could not build/.test(r.stderr), false);
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true });
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// THE TWO VERDICT EXITS (#560, D3)
+//
+// Distinct from the cannot-check pair above: these are reached when the
+// inventory WAS built and the policy has an answer. Both were unwitnessed
+// because nothing drove the script to a verdict — the fixture needs a real
+// `node_modules/<pkg>/package.json`, since `licenseOf` reads the manifest on
+// disk while `npm ls` supplies only the names.
+// ---------------------------------------------------------------------------
+{
+  const verdictFixture = (license) => {
+    const dir = mkdtempSync(join(tmpdir(), 'lic-verdict-'));
+    const bin = join(dir, 'bin');
+    mkdirSync(bin, { recursive: true });
+    mkdirSync(join(dir, 'node_modules', 'badpkg'), { recursive: true });
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', dependencies: { badpkg: '1.0.0' } }));
+    writeFileSync(
+      join(dir, 'node_modules', 'badpkg', 'package.json'),
+      JSON.stringify({ name: 'badpkg', version: '1.0.0', license }),
+    );
+    writeFileSync(
+      join(bin, 'npm'),
+      `#!/bin/sh\necho '{"name":"fixture","dependencies":{"badpkg":{"version":"1.0.0"}}}'\nexit 0\n`,
+      { mode: 0o755 },
+    );
+    return { dir, bin };
+  };
+  const runVerdict = ({ dir, bin }, ...extra) =>
+    spawnSync(process.execPath, [join(here, 'check-licenses.mjs'), dir, ...extra], {
+      encoding: 'utf-8',
+      env: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+    });
+
+  {
+    const f = verdictFixture('GPL-3.0');
+    try {
+      const r = runVerdict(f);
+      check('licenses: a denied licence exits 1', r.status, 1);
+      check('licenses: ...and is a VERDICT, not a cannot-check', r.status === 2, false);
+    } finally {
+      rmSync(f.dir, { recursive: true, force: true });
+    }
+  }
+
+  // The --json path has its OWN exit, and it is a ternary: both arms are
+  // asserted, because neutralising it to a constant satisfies whichever arm is
+  // left untested.
+  {
+    const bad = verdictFixture('GPL-3.0');
+    try {
+      check('licenses: --json exits 1 when there are violations', runVerdict(bad, '--json').status, 1);
+    } finally {
+      rmSync(bad.dir, { recursive: true, force: true });
+    }
+    const good = verdictFixture('MIT');
+    try {
+      check('licenses: --json exits 0 when there are none', runVerdict(good, '--json').status, 0);
+    } finally {
+      rmSync(good.dir, { recursive: true, force: true });
+    }
+  }
+}
 
 console.log(`\npassed: ${passed}  failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

@@ -1,0 +1,105 @@
+# Lane check (#565)
+#
+# WHY THIS WORKFLOW EXISTS
+#
+# `check-path-filters.mjs` check E verifies the `ci:cheap` lane claim, and it can
+# only run when the payload carries the label. A PR is CREATED by one API call
+# and LABELLED by a separate one, so the `opened` run is dispatched before the
+# label exists — measured on PR #555, whose first Test run was created at
+# 16:10:42Z while `ci:cheap` was applied at 16:10:43Z. Label-blind by one second,
+# and structurally so: the labelling call cannot precede the event that
+# dispatched the run.
+#
+# The consequence was a sampling rule nobody chose: the lane claim was verified
+# ONLY on PRs that happened to be pushed to at least twice. QA measured it —
+# #554 and #557 each had exactly one run and both merged while a declaration was
+# stale; #555 surfaced the defect only because a review hold forced a re-push.
+# A control verified only on PRs that happen to be sent back for rework is close
+# to no control.
+#
+# This workflow removes the dependency on that accident: when the label is
+# applied, the check runs with it demonstrably present.
+#
+# WHY NOT ADD `labeled` TO test.yml's TRIGGER TYPES
+#
+# `test-integrity` there has no `needs:` and no `if:`, so it runs
+# unconditionally — every label change (`priority:*`, `team:*`, `status:*`)
+# would cost a full test-integrity execution on the single self-hosted runner
+# for a check that takes seconds. A separate targeted workflow is what keeps
+# this cheap.
+#
+# WHY ONLY `labeled`, AND NOT `unlabeled`
+#
+# The design sketch on #565 suggested `types: [labeled, unlabeled]`. `unlabeled`
+# is deliberately omitted: on that event the label has been REMOVED, so the
+# payload carries no `ci:cheap`, check E does not engage, and the job would
+# provably do nothing. Removing `ci:cheap` makes a PR `ci:full`, which claims
+# nothing this guard verifies. A job that cannot reach its own assertion is the
+# shape #565 exists to stop, so it is not added here.
+#
+# No `npm ci`: check-path-filters.mjs uses node builtins only, so the job is a
+# checkout and one node invocation.
+
+name: Lane check
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+# N labels applied to one PR means N `labeled` events and so N runs of this
+# workflow. Collapse them: only the newest matters, because each one re-reads
+# the PR's CURRENT label set rather than the label that triggered it.
+concurrency:
+  group: lane-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  lane-claim:
+    # READS THE SAME FIELD THE SCRIPT READS — `pull_request.labels`, the PR's
+    # CURRENT label set — and that identity is the whole point (#565 QA).
+    #
+    # This gate used to read `github.event.label.name`: the single label that
+    # triggered the event. The script has always read `pull_request.labels`. Two
+    # different fields, so they could disagree, and both directions were wrong:
+    #
+    #   - label just applied IS `ci:cheap`, but the payload's label set does not
+    #     carry it -> the gate proves a claim exists, the job runs, and the
+    #     script reports "lane not claimed" and exits 0. The gate proved the
+    #     very thing the script then failed to find.
+    #
+    #   - a PR ALREADY carrying `ci:cheap` is given any other label -> the gate
+    #     sees `team:foo`, skips, and a real mislabel goes unreported. QA ran
+    #     that exact payload through the script: it exits 1 and names the
+    #     mislabel, so the skip SUPPRESSED A REAL FINDING.
+    #
+    # The second is not theoretical for non-main-base PRs: `test.yml` is
+    # `branches: [main]` while this workflow has no branches filter, so
+    # `labeled` is the ONLY path that checks the lane there. On base-main PRs
+    # test-integrity re-checks on every `synchronize` and covers the miss.
+    #
+    # `contains(...labels.*.name, ...)` is the same set the script parses out of
+    # `GITHUB_EVENT_PATH`, so gate and script now agree BY CONSTRUCTION rather
+    # than by coincidence. Non-`ci:cheap` PRs still skip, so `priority:*` /
+    # `team:*` / `status:*` churn on them costs nothing.
+    if: contains(github.event.pull_request.labels.*.name, 'ci:cheap')
+    runs-on: [self-hosted, Linux, X64, askturret]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # check E diffs the PR against its base to decide which filters the
+          # change trips. The default shallow checkout does not contain the base
+          # commit, and the guard would exit 2 CANNOT CHECK rather than pass
+          # silently — correct, but useless. Full history is what lets it answer.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The label is present in THIS payload by construction — it is the event
+      # that triggered the run — so check E engages rather than being skipped.
+      - name: Lane claim is checked with the label present
+        run: node .github/scripts/check-path-filters.mjs .

@@ -765,4 +765,41 @@ when `1.0.0` ships.
   is a behaviour change on an exported function, and a log consumer may see a
   field name it has not seen before. It appears only when something was dropped.
 
-[Unreleased]: https://github.com/askturret/mcp/compare/main...HEAD
+---
+
+## [0.1.1] - 2026-09-03
+
+A compliance patch. **No source behaviour changes** — the only diff against
+`0.1.0`'s tree is nine version fields; everything else that makes this release
+different from the published `0.1.0` artifacts had already merged to `main`.
+
+### Fixed
+- Published tarballs now contain `README.md`, `LICENSE` and `NOTICE` (#583,
+  #589). Every one of the nine public packages declares `"license":
+  "Apache-2.0"` while `0.1.0` shipped **none** of the three, leaving §4(a) (the
+  licence copy) and §4(d) (the NOTICE pass-through) unmet on artifacts that are
+  live on the registry.
+
+  The cause was `files`, not a missing file. npm ships only what `files` names
+  plus a fixed always-included list — `package.json`, README, LICENSE/LICENCE,
+  `main`, `bin` — and **NOTICE is not on that list**, so a NOTICE sitting in the
+  package directory was excluded from every tarball while the source tree looked
+  correct. `files` now names all three explicitly, so none of them depends on
+  npm's default staying as it is.
+
+  Not a covered surface — no type, error code or runtime behaviour changes.
+  `0.1.0` remains published and immutable; it cannot be corrected, only
+  superseded, which is why this release exists.
+
+### Note on the entries above this section
+
+`0.1.0` was published on 2026-08-31 without a changelog section ever being cut
+for it, so the `[Unreleased]` entries above span **both** sides of that release
+and `0.1.1` carries the ones that had not shipped. They are deliberately **not**
+partitioned here: which of them were already in `0.1.0` cannot be established
+from this file, and guessing would put unverified claims into the changelog of a
+compliance release. Partitioning them is a maintainer decision, and a `[0.1.0]`
+section can be cut retrospectively once that is settled.
+
+[Unreleased]: https://github.com/askturret/mcp/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/askturret/mcp/compare/v0.1.0...v0.1.1

@@ -1,6 +1,6 @@
 {
   "name": "@askturret/mcp-observability",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Telemetry and audit hooks - OpenTelemetry integration",
   "type": "module",
   "license": "Apache-2.0",

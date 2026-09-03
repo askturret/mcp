@@ -75,6 +75,7 @@ const GUARD = join(dirname(fileURLToPath(import.meta.url)), 'check-test-executio
 
 let passed = 0;
 let failed = 0;
+let cannotChecked = 0;
 const tmpDirs = [];
 
 function check(desc, actual, expected) {
@@ -85,6 +86,45 @@ function check(desc, actual, expected) {
     console.log(`FAIL - ${desc} (expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)})`);
     failed += 1;
   }
+}
+
+/**
+ * A case this ENVIRONMENT cannot reach. Announced AND counted (#561).
+ *
+ * A helper rather than two inline `console.log`s, because the two have to move
+ * together: the defect being fixed is a skip that was loud in the body and
+ * invisible in the summary, and a second copy of "print, then remember to
+ * increment" is how that comes back. Routing every announcement through here
+ * makes printing without counting impossible by construction rather than by
+ * discipline — the same reason the guard's own fallback list is pinned rather
+ * than trusted a few lines below.
+ *
+ * It does NOT touch `failed`. A skip is not a failure, and the exit code must
+ * stay 0: site 494 is unreachable on most Linux images BY DESIGN, so failing
+ * here would be a permanent red nobody can clear for a guard working correctly.
+ * The mutation audit is the fail-closed layer that records the site unwitnessed.
+ */
+function cannotCheck(message) {
+  console.log(`CANNOT CHECK - ${message}`);
+  cannotChecked += 1;
+}
+
+/**
+ * The summary line, as a pure function so it can be asserted (#561).
+ *
+ * Extracted for exactly one reason: before this, the printed figures were
+ * pinned NOWHERE. That is the shape this repository keeps meeting — #541's
+ * `honoured` counter, `main()`'s OK-line count on #533 — and adding a third
+ * figure without a witness would have joined that list, on the issue whose
+ * whole subject is a summary that hides something.
+ *
+ * The third category is printed ALWAYS, including as `0 cannot-check`. Omitting
+ * it when zero would re-create the ambiguity being removed: a reader could not
+ * tell "nothing was skipped" from "this version does not report skips", which is
+ * the same glance-level confusion as `8 passed, 0 failed` against the full 12.
+ */
+function summaryLine(p, f, c) {
+  return `${p} passed, ${f} failed, ${c} cannot-check`;
 }
 
 /** A throwaway repo root: a root package.json plus the given packages. */
@@ -215,8 +255,8 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
   if (rung === null || !existsSync(relocated)) {
     // CANNOT CHECK, said out loud. A case that quietly does not run is the
     // empty pass this repository has spent the week removing.
-    console.log(
-      'CANNOT CHECK - site: npm-cannot-start is unwitnessed here — the interpreter could not be ' +
+    cannotCheck(
+      'site: npm-cannot-start is unwitnessed here — the interpreter could not be ' +
         'relocated (hardlink and copy both failed), so `dirname(process.execPath)` could not be ' +
         'made npm-free. The site is reachable; this ENVIRONMENT could not reach it.',
     );
@@ -225,8 +265,8 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
     // guard is in question and no expectation is weakened: the site is
     // reachable, and this HOST cannot reach it because npm sits in a directory
     // the guard always searches.
-    console.log(
-      `CANNOT CHECK - site: npm-cannot-start is unwitnessed here — npm is present in ` +
+    cannotCheck(
+      `site: npm-cannot-start is unwitnessed here — npm is present in ` +
         `${npmFoundIn.join(', ')}, which the guard appends to the child PATH unconditionally, so ` +
         `no fixture can make npm unresolvable on this host. The site is reachable; this ` +
         `ENVIRONMENT cannot reach it.`,
@@ -248,9 +288,47 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
       false,
     );
   }
+
+  // THE COUNTER IS RECONCILED AGAINST THE BRANCH ACTUALLY TAKEN (#561).
+  //
+  // Runs on EVERY host, and is the assertion that makes the new figure a
+  // measurement rather than decoration: it recomputes, from the same conditions
+  // the branches above test, whether this host skipped — and requires the
+  // counter to agree. If `cannotCheck` ever announces without incrementing, the
+  // two disagree and this reddens. A skip host expects 1, a full host expects 0,
+  // so neither is a hard-coded figure that goes stale on the other.
+  //
+  // It reconciles the COUNT against the BRANCH; it does not re-implement the
+  // counting. That distinction is what keeps it off the Transcribed-Oracle list.
+  const expectedCannotChecks = rung === null || !existsSync(relocated) || npmFoundIn.length > 0 ? 1 : 0;
+  check(
+    'summary: the cannot-check figure matches the branch this host actually took',
+    cannotChecked,
+    expectedCannotChecks,
+  );
 }
+
+// THE SUMMARY'S OWN SHAPE, pinned on explicit inputs (#561).
+//
+// Asserted through the same function the real summary is printed with, so these
+// cannot drift apart. Two cases rather than one: the first pins that a skip is
+// carried into the summary at all, the second that a clean run still names the
+// category instead of dropping it — which is the ambiguity being removed, since
+// a reader cannot otherwise tell "nothing skipped" from "skips not reported".
+check(
+  'summary: a skip is carried into the summary as its own category',
+  summaryLine(8, 0, 1),
+  '8 passed, 0 failed, 1 cannot-check',
+);
+check(
+  'summary: ...and a clean run still names the category rather than dropping it',
+  summaryLine(12, 0, 0),
+  '12 passed, 0 failed, 0 cannot-check',
+);
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 
-console.log(`\n${passed} passed, ${failed} failed`);
+console.log(`\n${summaryLine(passed, failed, cannotChecked)}`);
+// UNCHANGED, deliberately: a skip must still exit 0. `cannotChecked` is
+// reported, never gating. See the note on `cannotCheck` above.
 process.exit(failed === 0 ? 0 : 1);

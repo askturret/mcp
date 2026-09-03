@@ -451,6 +451,21 @@ jobs:
       - name: CI path filters cover every declared dependency
         run: node .github/scripts/check-path-filters.mjs
 
+      # PART A ONLY (#535). Declaration integrity: every registered site carries
+      # a well-formed block, drawn from a closed vocabulary, with each property
+      # tagged as the vocabulary classifies it. Bidirectional — a registered
+      # file without a block fails, and a block in an unregistered file fails.
+      #
+      # OFFLINE BY CONSTRUCTION, which is why it can block a PR. The live
+      # comparison is Part B and runs on a SCHEDULE, in reliability-nightly.yml,
+      # deliberately NOT here: a GitHub API outage must not redden every PR with
+      # a red nobody can clear. Do not "helpfully" add --live to this step.
+      - name: Self-test the platform-claim guard
+        run: node .github/scripts/check-platform-claims.test.mjs
+
+      - name: Platform-claim declarations are well-formed
+        run: node .github/scripts/check-platform-claims.mjs .
+
       # #280: the Actions budget is exhausted, so a job on a GitHub-hosted
       # runner is refused at "Set up job" with an EMPTY LOG — no error, nothing
       # naming the cause. That shape cost a full investigation cycle on #278

@@ -67,3 +67,37 @@ jobs:
           name: reliability-evidence
           path: reliability-evidence.json
           retention-days: 30
+
+  # PART B of #535 — divergence detection for prose asserting platform state.
+  #
+  # WHY IT LIVES ON A SCHEDULE AND NOT IN test.yml. It makes a live GitHub API
+  # call, and a networked check in the PR path has no good failure mode:
+  # cannot-read -> fail reddens every PR during an API outage, a red nobody can
+  # clear; cannot-read -> pass is "could not check" resolving as "it passed",
+  # the #281 violation the guard exists to prevent. tag-readiness-advisory.yml
+  # already ruled on this shape — a red X on something nothing actually refused
+  # is "an overclaim in the other direction". Here an outage delays detection by
+  # a day and blocks nobody.
+  #
+  # EXIT 2 IS EXPECTED AND CORRECT when live state cannot be read. It reddens
+  # this nightly job and gates nothing. Do not convert it to a pass, and do not
+  # move this step into the PR path to "make it consistent" — see #535.
+  #
+  # It rides this workflow rather than adding a sixth file because the schedule
+  # already exists. The job shares nothing with the reliability suite but the
+  # cron, which is why it is a separate job rather than a step in that one.
+  platform-claims:
+    runs-on: [self-hosted, Linux, X64, askturret]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No `npm ci`: the guard uses Node builtins and `fetch` only, so it needs
+      # no install to be trustworthy — the same reasoning the other guards give.
+      - name: Declared platform claims still match live state
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/check-platform-claims.mjs . --live

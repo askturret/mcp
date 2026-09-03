@@ -30,6 +30,15 @@
   },
   "files": [
     "dist",
-    "!dist/**/__tests__/**"
+    "!dist/**/__tests__/**",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
+  "keywords": [
+    "askturret",
+    "mcp",
+    "server",
+    "client"
   ]
 }

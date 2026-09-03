@@ -2292,6 +2292,32 @@ describe('entry gate: comments (#538)', () => {
     // Nothing edited, because nothing could be read.
     expect(result.files[0]?.contents).toContain('const a = oldName;');
   });
+
+  // ...AND THAT DEFERRAL IS BOUNDED BY THE TEXTUAL MATCH, which is the half
+  // that was unwitnessed (#569). `undecidable` requires BOTH an unterminated
+  // construct AND a loose match; dropping the second conjunct reddened NOTHING,
+  // so a reader could take `loose` in `unterminated !== null && loose` for
+  // redundancy — it looks like a narrowing of a condition that already narrows.
+  //
+  // It is not. It is what bounds BLAST RADIUS: without it every file in the
+  // repository carrying an unterminated string enters the gate and reports an
+  // unanalysable region it has no stake in. Measured, dropping the conjunct:
+  // this file goes findings=0 -> findings=1.
+  //
+  // Deliberately NOT a restatement of the happy path — the three `still skips`
+  // cases above all PARSE, so `unterminated === null` makes the conjunct
+  // unreachable and they stay green under that mutation. Failing to parse is
+  // the whole discriminator, which is why the premise is pinned rather than
+  // assumed: were this fixture ever edited into one that parses, the assertion
+  // below would still pass and would silently stop witnessing anything.
+  it('does NOT enter an unrelated file that merely fails to parse', () => {
+    const contents = `const s = "oops\nconst a = 1;\n`;
+    expect(maskSource(contents).unterminated).not.toBeNull();
+
+    const result = go(contents);
+    expect(result.files[0]?.contents).toBe(contents);
+    expect(result.findings).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

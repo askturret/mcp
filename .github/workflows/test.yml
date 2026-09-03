@@ -702,6 +702,35 @@ jobs:
       - name: Fake-SDK-upgrade drill
         run: node .github/scripts/sdk-upgrade-drill.mjs
 
+      # #583: Apache-2.0 §4(a) and §4(d) are satisfied by the PUBLISHED
+      # TARBALL, not by the source tree. npm ships only what `files` names plus
+      # a fixed always-included list — package.json, README, LICENSE/LICENCE,
+      # "main", "bin" — and NOTICE is NOT on it. So a NOTICE sitting in the
+      # package directory was excluded from every tarball while the tree looked
+      # correct, which is how this shipped: docs/releasing.md's rehearsal
+      # criterion passed, and a human reading a rendered npm page found it.
+      #
+      # The guard therefore PACKS. Its first version called fs.existsSync() on
+      # the directory and exited 0 green in exactly the broken state — a green
+      # check asserting compliance that did not hold, which is worse than no
+      # check. Directory presence is not tarball presence.
+      #
+      # Self-tested first, like every guard here, and here the cannot-check arm
+      # is the one that matters: if npm is unavailable or pack fails, it exits 2
+      # and NEVER 0. "I could not check" is not "it passed" (#281). Unlike the
+      # networked Part B in reliability-nightly.yml, a cannot-check here may
+      # block a PR — there is no upstream outage to absorb, because npm packs
+      # from the local tree.
+      #
+      # RUNS AFTER `npm run build` above, deliberately: pack reports dist/ only
+      # once the package is built, and an unbuilt package is reported
+      # cannot-check rather than passed.
+      - name: Self-test the tarball compliance guard
+        run: node .github/scripts/check-tarball-compliance.test.mjs
+
+      - name: Published tarballs carry README, LICENSE and NOTICE
+        run: node .github/scripts/check-tarball-compliance.mjs .
+
       # #62: docs/migrations/README.md is GENERATED from the migration registry.
       # A migration added without regenerating it would ship an index that
       # silently omits it — the same failure docs/adapters.md is generated to

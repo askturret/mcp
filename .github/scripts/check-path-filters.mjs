@@ -324,14 +324,33 @@ if (!existsSync(workflowPath)) cannotCheck(`${workflowPath} does not exist`);
 const CHEAP_LABEL = 'ci:cheap';
 
 /**
- * The labels on the PR being built, or null when this is not a PR run.
+ * The PR being built — its labels AND the payload's `action` — or null when
+ * this is not a PR run.
  *
  * Read from `GITHUB_EVENT_PATH`, which Actions sets for EVERY step — so this
  * needs no workflow change to obtain. That matters here more than usual: a new
  * workflow step to pass labels in would have tripped the very filter this check
  * exists to police, making the fix `ci:full` and self-contradicting.
+ *
+ * ## Why `action` is read too (#565)
+ *
+ * A PR is CREATED by one API call and LABELLED by a separate one, so the
+ * `opened` run is dispatched before the label exists. Measured on PR #555: the
+ * first Test run was created at 16:10:42Z and `ci:cheap` was applied at
+ * 16:10:43Z — label-blind by one second. The gap is structural, not a race:
+ * the labelling call CANNOT precede the event that dispatched the run, so no
+ * promptness on the labelling side closes it.
+ *
+ * Without `action`, two states are indistinguishable from the label set alone:
+ *
+ *   - a PR that genuinely carries no `ci:cheap` label  (nothing is claimed)
+ *   - a PR that IS `ci:cheap`, on a payload that predates the labelling
+ *
+ * The second is the defect, and collapsing it into the first is what made the
+ * skip silent. `action === 'opened'` is what separates them, and it comes from
+ * the same file this function already opens.
  */
-function pullRequestLabels() {
+function pullRequestEvent() {
   const eventPath = process.env['GITHUB_EVENT_PATH'];
   if (eventPath === undefined || eventPath === '' || !existsSync(eventPath)) return null;
 
@@ -345,10 +364,17 @@ function pullRequestLabels() {
   const pr = event?.pull_request;
   if (pr === undefined || pr === null) return null; // push build, not a PR
 
-  const labels = Array.isArray(pr.labels) ? pr.labels : [];
-  return labels
+  const rawLabels = Array.isArray(pr.labels) ? pr.labels : [];
+  const labels = rawLabels
     .map((l) => (typeof l === 'string' ? l : l?.name))
     .filter((n) => typeof n === 'string');
+
+  // `action` is REPORTED rather than assumed. If GitHub ever stopped sending it
+  // the discriminator below would silently stop discriminating, so the observed
+  // value is printed on the summary line of every PR run — see `laneNote`.
+  const action = typeof event?.action === 'string' ? event.action : null;
+
+  return { labels, action };
 }
 
 /**
@@ -513,7 +539,20 @@ for (const match of workflowText.matchAll(/needs\.changes\.outputs\.([A-Za-z0-9.
 //
 // Only runs on a labelled pull_request build; a push build and a local run have
 // no label to check, and inventing one would be worse than saying nothing.
-const labels = pullRequestLabels();
+const prEvent = pullRequestEvent();
+const labels = prEvent === null ? null : prEvent.labels;
+const prAction = prEvent === null ? null : prEvent.action;
+
+// What this run was able to say about the lane, reported on the summary line
+// (#565). Three outcomes were previously indistinguishable — all of them just
+// "check E did not run" — and that silence is what let a mislabelled PR merge.
+let laneNote = null;
+
+// `none` rather than an omitted clause: an ABSENT `action` is the one value
+// that would silently disable the discriminator below, so it must be the most
+// visible thing on the line, not the quietest.
+const actionLabel = prAction ?? 'none';
+
 if (labels !== null && labels.includes(CHEAP_LABEL)) {
   const baseRef =
     process.argv[3] ??
@@ -572,6 +611,82 @@ if (labels !== null && labels.includes(CHEAP_LABEL)) {
         'which is why #342 was cheap while #326 was not',
     );
   }
+
+  laneNote = `lane CHECKED (\`${CHEAP_LABEL}\` present, action=${actionLabel})`;
+} else if (labels !== null && prAction === 'opened') {
+  /* -------------------------------------------------------------------------
+   * The label set on this payload is NOT AUTHORITATIVE (#565).
+   *
+   * An `opened` payload reflects only labels present at CREATION, and a PR is
+   * labelled by a separate API call afterwards — so `ci:cheap` being absent
+   * here does not mean the PR is not `ci:cheap`. Check E above therefore did
+   * not run, and until now nothing said so: the run went green looking exactly
+   * like one that had checked the lane.
+   *
+   * THE ASYMMETRY IS DELIBERATE. Only the NEGATIVE case is unreliable. If
+   * `ci:cheap` IS present on an `opened` payload the claim is being made and
+   * the branch above checks it normally — a blanket "skip all `opened` runs"
+   * would throw away enforcement the repo currently has.
+   *
+   * WHY THIS EXITS 0 RATHER THAN 2, and do not "fix" it to 2.
+   * -----------------------------------------------------------------------
+   * #281 forbids "could not check" resolving as "it passed". This is not that.
+   * The claim is DEFERRED, not abandoned: the `labeled` run in
+   * lane-check.yml — and any later `synchronize` run — does check it, with the
+   * label demonstrably present. An unverifiable claim silently reported as
+   * verified is the violation; a claim announced as pending, with a named
+   * mechanism that will check it, is not.
+   *
+   * Exiting 2 here would redden EVERY pull request at creation — a red nobody
+   * can clear, which is the corner `tag-readiness-advisory.yml` already warns
+   * against: a red X on something nothing actually refused. That is why the
+   * scheduled-job idiom (#535 Part B) is right there and wrong here.
+   * ---------------------------------------------------------------------- */
+  const baseRef =
+    process.argv[3] ??
+    (process.env['GITHUB_BASE_REF'] ? `origin/${process.env['GITHUB_BASE_REF']}` : 'origin/main');
+
+  const diff = changedFiles(baseRef);
+  if (diff.files === null) {
+    // Advisory only, so a diff failure must not redden the PR — but it must not
+    // be invisible either, or this run looks like one that found nothing to
+    // defer. Says which of the two it is.
+    laneNote =
+      'lane DEFERRAL NOT COMPUTED — this is an `opened` payload, whose label set is not ' +
+      `authoritative, and the diff against '${baseRef}' did not run (${diff.detail}). ` +
+      'No lane claim is asserted by this run either way.';
+  } else {
+    const tripped = [];
+    for (const [name, globs] of Object.entries(filters)) {
+      const hits = diff.files.filter((file) => globs.some((glob) => globMatches(glob, file)));
+      if (hits.length > 0) tripped.push({ name, hits });
+    }
+
+    if (tripped.length === 0) {
+      // ANTI-WALLPAPER (#565). Nothing is deferred here: a `ci:cheap` label on
+      // this change would be CORRECT, so there is no pending claim to announce.
+      // A line that printed on every `opened` run — the great majority of which
+      // are legitimately not cheap — would be wallpaper, and wallpaper is how a
+      // warning becomes invisible. That would be a new instance of this issue's
+      // own class rather than a fix for it.
+      laneNote = `lane not deferred (action=${prAction}, no filter tripped — \`${CHEAP_LABEL}\` would be correct here)`;
+    } else {
+      const names = tripped.map(({ name }) => `'${name}'`).join(', ');
+      laneNote = `lane classification DEFERRED (action=${prAction})`;
+      console.error(
+        `check-path-filters: lane classification DEFERRED — this payload is an \`opened\` event and ` +
+          `cannot carry a label applied after the PR was created (#565), so the \`${CHEAP_LABEL}\` ` +
+          `claim was NOT checked by this run. This change trips ${tripped.length} filter(s): ${names}. ` +
+          `If this PR is labelled \`${CHEAP_LABEL}\`, that is a mislabel and the next run — the ` +
+          `\`labeled\` job in lane-check.yml, or any later push — will refuse it.\n`,
+      );
+    }
+  }
+} else if (labels !== null) {
+  // A PR payload that is not `opened` and carries no `ci:cheap` label. Here the
+  // label set IS authoritative — a `synchronize` or `labeled` payload reflects
+  // the PR's current labels — so the absence is a real answer, not a blind spot.
+  laneNote = `lane not claimed (no \`${CHEAP_LABEL}\` label, action=${actionLabel})`;
 }
 
 const allViolations = [...violations, ...laneViolations];
@@ -606,3 +721,16 @@ console.log(
   `check-path-filters: OK — ${Object.keys(filters).length} filters, ` +
     `${dirs.length} packages, every declared first-party dependency is covered.`,
 );
+
+// #565: on a PR run, say what this run was able to conclude about the LANE —
+// which is a different question from the filter coverage reported above, and
+// used to be reported by silence. Printed only on PR runs, so a push build and
+// a local run stay exactly as quiet as before.
+//
+// This line also carries the OBSERVED `action`, which is deliberate: the whole
+// discriminator rests on GitHub sending `action` on the `pull_request` payload,
+// and printing what was actually seen is what keeps that premise observable
+// rather than assumed. `action=none` here would mean the discriminator has
+// stopped discriminating and every `opened` run is silently back to the old
+// behaviour.
+if (laneNote !== null) console.log(`check-path-filters: ${laneNote}`);

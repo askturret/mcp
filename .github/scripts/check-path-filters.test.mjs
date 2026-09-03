@@ -149,6 +149,12 @@ function laneFixture({
   filtersBlock,
   packages = { core: [] },
   baseRef = 'main',
+  // The payload's `action` (#565). Defaults to `synchronize` — a payload whose
+  // label set IS authoritative — so every pre-existing case keeps asserting
+  // exactly what it asserted before this field existed. `opened` is the one
+  // value that makes an ABSENT `ci:cheap` unreliable, and the cases that pass
+  // it are the ones added for #565.
+  action = 'synchronize',
   // Run the guard with no PATH, so ITS `git` cannot be found (#510). The
   // fixture's own git calls run in this process and are unaffected; only the
   // child loses the ability to start one. `process.execPath` is absolute, so
@@ -177,7 +183,13 @@ function laneFixture({
   // read via GITHUB_EVENT_PATH — no workflow wiring needed.
   mkdirSync(join(dir, 'no-bin'), { recursive: true });
   const eventPath = join(dir, 'event.json');
-  writeFileSync(eventPath, JSON.stringify({ pull_request: { labels: labels.map((name) => ({ name })) } }));
+  // `action` sits at the TOP LEVEL of the payload, beside `pull_request` — not
+  // inside it. Getting that nesting wrong would make the discriminator read
+  // `undefined` on every real run while every fixture still passed.
+  writeFileSync(
+    eventPath,
+    JSON.stringify({ action, pull_request: { labels: labels.map((name) => ({ name })) } }),
+  );
 
   // PATH pointed at an EMPTY DIRECTORY, not unset. Found by running it:
   // DELETING `PATH` does not make a binary unfindable, because libc falls back
@@ -256,6 +268,99 @@ check(
   }).code,
   0,
 );
+
+// ---------------------------------------------------------------------------
+// #565 — the label-blind `opened` payload.
+//
+// A PR is created by one API call and labelled by a separate one, so an
+// `opened` payload cannot carry a label applied afterwards. That made THREE
+// states collapse into one observable outcome ("check E did not run"), of which
+// one is the defect: a PR that IS `ci:cheap` on a payload that predates its own
+// labelling. These cases pin the discriminator that separates them.
+// ---------------------------------------------------------------------------
+{
+  const r = laneFixture({
+    action: 'opened',
+    labels: [],
+    changedPaths: ['.github/workflows/release.yml'],
+    filtersBlock: LANE_FILTERS,
+  });
+  check('opened + tripping paths + no ci:cheap: exits 0, never reddens the PR', r.code, 0);
+  check('...and SAYS the classification was deferred', r.out.includes('lane classification DEFERRED'), true);
+  check('...and names the tripped filter', /trips 1 filter\(s\): 'workspace'/.test(r.out), true);
+  check('...and names the CONSEQUENCE, not the mechanism', r.out.includes('that is a mislabel'), true);
+  check('...and points at the run that WILL check it', r.out.includes('lane-check.yml'), true);
+}
+
+// THE ASYMMETRY. Only the NEGATIVE case is unreliable on an `opened` payload:
+// if `ci:cheap` IS present the claim is being made and must still be refused.
+// Without this case a later "simplification" to skip all `opened` runs passes.
+{
+  const r = laneFixture({
+    action: 'opened',
+    labels: ['ci:cheap'],
+    changedPaths: ['.github/workflows/release.yml'],
+    filtersBlock: LANE_FILTERS,
+  });
+  check('opened + ci:cheap PRESENT: still REFUSED — the asymmetry holds', r.code, 1);
+  check('...and it is the real violation, not a deferral', r.out.includes('lane classification DEFERRED'), false);
+}
+
+// THE ANTI-WALLPAPER CONTROL, and the case a naive implementation fails. A
+// deferral printed on every `opened` run — the great majority of which are
+// legitimately not cheap — is wallpaper, and wallpaper is how a warning becomes
+// invisible. Nothing is pending here: `ci:cheap` would be CORRECT for this
+// change, so there is no claim to defer.
+{
+  const r = laneFixture({
+    action: 'opened',
+    labels: [],
+    changedPaths: ['docs/thing.md', '.operum/audit/note.jsonl'],
+    filtersBlock: LANE_FILTERS,
+  });
+  check('opened + NO tripping paths + no ci:cheap: exits 0', r.code, 0);
+  check('...and stays SILENT — no deferral to announce', r.out.includes('lane classification DEFERRED'), false);
+}
+
+// The pre-#565 behaviour, pinned against regression: on a payload whose label
+// set IS authoritative, a tripping `ci:cheap` PR is still refused.
+check(
+  'synchronize + ci:cheap + tripping paths: still refused (regression pin)',
+  laneFixture({
+    action: 'synchronize',
+    labels: ['ci:cheap'],
+    changedPaths: ['.github/workflows/release.yml'],
+    filtersBlock: LANE_FILTERS,
+  }).code,
+  1,
+);
+
+// The observed `action` is REPORTED, not assumed. The entire discriminator
+// rests on GitHub sending it, so the value actually seen is printed on every PR
+// run — `action=none` would mean the discriminator has silently stopped
+// discriminating and every `opened` run is back to the old blind behaviour.
+{
+  const r = laneFixture({
+    action: 'synchronize',
+    labels: [],
+    changedPaths: ['docs/thing.md'],
+    filtersBlock: LANE_FILTERS,
+  });
+  check('a PR run reports the observed action on its summary line', r.out.includes('action=synchronize'), true);
+
+  // `null`, NOT `undefined`. A JS default parameter fires on `undefined`, so
+  // `action: undefined` would silently become `synchronize` and this case would
+  // assert nothing — it failed exactly that way when first written. `null`
+  // passes through the default and `JSON.stringify` emits `"action":null`,
+  // which is a payload carrying no usable action.
+  const noAction = laneFixture({
+    action: null,
+    labels: [],
+    changedPaths: ['docs/thing.md'],
+    filtersBlock: LANE_FILTERS,
+  });
+  check('a payload with NO action reports action=none rather than staying quiet', noAction.out.includes('action=none'), true);
+}
 
 check(
   'lane: trip-paths come from the FILTER CONFIG, not a hardcoded list (#327)',

@@ -451,6 +451,30 @@ jobs:
       - name: CI path filters cover every declared dependency
         run: node .github/scripts/check-path-filters.mjs
 
+      # #565: a check whose behaviour branches on a PR label is exercised only
+      # on PRs pushed to at least twice — a PR is CREATED by one API call and
+      # LABELLED by a separate one, so the `opened` run is dispatched before the
+      # label exists (PR #555: run created 16:10:42Z, label applied 16:10:43Z).
+      # The population of such checks was unknown, and an enumeration living in
+      # an issue comment is not one: nothing reads it, so it goes stale silently.
+      #
+      # The registry is committed and this guard compares it against the tree in
+      # BOTH directions. The second is the one that decays: check-path-filters
+      # promises in prose that lane-check.yml "will refuse it", and DELETING that
+      # workflow — or typoing `ci:cheap` inside it — used to leave every suite
+      # green while the promise became false. Prose asserting external state with
+      # nothing noticing when it diverges is the #535 class, and #565's own fix
+      # reproduced it.
+      #
+      # Self-tested first, like every guard here, and here for a specific reason:
+      # its detection predicates DECIDE the population, so a false negative
+      # silently empties the registry's meaning rather than failing loudly.
+      - name: Self-test the label-dependence registry guard
+        run: node .github/scripts/check-label-dependence.test.mjs
+
+      - name: Label-dependent checks are declared, and the declarations hold
+        run: node .github/scripts/check-label-dependence.mjs .
+
       # PART A ONLY (#535). Declaration integrity: every registered site carries
       # a well-formed block, drawn from a closed vocabulary, with each property
       # tagged as the vocabulary classifies it. Bidirectional — a registered

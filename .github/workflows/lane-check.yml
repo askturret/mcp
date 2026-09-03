@@ -50,12 +50,42 @@ permissions:
   contents: read
   pull-requests: read
 
+# N labels applied to one PR means N `labeled` events and so N runs of this
+# workflow. Collapse them: only the newest matters, because each one re-reads
+# the PR's CURRENT label set rather than the label that triggered it.
+concurrency:
+  group: lane-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   lane-claim:
-    # Gated on the specific label so `priority:*` / `team:*` / `status:*` churn
-    # does not schedule a run. `github.event.label` is the label that was just
-    # applied, which is precisely the event worth reacting to.
-    if: github.event.label.name == 'ci:cheap'
+    # READS THE SAME FIELD THE SCRIPT READS — `pull_request.labels`, the PR's
+    # CURRENT label set — and that identity is the whole point (#565 QA).
+    #
+    # This gate used to read `github.event.label.name`: the single label that
+    # triggered the event. The script has always read `pull_request.labels`. Two
+    # different fields, so they could disagree, and both directions were wrong:
+    #
+    #   - label just applied IS `ci:cheap`, but the payload's label set does not
+    #     carry it -> the gate proves a claim exists, the job runs, and the
+    #     script reports "lane not claimed" and exits 0. The gate proved the
+    #     very thing the script then failed to find.
+    #
+    #   - a PR ALREADY carrying `ci:cheap` is given any other label -> the gate
+    #     sees `team:foo`, skips, and a real mislabel goes unreported. QA ran
+    #     that exact payload through the script: it exits 1 and names the
+    #     mislabel, so the skip SUPPRESSED A REAL FINDING.
+    #
+    # The second is not theoretical for non-main-base PRs: `test.yml` is
+    # `branches: [main]` while this workflow has no branches filter, so
+    # `labeled` is the ONLY path that checks the lane there. On base-main PRs
+    # test-integrity re-checks on every `synchronize` and covers the miss.
+    #
+    # `contains(...labels.*.name, ...)` is the same set the script parses out of
+    # `GITHUB_EVENT_PATH`, so gate and script now agree BY CONSTRUCTION rather
+    # than by coincidence. Non-`ci:cheap` PRs still skip, so `priority:*` /
+    # `team:*` / `status:*` churn on them costs nothing.
+    if: contains(github.event.pull_request.labels.*.name, 'ci:cheap')
     runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4

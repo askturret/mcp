@@ -1,0 +1,40 @@
+{
+  "$schema-note": [
+    "THE ENUMERATION #565 ASKED FOR, as a committed artifact rather than prose.",
+    "",
+    "A label-dependent check is one whose BEHAVIOUR branches on a pull-request",
+    "label. Every such check inherits the label-blind sampling rule: a PR is",
+    "CREATED by one API call and LABELLED by a separate one, so the `opened` run",
+    "is dispatched before the label exists (measured on PR #555: run created",
+    "16:10:42Z, `ci:cheap` applied 16:10:43Z). Anything gated on a label is",
+    "therefore exercised only on PRs that get pushed to at least twice, unless it",
+    "declares how it copes.",
+    "",
+    "This file is NOT documentation. `check-label-dependence.mjs` compares it",
+    "against the tree in BOTH directions: a label-dependent site that is not",
+    "declared here fails, and an entry here whose file has stopped being",
+    "label-dependent fails too. The second direction is the one that decays,",
+    "because an entry nobody compares still READS as though it were guarded.",
+    "",
+    "When the population grows, add the entry AND say how the new check avoids",
+    "being verified only by accident of review history."
+  ],
+  "checks": [
+    {
+      "id": "check-path-filters:lane-claim",
+      "kind": "script",
+      "path": ".github/scripts/check-path-filters.mjs",
+      "label": "ci:cheap",
+      "behaviour": "Check E refuses a PR labelled `ci:cheap` whose changed paths trip any filter in test.yml. The lane gate exempts `ci:cheap` PRs from the sequential-PR capacity check, so a mislabelled one consumes a signing-runner slot the gate believes is free.",
+      "sampling": "SELF-DECLARING. On an `opened` payload an absent `ci:cheap` is not authoritative, so the run computes the tripped filters anyway and announces that classification is DEFERRED, naming them. It exits 0 rather than 2 because exit 2 in the PR path reddens every PR at creation; the claim is deferred, not abandoned, and lane-check.yml checks it. An unreadable payload is CANNOT CHECK (exit 2), never a pass."
+    },
+    {
+      "id": "lane-check:lane-claim",
+      "kind": "workflow",
+      "path": ".github/workflows/lane-check.yml",
+      "label": "ci:cheap",
+      "behaviour": "Runs check-path-filters.mjs on the `labeled` event, when the PR's current label set contains `ci:cheap`, so the lane claim is verified with the label demonstrably present instead of depending on whether someone pushed twice.",
+      "sampling": "THIS CHECK IS ITSELF LABEL-DEPENDENT, and that is the honest reading: the fix for the sampling rule is a check gated on a label. Its gate reads `github.event.pull_request.labels`, the SAME field check-path-filters.mjs parses — not `github.event.label.name`, the single label that triggered the event. Reading the triggering label meant a PR already carrying `ci:cheap` and then given any other label skipped entirely, suppressing a real finding. The identity of those two fields is asserted by check-path-filters.test.mjs."
+    }
+  ]
+}

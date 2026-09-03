@@ -352,29 +352,71 @@ const CHEAP_LABEL = 'ci:cheap';
  */
 function pullRequestEvent() {
   const eventPath = process.env['GITHUB_EVENT_PATH'];
-  if (eventPath === undefined || eventPath === '' || !existsSync(eventPath)) return null;
+  const eventName = process.env['GITHUB_EVENT_NAME'];
+  // `GITHUB_EVENT_NAME` is what separates "there is legitimately no PR here"
+  // from "there should be one and I cannot see it". Without it those two are
+  // the same observation, which is how they collapsed into one green.
+  const claimsPr = eventName === 'pull_request' || eventName === 'pull_request_target';
+
+  const unknown = (detail) => ({ kind: 'unknown', detail });
+
+  if (eventPath === undefined || eventPath === '') {
+    // No payload at all. On a developer's machine that is ordinary and nothing
+    // is claimed; on a pull_request run it means the payload we must read is
+    // not there.
+    return claimsPr
+      ? unknown(`GITHUB_EVENT_NAME is '${eventName}' but GITHUB_EVENT_PATH is unset, so the label set could not be read`)
+      : { kind: 'not-a-pr' };
+  }
+
+  if (!existsSync(eventPath)) {
+    return unknown(`GITHUB_EVENT_PATH points at '${eventPath}', which does not exist`);
+  }
 
   let event;
   try {
     event = JSON.parse(readFileSync(eventPath, 'utf-8'));
-  } catch {
-    return null; // not a payload we understand; the other checks still run
+  } catch (err) {
+    return unknown(`the event payload at '${eventPath}' is not valid JSON (${err?.message ?? err})`);
   }
 
   const pr = event?.pull_request;
-  if (pr === undefined || pr === null) return null; // push build, not a PR
+  if (pr === undefined || pr === null) {
+    // A push or schedule build legitimately has no `pull_request` object, and
+    // saying nothing there is correct. A pull_request build without one is not.
+    return claimsPr
+      ? unknown(`GITHUB_EVENT_NAME is '${eventName}' but the payload carries no \`pull_request\` object`)
+      : { kind: 'not-a-pr' };
+  }
 
-  const rawLabels = Array.isArray(pr.labels) ? pr.labels : [];
-  const labels = rawLabels
+  if (!Array.isArray(pr.labels)) {
+    // THE CASE THAT USED TO ASSERT A NEGATIVE FROM DATA IT COULD NOT PARSE.
+    // `labels: []` on a non-array used to yield "lane not claimed" — a positive
+    // conclusion drawn from a failed read, which is exactly "I could not check"
+    // resolving as "it passed" (#281).
+    const what = pr.labels === undefined ? 'absent' : `a ${typeof pr.labels}`;
+    return unknown(`\`pull_request.labels\` is ${what}, not an array — the label set could not be read`);
+  }
+
+  const labels = pr.labels
     .map((l) => (typeof l === 'string' ? l : l?.name))
     .filter((n) => typeof n === 'string');
+
+  if (labels.length !== pr.labels.length) {
+    // A PARTIAL read is not a read. Silently dropping the entries we could not
+    // understand would let the one unparseable entry be the `ci:cheap` one.
+    return unknown(
+      `\`pull_request.labels\` has ${pr.labels.length} entries but only ${labels.length} carry a usable name — ` +
+        'the label set was read only partially',
+    );
+  }
 
   // `action` is REPORTED rather than assumed. If GitHub ever stopped sending it
   // the discriminator below would silently stop discriminating, so the observed
   // value is printed on the summary line of every PR run — see `laneNote`.
   const action = typeof event?.action === 'string' ? event.action : null;
 
-  return { labels, action };
+  return { kind: 'pr', labels, action };
 }
 
 /**
@@ -540,8 +582,23 @@ for (const match of workflowText.matchAll(/needs\.changes\.outputs\.([A-Za-z0-9.
 // Only runs on a labelled pull_request build; a push build and a local run have
 // no label to check, and inventing one would be worse than saying nothing.
 const prEvent = pullRequestEvent();
-const labels = prEvent === null ? null : prEvent.labels;
-const prAction = prEvent === null ? null : prEvent.action;
+
+// An UNKNOWN payload state is not a lane verdict. Three conditions used to
+// collapse into `null` — not a PR run, unreadable payload, no `pull_request`
+// key — and `null` read as "nothing to check here", so a failed parse produced
+// a green indistinguishable from a genuine no-claim. Two of the three are now
+// separated out and exit 2, because a guard that could not read its input has
+// not checked anything (#281).
+if (prEvent.kind === 'unknown') {
+  cannotCheck(
+    `${prEvent.detail}. The \`${CHEAP_LABEL}\` claim was NOT evaluated. This is deliberately not a ` +
+      'pass: the lane gate exempts `ci:cheap` PRs from the sequential-PR capacity check, so reporting ' +
+      'OK from an unread label set would grant that exemption on the strength of a failed parse.',
+  );
+}
+
+const labels = prEvent.kind === 'pr' ? prEvent.labels : null;
+const prAction = prEvent.kind === 'pr' ? prEvent.action : null;
 
 // What this run was able to say about the lane, reported on the summary line
 // (#565). Three outcomes were previously indistinguishable — all of them just

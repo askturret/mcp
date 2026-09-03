@@ -16,13 +16,14 @@
  * Run: node .github/scripts/check-path-filters.test.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const GUARD = join(dirname(fileURLToPath(import.meta.url)), 'check-path-filters.mjs');
+const HERE = dirname(fileURLToPath(import.meta.url));
+const GUARD = join(HERE, 'check-path-filters.mjs');
 
 let passed = 0;
 let failed = 0;
@@ -106,9 +107,20 @@ ${opts.extraJobs ?? ''}`,
  * the payload skips the block outright and `GITHUB_BASE_REF` is never consulted.
  * `laneFixture` passes a payload EXPLICITLY when it wants that path, so the
  * cases that do need it are unaffected.
+ *
+ * `GITHUB_EVENT_NAME` is withheld TOO, and that is not tidiness (#565 QA).
+ * Since the payload-state fix, "the event name says pull_request but the
+ * payload is unreadable" is CANNOT CHECK — exit 2, deliberately. This suite
+ * runs inside test-integrity, which triggers on `pull_request`, so the ambient
+ * `GITHUB_EVENT_NAME` is `pull_request` in CI and unset on a developer's
+ * machine. Withholding only the path would have made every case below exit 2 in
+ * CI while passing locally: a CI-only failure, invisible here, in a suite whose
+ * whole subject is environment-dependent behaviour that looks fine locally.
+ * Withholding both models "not a CI run at all", which is what these fixtures
+ * are.
  */
 function run(dir) {
-  const { GITHUB_EVENT_PATH: _ambient, ...env } = process.env;
+  const { GITHUB_EVENT_PATH: _ambient, GITHUB_EVENT_NAME: _ambientName, ...env } = process.env;
   const r = spawnSync(process.execPath, [GUARD, dir], { encoding: 'utf-8', env });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
@@ -198,7 +210,15 @@ function laneFixture({
   // PATH that exists and contains nothing, which is the state being modelled.
   const r = spawnSync(process.execPath, [GUARD, dir, baseRef], {
     encoding: 'utf-8',
-    env: { ...process.env, GITHUB_EVENT_PATH: eventPath, ...(pathless ? { PATH: join(dir, 'no-bin') } : {}) },
+    // `GITHUB_EVENT_NAME` is set EXPLICITLY rather than inherited: these cases
+    // assert pull_request behaviour, and inheriting it makes the result depend
+    // on whether the suite happens to be running inside a pull_request build.
+    env: {
+      ...process.env,
+      GITHUB_EVENT_PATH: eventPath,
+      GITHUB_EVENT_NAME: 'pull_request',
+      ...(pathless ? { PATH: join(dir, 'no-bin') } : {}),
+    },
   });
   rmSync(dir, { recursive: true, force: true });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
@@ -360,6 +380,144 @@ check(
     filtersBlock: LANE_FILTERS,
   });
   check('a payload with NO action reports action=none rather than staying quiet', noAction.out.includes('action=none'), true);
+}
+
+// ---------------------------------------------------------------------------
+// PAYLOAD STATE — the seven cannot-determine paths (#565 QA).
+//
+// Five of these used to exit 0. Three distinct conditions collapsed into one
+// `null` — not a PR run, unreadable payload, no `pull_request` key — and `null`
+// read as "nothing to check here". The worst two did not merely stay silent:
+// they ASSERTED "lane not claimed" from a label set they had failed to parse,
+// which is "I could not check" resolving as "it passed".
+//
+// The control cases matter as much as the failures: a push build and a local
+// run must stay quiet and exit 0, or this fix would redden everything that is
+// not a pull request.
+// ---------------------------------------------------------------------------
+/** Run the guard against the REAL repo with a hand-built payload environment. */
+function payloadRun({ body, eventName, omitPath = false, writeFile = true }) {
+  const dir = mkdtempSync(join(tmpdir(), 'payload-'));
+  const eventPath = join(dir, 'event.json');
+  if (writeFile) writeFileSync(eventPath, typeof body === 'string' ? body : JSON.stringify(body));
+
+  const { GITHUB_EVENT_PATH: _p, GITHUB_EVENT_NAME: _n, ...base } = process.env;
+  const env = { ...base };
+  if (!omitPath) env.GITHUB_EVENT_PATH = eventPath;
+  if (eventName !== null) env.GITHUB_EVENT_NAME = eventName;
+
+  // No repoRoot argument: the guard defaults to this repository, so checks A-D
+  // pass and the payload state is the only thing under test.
+  const r = spawnSync(process.execPath, [GUARD], { encoding: 'utf-8', env });
+  rmSync(dir, { recursive: true, force: true });
+  return { code: r.status, out: `${r.stdout}${r.stderr}` };
+}
+
+const CHEAP_PAYLOAD = { action: 'synchronize', pull_request: { labels: [{ name: 'ci:cheap' }] } };
+
+{
+  // 3. GITHUB_EVENT_PATH set, file missing.
+  const r = payloadRun({ body: CHEAP_PAYLOAD, eventName: 'pull_request', writeFile: false });
+  check('payload: event file absent is CANNOT CHECK, not a pass', r.code, 2);
+  check('...and says the label claim was not evaluated', r.out.includes('was NOT evaluated'), true);
+
+  // 4. Corrupt JSON.
+  const corrupt = payloadRun({ body: '{ "pull_request": ', eventName: 'pull_request' });
+  check('payload: corrupt JSON is CANNOT CHECK, not a pass', corrupt.code, 2);
+  check('...and names it as invalid JSON', corrupt.out.includes('not valid JSON'), true);
+
+  // 5. `labels` is a string, not an array.
+  const strLabels = payloadRun({
+    body: { action: 'synchronize', pull_request: { labels: 'ci:cheap' } },
+    eventName: 'pull_request',
+  });
+  check('payload: labels as a string is CANNOT CHECK, not "lane not claimed"', strLabels.code, 2);
+  check('...and says the label set could not be read', strLabels.out.includes('could not be read'), true);
+  check('...and does NOT assert a negative conclusion', strLabels.out.includes('lane not claimed'), false);
+
+  // 6. The event names ci:cheap but the PR object carries no label set. This is
+  //    the shape the workflow gate could produce, and the one that used to
+  //    report "lane not claimed" while a claim demonstrably existed.
+  const noLabels = payloadRun({
+    body: { action: 'labeled', label: { name: 'ci:cheap' }, pull_request: {} },
+    eventName: 'pull_request',
+  });
+  check('payload: label.name=ci:cheap with no labels[] is CANNOT CHECK', noLabels.code, 2);
+  check('...and does NOT report the claim as absent', noLabels.out.includes('lane not claimed'), false);
+
+  // A partial read is not a read: one unparseable entry could be the ci:cheap one.
+  const partial = payloadRun({
+    body: { action: 'synchronize', pull_request: { labels: [{ name: 'ci:full' }, { nome: 'typo' }] } },
+    eventName: 'pull_request',
+  });
+  check('payload: a partially-readable label set is CANNOT CHECK', partial.code, 2);
+
+  // 7. No pull_request object on a pull_request event.
+  const noPr = payloadRun({ body: { action: 'synchronize' }, eventName: 'pull_request' });
+  check('payload: no pull_request object on a pull_request event is CANNOT CHECK', noPr.code, 2);
+
+  // GITHUB_EVENT_PATH unset on a pull_request event.
+  const noPath = payloadRun({ body: CHEAP_PAYLOAD, eventName: 'pull_request', omitPath: true });
+  check('payload: event path unset on a pull_request event is CANNOT CHECK', noPath.code, 2);
+}
+
+// THE CONTROLS. Without these the fix above would redden every push build and
+// every local run — and a guard that fails on correct conditions is one someone
+// switches off.
+{
+  const push = payloadRun({
+    body: { ref: 'refs/heads/main', commits: [] },
+    eventName: 'push',
+  });
+  check('control: a push build has no pull_request and still exits 0', push.code, 0);
+  check('...and says nothing about the lane', push.out.includes('lane'), false);
+
+  const local = payloadRun({ body: CHEAP_PAYLOAD, eventName: null, omitPath: true });
+  check('control: a local run with no payload at all exits 0', local.code, 0);
+  check('...and says nothing about the lane', local.out.includes('lane'), false);
+
+  const wellFormed = payloadRun({
+    body: { action: 'synchronize', pull_request: { labels: [{ name: 'ci:full' }] } },
+    eventName: 'pull_request',
+  });
+  check('control: a well-formed non-cheap payload still exits 0', wellFormed.code, 0);
+  check('...and reports the lane as not claimed', wellFormed.out.includes('lane not claimed'), true);
+}
+
+// ---------------------------------------------------------------------------
+// THE DECLARATION IS CHECKED, NOT ASSERTED (#565 QA / #535 shape).
+//
+// The guard's deferral message tells the reader that lane-check.yml "will
+// refuse it". Until now nothing read that file: deleting lane-check.yml, or
+// typoing `ci:cheap` inside it, left this suite 69/0 green while the promise
+// became false. Prose asserting external state with nothing noticing when it
+// diverges is exactly what #535 was filed about.
+// ---------------------------------------------------------------------------
+{
+  const LANE_WORKFLOW = join(HERE, '..', 'workflows', 'lane-check.yml');
+  const exists = existsSync(LANE_WORKFLOW);
+  check('declaration: lane-check.yml exists, as the deferral message promises', exists, true);
+
+  const yaml = exists ? readFileSync(LANE_WORKFLOW, 'utf-8') : '';
+  check('declaration: it triggers on the `labeled` event', /types:\s*\[[^\]]*labeled/.test(yaml), true);
+  check('declaration: its gate names ci:cheap', yaml.includes("'ci:cheap'"), true);
+
+  // THE FIELD IDENTITY, pinned. The gate must read the PR's CURRENT label set —
+  // the same field the script parses — not `github.event.label.name`, the
+  // single label that triggered the event. Those are different fields and they
+  // disagreed: a PR already carrying ci:cheap, then given any other label,
+  // skipped entirely and suppressed a real finding.
+  check(
+    'declaration: the gate reads pull_request.labels, the SAME field the script reads',
+    yaml.includes('contains(github.event.pull_request.labels.*.name'),
+    true,
+  );
+  check(
+    'declaration: the gate does NOT read the single triggering label',
+    /if:.*github\.event\.label\.name/.test(yaml),
+    false,
+  );
+  check('declaration: it actually runs this guard', yaml.includes('check-path-filters.mjs'), true);
 }
 
 check(

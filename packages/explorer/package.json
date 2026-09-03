@@ -1,6 +1,6 @@
 {
   "name": "@askturret/mcp-explorer",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Local Explorer UI - dev-only tool browser and safe invoke panel",
   "type": "module",
   "license": "Apache-2.0",

@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "@askturret/mcp-adapters-express": "*",
-    "express": "^4.18.0"
+    "express": "^5.2.1"
   },
   "askturret": {
     "testsNotRequired": "Runnable demo app, not a library. The facade behaviour it demonstrates (mcpFromOpenApi, Explorer route, executor wiring) is covered by packages/adapters-express tests against the same Petstore fixture."

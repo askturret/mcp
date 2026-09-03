@@ -53,9 +53,22 @@ import { spawnSync } from 'node:child_process';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Imported, never re-derived (#464/#510). `status === null` is true both for a
-// spawn that never started and for one killed by a signal, and only the first
-// sets `error` — so a hand-rolled check crashes on the second.
+// Imported, never re-derived (#464/#510) — but the two symbols are imported for
+// DIFFERENT reasons, and the difference is the part worth writing down (#546).
+//
+// `spawnFailureDetail` is the half that carries the crash risk. `status === null`
+// has two causes and only ONE of them sets `error`: a spawn that never started
+// sets it, a spawn killed by a signal leaves it UNDEFINED. So the obvious
+// hand-rolled `result.error.message` throws on precisely the row it exists to
+// report on. That is not a projection — `sdk-upgrade-drill.test.mjs` spawns a
+// real self-SIGKILLing child and observes both halves against it: the shared
+// helper names the signal, and the inlined form throws on the same result.
+//
+// `didNotStart` carries NO such risk. It is exactly `return result.status ===
+// null` — it dereferences nothing and cannot throw, so a hand-rolled copy would
+// be perfectly safe. What the import buys here is DEFINITION-SHARING: one answer
+// to "did this process run at all", so this guard and the drill cannot drift
+// apart. Sharing it is about agreement, not crash-safety.
 import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
 
 /** Workspace packages are first-party. Kept in step with the supply-chain lib. */
@@ -365,10 +378,17 @@ function pullRequestLabels() {
  *
  * ## What is classified, and what is deliberately not
  *
- * `didNotStart` is a STRUCTURAL fact — the process never ran, so there is no
- * exit status — and it is imported rather than re-derived (#464), because
- * `status === null` is also true of a signal kill and only one of those sets
- * `error`.
+ * `didNotStart` is a STRUCTURAL fact — there is no exit status to read — and it
+ * is imported rather than re-derived (#464) so this guard and the drill hold ONE
+ * definition of it. Definition-sharing is the whole benefit; the predicate is
+ * `status === null` and could not crash if it were copied (#546).
+ *
+ * Its NAME under-describes it, which is worth knowing before editing this
+ * branch: `status === null` is also true of a signal kill, so what this branch
+ * really means is "git produced no exit status", not strictly "git was never on
+ * PATH". That is exactly why it reports `spawnFailureDetail(r)` instead of
+ * asserting a cause — the detail is what separates an ENOENT from a signal, and
+ * that helper is the half where a hand-rolled copy WOULD crash.
  *
  * Everything else is git running and refusing, and this does NOT guess between
  * "shallow clone" and "no such ref" by matching stderr. That would be a
@@ -505,20 +525,29 @@ if (labels !== null && labels.includes(CHEAP_LABEL)) {
     // verified one. Same rule the rest of this file follows — but the SENTENCE
     // has to survive being acted on, so it names the cause it actually has
     // rather than the one that is most often right (#510).
+    // `else` rather than a bare fall-through (#546). Both arms end in
+    // `cannotCheck`, which exits 2 — so today the fall-through is unreachable
+    // and this is a no-op. It is written anyway because the coupling is
+    // INVISIBLE from `cannotCheck`'s side: someone making it return instead of
+    // exiting would not be looking at this line, and a did-not-start would then
+    // fall straight into the shallow-checkout sentence below — re-creating the
+    // exact wrong-cause defect #510 removed. The `else` costs nothing and does
+    // not depend on a distant function keeping a promise it never made here.
     if (diff.cause === 'git-did-not-start') {
       cannotCheck(
         `git could not be started, so the lane could not be classified: ${diff.detail}. ` +
           'This is NOT a shallow checkout — the diff never ran. Check that git is on PATH ' +
           'for this step; a space-separated PATH has caused exactly this here before (#429).',
       );
+    } else {
+      cannotCheck(
+        `git refused to diff against '${baseRef}', so the lane could not be classified: ${diff.detail}. ` +
+          'Two things produce this and the message does not guess between them: the checkout may be ' +
+          'shallow and missing the base commit (the guards job uses fetch-depth: 0 for exactly that ' +
+          "reason), or the ref may not exist here. git's own words are quoted above — they distinguish " +
+          'the two.',
+      );
     }
-    cannotCheck(
-      `git refused to diff against '${baseRef}', so the lane could not be classified: ${diff.detail}. ` +
-        'Two things produce this and the message does not guess between them: the checkout may be ' +
-        'shallow and missing the base commit (the guards job uses fetch-depth: 0 for exactly that ' +
-        "reason), or the ref may not exist here. git's own words are quoted above — they distinguish " +
-        'the two.',
-    );
   }
   const changed = diff.files;
 

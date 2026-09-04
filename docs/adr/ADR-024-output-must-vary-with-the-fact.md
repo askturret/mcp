@@ -142,6 +142,12 @@ while writing.
 **Good.** The test is one question and applies to a shell fragment or a commit
 trailer as readily as to a guard, which is where most of these instances were.
 
+> Applied prospectively once, while writing this record: a `git var
+> GIT_AUTHOR_IDENT` read was about to stand in for the commit's author, and its
+> output varies with the **config**, not with the author it purports to report.
+> The question caught it before the commit — the same wrong artifact as the
+> trailer instance above, in a third form, from the same author on the same day.
+
 **Good.** It gives the exit-2 discipline a form that survives outside CI. The
 principle was already right and already written down; it had no vocabulary in
 the places it kept escaping.

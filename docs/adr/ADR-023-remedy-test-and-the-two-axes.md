@@ -117,14 +117,33 @@ notes four lines apart, written with equal care:
   pinned to v4 types"*. It is the best-calibrated claim examined in the whole
   sweep, and it states its own remedy: *"until a CI job covers it."*
 - Line 58 marks Fastify **"🔜 Planned"**, and the note beneath asserts *"no
-  adapter package, no `fromFastify` export, and no implementation."* Every
-  clause is false. `@askturret/mcp-adapters-fastify` is built, tested, exported
-  at `@askturret/mcp/fastify`, and published at `0.1.1`.
+  adapter package, no `fromFastify` export, and no implementation."* **Two of
+  those three clauses are false, and the third is the interesting one.**
+  `@askturret/mcp-adapters-fastify` is built, tested, exported at
+  `@askturret/mcp/fastify` and published at `0.1.1` — so *no adapter package*
+  and *no implementation* are both wrong. But **`fromFastify` genuinely does not
+  exist, and never did.** The package exports `mcpFromOpenApi` and `fastifyMcp`;
+  a repo-wide search finds the identifier nowhere outside the note itself.
 
 **Nothing distinguishes the author's diligence between those two notes. What
 differs is that the world moved under one of them.** The Fastify note was true
 when written; shipping the adapter is what made it a lie, and no amount of care
 at writing time would have prevented that.
+
+**The mixture is a sharper illustration than a uniformly-false note would be.**
+The clause that survives names something that never shipped; the two that failed
+name the things that did. So the note did not simply rot — it is a description of
+a world that moved out from under exactly the claims the world touched, and left
+the one it never touched standing. A reader checking only `fromFastify` would
+have confirmed the note and moved on.
+
+> **An earlier draft of this record said "every clause is false", and that was
+> itself an overstatement — asserted three clauses false where the source issue
+> had rebutted two.** Recorded rather than quietly corrected, because of where it
+> sat: an overstated claim inside the section defining overstatement as the
+> defect. That is the Axis-2 failure committed by the document cataloguing it,
+> which is precisely the trap Q4 names one level up. It was caught by review, not
+> by the author.
 
 So Axis 2 is not only *"state your bound"*. It is *"state your bound, and give
 something the job of noticing when it expires."* A bound that names its own
@@ -193,6 +212,37 @@ and was right once and wrong once.
 **The discriminator is mechanical reachability, not conceptual separability.**
 Both pairs looked separable, and looking separable is worth nothing. The
 question is whether the cheap half can reach `main` on its own.
+
+### Q2's verdict is time-indexed, and must be recorded with its expiry
+
+The pair above is not a fixed fact about `express` and `qs`. `express@5.2.1`
+declares `qs: ^6.14.0`, which **admits** `6.16.0` — so the constraint that makes
+them one issue today **dissolves the moment the Express 5 upgrade lands.** The
+same two observations are one issue before #585 and two issues after it, with
+nothing about either observation having changed.
+
+So Q2 does not read a property of the pair. **It reads the dependency graph at a
+point in time**, and a merge justified that way inherits an expiry date whether
+or not anyone writes it down.
+
+> **A Q2 merge must record the constraint together with its expiry condition.**
+> Not *"one issue"*, but *"one issue while `express@4` pins `qs: ~6.15.1`"*.
+
+This is Axis 2's time dimension applied to the remedy test itself. A merge
+justified by a constraint decays into a **wrong** merge when the constraint
+lifts, and — exactly as with the Fastify note — there is no diff at the moment it
+becomes wrong, so nothing prompts a re-examination. The Express compatibility
+note is exemplary because it names *"until a CI job covers it"*; a Q2 merge owes
+the reader the same sentence.
+
+**This record initially failed to say so**, presenting the coupling as though it
+were permanent. It was found in review, which the author had invited to attack
+this qualifier — and the review also disposed of the objection the author had
+offered against it. *n = 2* is **not** the weakness: the two cases are a
+**minimal pair demonstrating dissociation** — one where conceptual separability
+and mechanical reachability agree, one where they come apart — and two is the
+correct size for that, not a thin sample. The real weakness was time-indexing,
+and it was somewhere else entirely.
 
 ### Q3 — A review discovery becomes a new issue when it has its own remedy and its own reader
 
@@ -341,6 +391,21 @@ that the earlier claim had skipped. Neither was reported by review.
 The framing that separates *"in what order?"* from *"how many?"* came from PM's
 observation that #566 was asking for a grouping and a rule as though they
 answered the same question.
+
+**Two corrections came from QA review of this document before it merged**, and
+both are recorded above where they apply rather than only here. The
+*"every clause is false"* overstatement about the Fastify note was QA's finding;
+`fromFastify` was confirmed absent repo-wide, and the source issue had rebutted
+two clauses while this record asserted three. Q2's time-indexing was also QA's,
+from checking the registry rather than the lockfile: `express@5.2.1` declares
+`qs: ^6.14.0`. Both were re-verified here against the registry and the tree
+before being written down.
+
+The footer below reads *Operum Engineer* on every record in this directory,
+including those written by other roles. **It is a directory-wide convention
+rather than an authorship claim** — noted because this document argues for
+stating things exactly, and a reader who notices the mismatch should not have to
+wonder whether it is one.
 
 ## Retirement trigger
 

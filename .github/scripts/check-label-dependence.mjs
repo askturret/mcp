@@ -35,7 +35,12 @@
  * FAILING to add one may not be.
  *
  * REGISTRY -> TREE IS THE ONE THAT DECAYS, and it is the whole reason this
- * exists rather than a comment.
+ * guard exists rather than a comment. Before this guard, `check-path-filters.mjs`
+ * asserted in prose that lane-check.yml "will refuse it" and the self-test
+ * asserted only that the STRING appeared. Deleting lane-check.yml, or typoing
+ * `ci:cheap` inside it, left the suite green while the promise became false.
+ * Prose asserting external state with nothing noticing when it diverges is
+ * exactly the class #535 was filed about — reproduced, in the fix for #565.
  *
  * NAMED, NEVER NUMBERED — and that is a correction to this very comment (#602).
  * An earlier revision of it said "THE FIRST DIRECTION", which was accurate only
@@ -43,12 +48,7 @@
  * silently inverted it against `// REGISTRY -> TREE` below and against the
  * self-test, and nothing could notice: an ordinal expires when the DOCUMENT
  * changes rather than when the world does, which is a tally in a costume. Name
- * the direction and it cannot invert. Before it, `check-path-filters.mjs` asserted in
- * prose that lane-check.yml "will refuse it" and the self-test asserted only
- * that the STRING appeared. Deleting lane-check.yml, or typoing `ci:cheap`
- * inside it, left the suite green while the promise became false. Prose
- * asserting external state with nothing noticing when it diverges is exactly
- * the class #535 was filed about — reproduced, in the fix for #565.
+ * the direction and it cannot invert.
  *
  * WHY A LABEL-DEPENDENCE REGISTRY AT ALL
  *

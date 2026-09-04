@@ -12,11 +12,14 @@ copy would be wrong within one release and would create two places to update:
 - **[CHANGELOG.md](../CHANGELOG.md)** — entry format, and the rule that a
   `Changed` or `Removed` entry names the covered surface it touches.
 
-> **No release has ever been cut from this repository.** `git tag -l` is empty.
-> Everything below describes machinery that exists and has been read, but the
-> end-to-end path has not been exercised — see
-> [Rehearsing before it matters](#rehearsing-before-it-matters), which is the
-> next step rather than an optional extra.
+> **Two releases have been tagged; one has been published.** `v0.1.1` and
+> `v0.1.2` both exist as tags. `v0.1.1` was published as a GitHub Release on
+> 2026-09-03, and that `release: published` event did fire `supply-chain.yml` —
+> CI attached the SBOM. `v0.1.2` is tagged but **not published**, so nothing has
+> shipped for it. The automated `npm publish` at the end of step 4 has still
+> never been confirmed to have published anything: both prior npm publishes were
+> performed by hand. See
+> [Rehearsing before it matters](#rehearsing-before-it-matters).
 
 ---
 

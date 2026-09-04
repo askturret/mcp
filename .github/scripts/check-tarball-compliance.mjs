@@ -89,7 +89,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 /** Entries every public tarball must carry. */
 export const REQUIRED_TARBALL_ENTRIES = ['README.md', 'LICENSE', 'NOTICE'];
@@ -363,7 +363,6 @@ export function main(argv, runner = defaultPackRunner) {
   return EXIT_OK;
 }
 
-const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+if (isProcessEntryPoint(import.meta.url)) {
   process.exit(main(process.argv));
 }

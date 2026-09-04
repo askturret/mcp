@@ -37,6 +37,8 @@ import {
   main,
   packPackage,
   discoverPublicPackages,
+  findRelativeLinks,
+  findManifestMetadataIssues,
   REQUIRED_TARBALL_ENTRIES,
   EXIT_OK,
   EXIT_DIVERGENCE,
@@ -61,19 +63,41 @@ function check(desc, actual, expected) {
   }
 }
 
-/** A throwaway workspace tree. */
-function fixture(packages) {
+/** A README carrying no repository-relative link — the compliant default (#596). */
+const CLEAN_README = '# pkg\n\nSee the [main README](https://github.com/askturret/mcp#readme).\n';
+
+/**
+ * A throwaway workspace tree.
+ *
+ * Every package also gets a README on disk: since #596 the guard reads the
+ * content of the README the pack list says ships, so a fixture without one is
+ * a cannot-check rather than the case under test.
+ */
+function fixture(packages, readmes = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'tarball-compliance-'));
   tmpDirs.push(dir);
   for (const [name, manifest] of Object.entries(packages)) {
     const pkgDir = join(dir, 'packages', name);
     mkdirSync(pkgDir, { recursive: true });
     writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(manifest, null, 2));
+    writeFileSync(join(pkgDir, 'README.md'), readmes[name] ?? CLEAN_README);
   }
   return dir;
 }
 
-const PUBLIC_MANIFEST = { name: '@scope/pkg', keywords: ['a'], files: ['dist', 'README.md', 'LICENSE', 'NOTICE'] };
+/** A fully compliant public manifest for a package living at packages/<dirName>. */
+function publicManifest(dirName, name = '@scope/pkg') {
+  return {
+    name,
+    keywords: ['a'],
+    files: ['dist', 'README.md', 'LICENSE', 'NOTICE'],
+    repository: { type: 'git', url: 'https://github.com/askturret/mcp.git', directory: `packages/${dirName}` },
+    homepage: 'https://github.com/askturret/mcp#readme',
+    bugs: { url: 'https://github.com/askturret/mcp/issues' },
+  };
+}
+
+const PUBLIC_MANIFEST = publicManifest('pkg');
 
 /** A runner returning a packed list of exactly these paths. */
 function runnerWithFiles(paths) {
@@ -177,7 +201,7 @@ for (const missing of REQUIRED_TARBALL_ENTRIES) {
 // Narrowing to one exit code must not narrow the report.
 // ---------------------------------------------------------------------------
 {
-  const dir = fixture({ a: { ...PUBLIC_MANIFEST, name: '@scope/a' }, b: { ...PUBLIC_MANIFEST, name: '@scope/b' } });
+  const dir = fixture({ a: publicManifest('a', '@scope/a'), b: publicManifest('b', '@scope/b') });
   const runner = (_root, pkgName) =>
     pkgName === '@scope/a'
       ? { status: 0, stdout: JSON.stringify([{ name: '@scope/a', files: COMPLIANT.filter((f) => f !== 'NOTICE').map((p) => ({ path: p })) }]), stderr: '' }
@@ -263,6 +287,114 @@ function runGuard(repoRoot, binDir) {
 }
 
 // ---------------------------------------------------------------------------
+// #596 — LINK CLASSIFICATION.
+//
+// The discriminator is "does this target resolve on a page with no repository
+// context", so both directions are asserted: an over-strict rule that rejected
+// anchors would redden the cli README, which is correct today.
+// ---------------------------------------------------------------------------
+{
+  check('an https link is accepted', findRelativeLinks('[a](https://example.com/x)').length, 0);
+  check('an http link is accepted', findRelativeLinks('[a](http://example.com)').length, 0);
+  check('a mailto link is accepted', findRelativeLinks('[a](mailto:x@example.com)').length, 0);
+  check('an intra-document anchor is accepted', findRelativeLinks('[a](#a-section)').length, 0);
+  check('a link with a title is accepted', findRelativeLinks('[a](https://example.com "T")').length, 0);
+
+  check('the #596 link itself is rejected', findRelativeLinks('[main README](../../README.md)')[0], '../../README.md');
+  check('a same-directory relative link is rejected', findRelativeLinks('[a](./docs/x.md)')[0], './docs/x.md');
+  check('a bare relative path is rejected', findRelativeLinks('[a](docs/x.md)')[0], 'docs/x.md');
+  check('a relative directory link is rejected', findRelativeLinks('[a](../../examples/x)')[0], '../../examples/x');
+  check('a relative IMAGE is rejected too', findRelativeLinks('![img](../../logo.png)')[0], '../../logo.png');
+  check(
+    'a reference-style definition is scanned, not just inline links',
+    findRelativeLinks('[label]: ../../README.md')[0],
+    '../../README.md',
+  );
+  check('every offender is reported, not just the first', findRelativeLinks('[a](../x)\n[b](../y)').length, 2);
+}
+
+// ---------------------------------------------------------------------------
+// #596 — MANIFEST METADATA. One case per field, so a check that only ever
+// looked for `repository` cannot pass this block.
+// ---------------------------------------------------------------------------
+{
+  const ok = publicManifest('core');
+  check('a complete manifest raises nothing', findManifestMetadataIssues(ok, 'packages/core').length, 0);
+
+  const noRepo = { ...ok };
+  delete noRepo.repository;
+  check('a manifest with no repository is flagged', findManifestMetadataIssues(noRepo, 'packages/core').length, 1);
+
+  const noDir = { ...ok, repository: { type: 'git', url: 'https://github.com/askturret/mcp.git' } };
+  check('a repository with no directory is flagged', findManifestMetadataIssues(noDir, 'packages/core').length, 1);
+
+  // The copy-paste case: nine manifests gain this field at once and one keeps
+  // its neighbour's directory. Present, well-formed, and pointing at the wrong
+  // source — invisible to a presence-only check.
+  const wrongDir = { ...ok, repository: { ...ok.repository, directory: 'packages/transports' } };
+  const wrong = findManifestMetadataIssues(wrongDir, 'packages/core');
+  check('a repository.directory naming ANOTHER package is flagged', wrong.length, 1);
+  // String(... ?? '') rather than wrong[0].includes: when a mutation removes the
+  // branch, wrong[0] is undefined and a bare .includes THROWS, aborting the run
+  // before the summary. A witness must report a failure, not become one.
+  const wrongMsg = String(wrong[0] ?? '');
+  check('...and the message names both directories', wrongMsg.includes('packages/transports') && wrongMsg.includes('packages/core'), true);
+
+  const noHomepage = { ...ok };
+  delete noHomepage.homepage;
+  check('a manifest with no homepage is flagged', findManifestMetadataIssues(noHomepage, 'packages/core').length, 1);
+
+  const noBugs = { ...ok };
+  delete noBugs.bugs;
+  check('a manifest with no bugs.url is flagged', findManifestMetadataIssues(noBugs, 'packages/core').length, 1);
+
+  const emptyUrl = { ...ok, repository: { ...ok.repository, url: '' } };
+  check('an empty repository url is flagged, not accepted as present', findManifestMetadataIssues(emptyUrl, 'packages/core').length, 1);
+}
+
+// ---------------------------------------------------------------------------
+// #596 — THROUGH main(). The unit checks above prove the predicates; these
+// prove they are actually WIRED to the exit code.
+// ---------------------------------------------------------------------------
+{
+  const dir = fixture({ pkg: PUBLIC_MANIFEST }, { pkg: '# pkg\n\nSee the [main README](../../README.md).\n' });
+  const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+  check('#596 regression: a shipped README with a relative link exits 1', r.code, EXIT_DIVERGENCE);
+  check('...and names the offending target', r.out.includes('../../README.md'), true);
+  check('...and says it resolves to nothing on the npm page', r.out.includes('resolves to nothing on the npm page'), true);
+}
+
+{
+  const noRepo = { ...PUBLIC_MANIFEST };
+  delete noRepo.repository;
+  const dir = fixture({ pkg: noRepo });
+  const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+  check('#596 regression: a manifest with no repository exits 1', r.code, EXIT_DIVERGENCE);
+  check('...and explains npm renders no Repository link', r.out.includes('no Repository link'), true);
+}
+
+// The ORDER that keeps the content check honest: a README the tarball does not
+// carry is a divergence, and its content is never consulted. Reading it anyway
+// would answer a question about a file nobody receives.
+{
+  const dir = fixture({ pkg: PUBLIC_MANIFEST }, { pkg: '# pkg\n\n[x](../../README.md)\n' });
+  const withoutReadme = COMPLIANT.filter((f) => f !== 'README.md');
+  const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(withoutReadme)));
+  check('a README absent from the tarball is a divergence', r.code, EXIT_DIVERGENCE);
+  check('...reported as the missing file', r.out.includes('README.md is NOT in the published tarball'), true);
+  check('...and its content is NOT reported as a link issue', r.out.includes('resolves to nothing'), false);
+}
+
+// A packed README that cannot be read is cannot-check, never a silent pass.
+{
+  const dir = fixture({ pkg: PUBLIC_MANIFEST });
+  rmSync(join(dir, 'packages', 'pkg', 'README.md'));
+  const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+  check('a packed README that cannot be read exits 2, not 0', r.code, EXIT_CANNOT_CHECK);
+  check('...and says its links were NOT checked', r.out.includes('links were NOT checked'), true);
+}
+
+// ---------------------------------------------------------------------------
 // THE REAL MANIFESTS — the RED-on-revert assertion for #583 itself.
 // ---------------------------------------------------------------------------
 {
@@ -278,6 +410,16 @@ function runGuard(repoRoot, binDir) {
     for (const required of REQUIRED_TARBALL_ENTRIES) {
       check(`${pkg.name}: ${required} exists on disk`, existsSync(join(REPO_ROOT, pkg.dir, required)), true);
     }
+
+    // #596's own RED-on-revert pair. These bite on the real tree, need neither
+    // npm nor a build, and go red the moment either half of the fix is undone.
+    // Compared as joined strings rather than arrays: `check` is ===, so an
+    // array comparison would be reference equality and could never pass. The
+    // join also puts the actual offenders in the failure message.
+    check(`${pkg.name}: manifest carries repository/homepage/bugs`, findManifestMetadataIssues(manifest, pkg.dir).join(' | '), '');
+
+    const readme = readFileSync(join(REPO_ROOT, pkg.dir, 'README.md'), 'utf-8');
+    check(`${pkg.name}: README has no repository-relative link`, findRelativeLinks(readme).join(' | '), '');
   }
 }
 

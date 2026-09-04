@@ -56,6 +56,34 @@
  * and "dist misconfigured out of the tarball" are indistinguishable from the
  * pack output alone, and an indistinguishable state must not resolve as
  * success.
+ *
+ * PAGE METADATA AND README LINKS (#596)
+ * ---------------------------------------------------------------------------
+ * #583 asked whether README.md is PRESENT. It shipped nine packages whose
+ * READMEs were present and useless: three lines pointing at `../../README.md`,
+ * a filesystem-relative path that resolves to nothing on an npm page, in
+ * manifests carrying no `repository` — so npm rendered no Repository link and
+ * had no base URL to rewrite the relative link against. Every tarball passed.
+ *
+ * "Useful" is not mechanically checkable and this guard does not pretend to
+ * check it. Two NARROWER properties are, and they are the two that failed:
+ *
+ *   - the manifest carries `repository` (with a `directory` naming THIS
+ *     package), `homepage` and `bugs` — without which the page has no route
+ *     back to the source at all;
+ *   - the README that ships contains no repository-relative link.
+ *
+ * WHY READING THE README HERE IS NOT THE MISTAKE THIS GUARD EXISTS TO AVOID.
+ * The tree-versus-tarball distinction is about PRESENCE: `files` decides
+ * whether a file ships, so a file on disk may be absent from the tarball. It is
+ * not about CONTENT — npm copies the bytes of whatever it does ship verbatim.
+ * So the content check is sound provided presence is established FIRST, from
+ * the pack list, and that is the order used below: a README that the pack list
+ * does not carry is reported as a divergence and its content is never read.
+ *
+ * Anchors (`#section`) are accepted: they resolve within the rendered README
+ * itself and are correct on an npm page. Only links that escape the document
+ * are rejected.
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
@@ -69,6 +97,63 @@ export const REQUIRED_TARBALL_ENTRIES = ['README.md', 'LICENSE', 'NOTICE'];
 export const EXIT_OK = 0;
 export const EXIT_DIVERGENCE = 1;
 export const EXIT_CANNOT_CHECK = 2;
+
+/**
+ * Link targets that render correctly on an npm package page.
+ *
+ * `#anchor` resolves inside the rendered README itself. Everything else here is
+ * absolute. A repository-relative path is what #596 shipped, and it is exactly
+ * what this list excludes.
+ */
+const ACCEPTABLE_LINK_TARGET = /^(https?:\/\/|mailto:|#)/;
+
+/**
+ * Every repository-relative link target in a markdown document.
+ *
+ * Both link forms are scanned. Reference definitions (`[label]: target`) carry
+ * no `](`, so an inline-only scan would miss a whole syntax — none is used in
+ * this repository today, which is precisely why a guard that ignored it could
+ * go stale without anyone noticing.
+ */
+export function findRelativeLinks(markdown) {
+  const targets = [];
+  // Inline links and images: `](target)`, optionally followed by a "title".
+  for (const m of markdown.matchAll(/\]\(\s*([^)\s]+)/g)) targets.push(m[1]);
+  // Reference definitions: `[label]: target` at the start of a line.
+  for (const m of markdown.matchAll(/^\[[^\]]+\]:\s*(\S+)/gm)) targets.push(m[1]);
+
+  return targets.filter((t) => !ACCEPTABLE_LINK_TARGET.test(t));
+}
+
+/**
+ * Manifest fields an npm page needs to be navigable, and why each one.
+ *
+ * `repository.directory` is checked against the package's OWN directory rather
+ * than merely being present: nine manifests gaining this field in one change is
+ * the classic copy-paste site, and a wrong `directory` points npm's "Repository"
+ * link at another package's source while looking entirely correct in review.
+ */
+export function findManifestMetadataIssues(manifest, dir) {
+  const issues = [];
+  const repo = manifest.repository;
+
+  if (!repo || typeof repo !== 'object' || typeof repo.url !== 'string' || repo.url === '') {
+    issues.push('manifest has no `repository` — npm renders no Repository link and cannot resolve relative README links');
+  } else if (typeof repo.directory !== 'string' || repo.directory === '') {
+    issues.push('manifest `repository` has no `directory` — required for npm to locate this package inside the monorepo');
+  } else if (repo.directory !== dir) {
+    issues.push(`manifest \`repository.directory\` is "${repo.directory}" but this package lives in "${dir}"`);
+  }
+
+  if (typeof manifest.homepage !== 'string' || manifest.homepage === '') {
+    issues.push('manifest has no `homepage`');
+  }
+  if (!manifest.bugs || typeof manifest.bugs.url !== 'string' || manifest.bugs.url === '') {
+    issues.push('manifest has no `bugs.url` — `npm bugs` does not work for this package');
+  }
+
+  return issues;
+}
 
 /**
  * Public workspace packages, DISCOVERED rather than hardcoded.
@@ -104,7 +189,7 @@ export function discoverPublicPackages(repoRoot) {
     }
 
     if (manifest.private === true) continue;
-    found.push({ dir, name: manifest.name, keywords: manifest.keywords });
+    found.push({ dir, name: manifest.name, keywords: manifest.keywords, manifest });
   }
   return found;
 }
@@ -161,6 +246,7 @@ export function main(argv, runner = defaultPackRunner) {
   const divergences = [];
   const cannotCheck = [];
   const manifestIssues = [];
+  const readmeIssues = [];
 
   if (packages.length === 0) {
     cannotCheck.push('no public packages were discovered under packages/ — nothing was verified');
@@ -199,12 +285,41 @@ export function main(argv, runner = defaultPackRunner) {
     if (!Array.isArray(pkg.keywords) || pkg.keywords.length === 0) {
       manifestIssues.push(`${pkg.name}: manifest has no keywords array`);
     }
+
+    // #596: the page-metadata fields, same category and same reasoning.
+    for (const issue of findManifestMetadataIssues(pkg.manifest || {}, pkg.dir)) {
+      manifestIssues.push(`${pkg.name}: ${issue}`);
+    }
+
+    // #596: README CONTENT — and only once the pack list has established that
+    // this README is the one that ships. When it is absent the divergence above
+    // has already fired, so reading the directory copy would be answering a
+    // question about a file the tarball does not contain.
+    if (files.has('README.md')) {
+      const readmePath = join(repoRoot, pkg.dir, 'README.md');
+      let readme;
+      try {
+        readme = readFileSync(readmePath, 'utf-8');
+      } catch (err) {
+        cannotCheck.push(
+          `${pkg.name}: README.md is in the tarball but could not be read from ${pkg.dir} (${err && err.message}) — its links were NOT checked`,
+        );
+      }
+      if (readme !== undefined) {
+        for (const target of findRelativeLinks(readme)) {
+          readmeIssues.push(
+            `${pkg.name}: README links to "${target}", a repository-relative path that resolves to nothing on the npm page`,
+          );
+        }
+      }
+    }
   }
 
   const checked = packages.length - cannotCheck.length;
   console.log(
     `check-tarball-compliance: packed ${Math.max(checked, 0)} of ${packages.length} public package(s); ` +
-      `${divergences.length} divergence(s), ${cannotCheck.length} cannot-check, ${manifestIssues.length} manifest issue(s).`,
+      `${divergences.length} divergence(s), ${cannotCheck.length} cannot-check, ${manifestIssues.length} manifest issue(s), ` +
+      `${readmeIssues.length} README link issue(s).`,
   );
 
   // BOTH categories are always printed, whichever exit code wins below.
@@ -216,6 +331,13 @@ export function main(argv, runner = defaultPackRunner) {
   if (manifestIssues.length > 0) {
     console.error('\n❌ MANIFEST:');
     for (const m of manifestIssues) console.error(`   ${m}`);
+    console.error('   Fix: add the field to the package\'s package.json. See #596 for the shape.');
+  }
+  if (readmeIssues.length > 0) {
+    console.error('\n❌ README LINK — this renders as a dead link on the npm package page:');
+    for (const r of readmeIssues) console.error(`   ${r}`);
+    console.error('   Fix: make the link absolute (https://github.com/askturret/mcp/...). An npm page has');
+    console.error('   no repository context, so a relative path has nothing to resolve against.');
   }
   if (cannotCheck.length > 0) {
     console.error('\n⚠️  CANNOT CHECK — packing did not produce a verdict for:');
@@ -223,9 +345,9 @@ export function main(argv, runner = defaultPackRunner) {
     console.error('   This is NOT a pass. Nothing above was verified for these packages.');
   }
 
-  if (divergences.length > 0 || manifestIssues.length > 0) {
+  if (divergences.length > 0 || manifestIssues.length > 0 || readmeIssues.length > 0) {
     console.error(
-      `\n::error::${divergences.length + manifestIssues.length} tarball compliance failure(s).`,
+      `\n::error::${divergences.length + manifestIssues.length + readmeIssues.length} tarball compliance failure(s).`,
     );
     return EXIT_DIVERGENCE;
   }
@@ -234,7 +356,10 @@ export function main(argv, runner = defaultPackRunner) {
     return EXIT_CANNOT_CHECK;
   }
 
-  console.log('check-tarball-compliance: OK — every public tarball carries README.md, LICENSE and NOTICE.');
+  console.log(
+    'check-tarball-compliance: OK — every public tarball carries README.md, LICENSE and NOTICE, ' +
+      'every manifest carries repository/homepage/bugs, and no shipped README links to a relative path.',
+  );
   return EXIT_OK;
 }
 

@@ -41,7 +41,7 @@ const html = renderExplorerHtml(model, buildExplorerPanels({ /* live state */ })
 Omit it and the page is unchanged apart from per-tool provenance, which rides
 on the view model and needs nothing from the host. Adapters expose this as the
 `explorerPanels` option, called per request. See
-[`docs/explorer-panels.md`](../../docs/explorer-panels.md).
+[`docs/explorer-panels.md`](https://github.com/askturret/mcp/blob/main/docs/explorer-panels.md).
 
 Everything embedded in the page is redacted at serialization, so a hand-built
 panel set cannot route around the pipeline the builders apply.

@@ -220,8 +220,8 @@ A one-command worked setup (gateway + mock upstream + OTel collector) is in
 > **These packages are on npm**, so the command above runs without a checkout.
 > No version is quoted here on purpose — `npm view @askturret/mcp-gateway
 > version` is the authoritative answer and cannot go stale, whereas a number
-> written on this page can. Nine workspaces are public; see
-> [`docs/releasing.md`](docs/releasing.md) for which.
+> written on this page can. See [`docs/releasing.md`](docs/releasing.md) for
+> which workspaces are public.
 
 ### The adapter conformance contract
 

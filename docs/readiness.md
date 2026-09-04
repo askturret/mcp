@@ -93,10 +93,12 @@ This certification covers **architectural readiness**, not feature completeness:
 - [x] CI gate merges into `.github/workflows/test.yml`
 - [ ] Release automation refuses to **publish** a red `1.0.*` release — **built,
       not yet exercised.** The `readiness` job gates `publish` in
-      `supply-chain.yml` and the evaluator is self-tested, but no release has
-      ever been cut from this repository, so the end-to-end path is unproven.
-      This box is ticked when a real release run demonstrates it, not when the
-      workflow merges. (The original wording — "refuses `1.0.0` tag" — was
+      `supply-chain.yml`, the evaluator is self-tested, and the job has run on a
+      real release — `v0.1.1`, where it completed successfully. But it ran
+      **advisorily**, because every release so far has been `0.x`. Refusal
+      itself stays unproven until a `>= 1.0.0` release is attempted with a red
+      row. This box is ticked when a real release run demonstrates *that*, not
+      when the workflow merges. (The original wording — "refuses `1.0.0` tag" — was
       false twice over: nothing had a tag trigger, and no workflow can refuse a
       tag. See [`releasing.md`](releasing.md).)
 - [x] Doc merged into `docs/readiness.md`

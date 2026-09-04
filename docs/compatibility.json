@@ -1,5 +1,5 @@
 {
-  "matrixVersion": "2.1.0",
+  "matrixVersion": "2.2.0",
   "appliesToRelease": "0.1.2",
   "documentation": "https://github.com/askturret/mcp/blob/main/docs/compatibility.md",
   "statusLegend": {
@@ -36,6 +36,8 @@
       "framework": "express",
       "package": "packages/adapters-express",
       "entryPoint": "@askturret/mcp-adapters-express",
+      "declared": "^4.18.0 || ^5.0.0",
+      "source": "packages/adapters-express/package.json#peerDependencies.express",
       "entries": [
         { "version": "4.18.x - 4.x", "status": "supported", "note": "CI installs and tests Express 4." },
         { "version": "5.x", "status": "declared-untested", "note": "Accepted by peerDependencies, but no CI job installs Express 5 and @types/express is pinned to v4." }
@@ -45,6 +47,8 @@
       "framework": "fastify",
       "package": "packages/adapters-fastify",
       "entryPoint": "@askturret/mcp-adapters-fastify",
+      "declared": "^4.0.0 || ^5.0.0",
+      "source": "packages/adapters-fastify/package.json#peerDependencies.fastify",
       "entries": [
         { "version": "5.x", "status": "supported", "note": "The test-adapters-fastify CI job runs on every pull request against the lockfile pin, fastify 5.12.1." },
         { "version": "4.x", "status": "declared-untested", "note": "Accepted by the peerDependencies range ^4.0.0 || ^5.0.0, but the devDependency is ^5.0.0 so no CI job installs Fastify 4." }
@@ -57,9 +61,9 @@
       "kind": "openapi",
       "package": "packages/sources-openapi",
       "entries": [
-        { "version": "3.0.x", "status": "supported" },
-        { "version": "3.1.x", "status": "supported" },
-        { "version": "2.0 (Swagger)", "status": "unsupported", "note": "Rejected. Convert to OpenAPI 3.x first." }
+        { "version": "3.0.x", "status": "supported", "verifiedBy": "packages/sources-openapi/src/__tests__/from-openapi.test.ts" },
+        { "version": "3.1.x", "status": "supported", "verifiedBy": "packages/sources-openapi/src/__tests__/from-openapi.test.ts" },
+        { "version": "2.0 (Swagger)", "status": "unsupported", "verifiedBy": "packages/sources-openapi/src/__tests__/from-openapi.test.ts", "note": "Rejected. Convert to OpenAPI 3.x first." }
       ],
       "note": "Version detection matches the dotted prefixes '3.0.' and '3.1.' against the document's openapi field. A document declaring exactly \"3.0\" or \"3.1\" with no patch segment is rejected; write \"3.0.0\" or \"3.1.0\"."
     }
@@ -85,6 +89,6 @@
     "stability": "versioned",
     "policy": "Changes to this matrix require a semver bump and a release-notes entry. Removing support for a listed version, or narrowing a supported range, is a breaking change and requires a major version bump. Adding a newly supported version is a minor release.",
     "authority": "NEITHER file is derived from the other and neither has the greater claim to correctness: both are maintained by hand and must be edited together in the same change. Earlier revisions said the .md was 'the human-readable rendering of it' and that 'the JSON governs' on a disagreement — the first asserted a derivation that was never built, and the second is an arbitrary tie-break presented as authoritative, which misdirects whoever finds a disagreement. If the two disagree, BOTH are suspect and the code decides: check-compatibility-contract.mjs re-derives the machine-comparable values from package.json and package-lock.json on every run. It also compares the two copies, so one being fixed without the other now fails; note that it CANNOT see drift that hits both copies identically, which is exactly how the ^0.5.0 SDK row survived — the re-derivation, not the comparison, is what catches that.",
-    "enforcement": "PARTIALLY CI-ENFORCED since matrix 2.1.0. check-compatibility-contract.mjs fails the build when a `declared` range disagrees with its `source`, when a `tested` version disagrees with the lockfile, when an entry carrying `declared` names no `source`, or when a `supported` adapter names an entry point this repository does not publish. What remains UNENFORCED is the expensive half: actually running the test suite against every cell, so a `declared-untested` row is still a statement of expectation. That is Epic #5. Before 2.1.0 this field said 'not a CI-enforced guarantee', which was accurate and was the bound nobody had scheduled the work to lift."
+    "enforcement": "PARTIALLY CI-ENFORCED since matrix 2.1.0, widened in 2.2.0. check-compatibility-contract.mjs runs EIGHT checks and fails the build on any of them: (A) an entry carrying `declared` names no `source`; (B) a `declared` range disagrees with the value at its `source`; (C) a `tested` version disagrees with the lockfile; (D) a `supported` adapter names an entry point this repository does not publish; (E) a machine-comparable value in this file is absent from the .md; (F) a row carrying a `version` declares neither a `source` on its parent nor its own `verifiedBy`; (G) no `supported` row covers the major the lockfile actually installs; (H) a `verifiedBy` names a file that does not exist. F, G and H arrived in 2.2.0 (#618). NOTE WHAT F CHANGED ABOUT ENROLMENT: a row is enrolled by carrying a `version`, not by carrying a `declared`, so a version-bearing row naming only `verifiedBy` passes WITHOUT a `source`. Earlier revisions of this field said a versioned row naming no source fails the build; that is no longer true, and A — which still requires `source` on any entry carrying `declared` — is a narrower claim than it used to read as. What remains UNENFORCED is the expensive half: actually running the test suite against every cell, so a `declared-untested` row is still a statement of expectation. That is Epic #5. Before 2.1.0 this field said 'not a CI-enforced guarantee', which was accurate and was the bound nobody had scheduled the work to lift."
   }
 }

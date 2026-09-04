@@ -27,6 +27,8 @@ import {
   main,
   resolveSource,
   declaredEntries,
+  versionBearingRows,
+  majorsNamedBy,
   installedVersion,
   discoverPublicPackages,
   EXIT_OK,
@@ -66,14 +68,20 @@ function silently(fn) {
 }
 
 /** A throwaway repo root carrying a contract, a rendering and a lockfile. */
-function fixture({ contract, md = '', lock = { packages: {} }, packages = {} }) {
+function fixture({ contract, md = '', lock = { packages: {} }, packages = {}, rootManifest = {} }) {
   const dir = mkdtempSync(join(tmpdir(), 'compat-contract-'));
   tmpDirs.push(dir);
   mkdirSync(join(dir, 'docs'), { recursive: true });
   writeFileSync(join(dir, 'docs', 'compatibility.json'), JSON.stringify(contract, null, 2));
   writeFileSync(join(dir, 'docs', 'compatibility.md'), md);
   writeFileSync(join(dir, 'package-lock.json'), JSON.stringify(lock, null, 2));
-  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'fixture', engines: { node: '>=20.0.0' } }, null, 2));
+  // `rootManifest` lets an adapter fixture supply the peer range its `source`
+  // points at — without it check B reports cannot-check and the row-level
+  // assertion under test never runs.
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: 'fixture', engines: { node: '>=20.0.0' }, ...rootManifest }, null, 2),
+  );
   for (const [name, manifest] of Object.entries(packages)) {
     mkdirSync(join(dir, 'packages', name), { recursive: true });
     writeFileSync(join(dir, 'packages', name, 'package.json'), JSON.stringify(manifest, null, 2));
@@ -194,7 +202,9 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
 {
   const withAdapter = (entryPoint) => ({
     runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } },
-    adapters: [{ framework: 'express', entryPoint, entries: [{ version: '4.x', status: 'supported' }] }],
+    // These rows carry verifiedBy so check F is satisfied; these cases are
+    // about entry points, not about where a version is derived from.
+    adapters: [{ framework: 'express', entryPoint, entries: [{ version: '4.x', status: 'supported', verifiedBy: 'package.json' }] }],
   });
   const packages = { core: { name: '@scope/real-adapter' } };
 
@@ -208,7 +218,7 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
   // A planned row makes no support claim, so it is not held to this.
   const planned = {
     runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } },
-    adapters: [{ framework: 'fastify', entryPoint: null, entries: [{ version: '5.x', status: 'planned' }] }],
+    adapters: [{ framework: 'fastify', entryPoint: null, entries: [{ version: '5.x', status: 'planned', verifiedBy: 'package.json' }] }],
   };
   check('a planned row is not required to name an entry point', run(fixture({ contract: planned, md: '>=20.0.0', packages })).code, EXIT_OK);
 }
@@ -261,6 +271,134 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
   const r = run(REPO_ROOT);
   check('the real contract passes its own watcher', r.code, EXIT_OK);
   check('the real repository publishes packages to check entry points against', discoverPublicPackages(REPO_ROOT).size > 0, true);
+}
+
+// ---------------------------------------------------------------------------
+// #618 — THE OMISSION DOOR, ONE LEVEL DOWN.
+//
+// Check A stopped a row escaping by omitting `source`. It could not stop a row
+// escaping by carrying no `declared` at all, and seven did: four adapter rows
+// and three OpenAPI source rows, invisible to A, B and C alike. That is the
+// opt-in failure #612 exists to watch, reproducing inside #612's own fix.
+// ---------------------------------------------------------------------------
+{
+  // Row versions are human notation, so containment is by MAJOR. A string
+  // comparison against a peer range would fail on day one and be weakened to
+  // nothing by the second person to hit it.
+  check('a hyphenated range names its major once', [...majorsNamedBy('4.18.x - 4.x')].join(','), '4');
+  check('an x-range names its major', [...majorsNamedBy('5.x')].join(','), '5');
+  check('a parenthesised note does not confuse it', [...majorsNamedBy('2.0 (Swagger)')].join(','), '2');
+  check('a >= range names its major', [...majorsNamedBy('>=5.5')].join(','), '5');
+  check('a two-major row names both', [...majorsNamedBy('4.x, 5.x')].sort().join(','), '4,5');
+  check('a versionless string names nothing', majorsNamedBy('none').size, 0);
+  check('a non-string names nothing rather than throwing', majorsNamedBy(undefined).size, 0);
+}
+
+{
+  // The walk is what makes previously-invisible rows addressable. Enrolment
+  // stops being "has a declared key" and becomes "carries a version".
+  const contract = {
+    adapters: [{ framework: 'x', source: 's', entries: [{ version: '1.x', status: 'supported' }] }],
+    sources: [{ kind: 'y', entries: [{ version: '2.x', status: 'unsupported', verifiedBy: 't' }] }],
+  };
+  const rows = versionBearingRows(contract);
+  check('both rows are found', rows.length, 2);
+  check('an adapter row is owned by the adapter, which holds the source', rows[0].owner.source, 's');
+  check('a source row carries its own verifiedBy', rows[1].row.verifiedBy, 't');
+  check('the row path is reported for the reader', rows[0].path, 'adapters[0].entries[0]');
+  check('a contract with no rows yields none', versionBearingRows({ a: 1 }).length, 0);
+}
+
+// --- F: a row declaring NEITHER source NOR verifiedBy must FAIL -------------
+{
+  const contract = {
+    runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } },
+    sources: [{ kind: 'openapi', entries: [{ version: '9.9.x', status: 'supported' }] }],
+  };
+  const r = run(fixture({ contract, md: '>=20.0.0' }));
+  check('a version-bearing row with neither source nor verifiedBy FAILS', r.code, EXIT_DIVERGENCE);
+  check('...and says it is invisible to every check', r.out.includes('invisible to every check'), true);
+}
+
+// --- H: a verifiedBy naming a file that does not exist must FAIL -----------
+{
+  const contract = {
+    runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } },
+    sources: [{ kind: 'openapi', entries: [{ version: '3.0.x', status: 'supported', verifiedBy: 'nope/gone.test.ts' }] }],
+  };
+  const r = run(fixture({ contract, md: '>=20.0.0' }));
+  check('a verifiedBy pointing at a missing test FAILS', r.code, EXIT_DIVERGENCE);
+  check('...and says a row pointing at a missing test is not verified', r.out.includes('is not a verified row'), true);
+
+  // The paired positive: an existing file passes, so this is not "always red".
+  const ok = {
+    runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } },
+    sources: [{ kind: 'openapi', entries: [{ version: '3.0.x', status: 'supported', verifiedBy: 'package.json' }] }],
+  };
+  check('a verifiedBy naming a file that exists passes', run(fixture({ contract: ok, md: '>=20.0.0' })).code, EXIT_OK);
+}
+
+// --- G: a supported row must cover the version CI actually installs ---------
+//
+// THE ASSERTION WITH THE DEADLINE. #585 upgrades express 4.22.2 -> 5.2.1. This
+// fixture is synthetic on purpose: if it relied on the live upgrade to
+// demonstrate the check fires, the check would be remembered rather than
+// witnessed, and only once.
+{
+  const adapterContract = (rowVersion) => ({
+    runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } },
+    adapters: [
+      {
+        framework: 'express',
+        entryPoint: '@scope/adapters-express',
+        declared: '^4.18.0 || ^5.0.0',
+        source: 'package.json#peerDependencies.express',
+        entries: [{ version: rowVersion, status: 'supported' }],
+      },
+    ],
+  });
+  const lockWith = (v) => ({ packages: { 'node_modules/express': { version: v } } });
+  const packages = { ex: { name: '@scope/adapters-express' } };
+  const md = '>=20.0.0 ^4.18.0 || ^5.0.0 @scope/adapters-express';
+  const rootManifest = { peerDependencies: { express: '^4.18.0 || ^5.0.0' } };
+
+  // Baseline: the row covers what the lockfile installs.
+  check(
+    'a supported row covering the installed major passes',
+    run(fixture({ contract: adapterContract('4.18.x - 4.x'), md, lock: lockWith('4.22.2'), packages, rootManifest })).code,
+    EXIT_OK,
+  );
+
+  // #585, simulated. The lockfile moves to express 5 and nobody edits the row.
+  const upgraded = run(fixture({ contract: adapterContract('4.18.x - 4.x'), md, lock: lockWith('5.2.1'), packages, rootManifest }));
+  check('#585 simulated: express 5 installed against a 4.x supported row FAILS', upgraded.code, EXIT_DIVERGENCE);
+  check('...and names both what CI installs and what the row claims', upgraded.out.includes('5.2.1') && upgraded.out.includes('4.18.x - 4.x'), true);
+
+  // QA's probe 1, as filed.
+  const probe = run(fixture({ contract: adapterContract('99.x'), md, lock: lockWith('4.22.2'), packages, rootManifest }));
+  check("QA probe 1: a supported row of '99.x' against installed 4.22.2 FAILS", probe.code, EXIT_DIVERGENCE);
+
+  // An adapter whose package is absent from the lockfile is cannot-check, not a
+  // pass — the row was not verified either way.
+  const noLock = run(fixture({ contract: adapterContract('4.18.x - 4.x'), md, lock: { packages: {} }, packages, rootManifest }));
+  check('an adapter missing from the lockfile is CANNOT CHECK, not OK', noLock.code, EXIT_CANNOT_CHECK);
+}
+
+// --- the real contract: every version-bearing row is covered ----------------
+{
+  const contract = JSON.parse(readFileSync(join(REPO_ROOT, 'docs', 'compatibility.json'), 'utf-8'));
+  const rows = versionBearingRows(contract);
+
+  check('the real contract has version-bearing rows', rows.length > 0, true);
+  const uncovered = rows.filter(
+    ({ row, owner }) =>
+      !(owner && typeof owner.source === 'string') && typeof row.verifiedBy !== 'string',
+  );
+  check(
+    'every version-bearing row in the real contract declares how it is verified',
+    uncovered.map((u) => u.path).join(' | '),
+    '',
+  );
 }
 
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });

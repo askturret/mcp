@@ -832,6 +832,30 @@ jobs:
       - name: Every cited ADR resolves to a file
         run: node .github/scripts/check-adr-citations.mjs .
 
+      # #612: docs/compatibility.{md,json} published `@modelcontextprotocol/sdk`
+      # as ^0.5.0 / Supported while the root and packages/transports both
+      # declared ^1.24.0 — because ^0.5.0 is the range excluded for
+      # GHSA-w48q-cv73-mx4w (#140). A security-relevant row in the most
+      # consumer-facing versioned document in this repository, contradicting the
+      # code, with nothing able to notice it.
+      #
+      # This RE-DERIVES the contract's machine-comparable values from the code
+      # on every run. That is the design, not an implementation detail: a
+      # comparison that recomputes is TIME-INDIFFERENT, so one assertion covers
+      # both a row that was wrong when written and one that decayed later, and
+      # no separate decay watcher is needed.
+      #
+      # STEPS IN THIS EXISTING JOB, deliberately not a new job. There is ONE
+      # self-hosted runner and CI is strictly serial, so a new job is a
+      # permanent tax on the critical path — the same reasoning
+      # supply-chain.yml:19-23 already records. This guard uses only Node
+      # builtins, reads four files and needs no build.
+      - name: Self-test the compatibility-contract watcher
+        run: node .github/scripts/check-compatibility-contract.test.mjs
+
+      - name: The compatibility contract still matches the code
+        run: node .github/scripts/check-compatibility-contract.mjs .
+
       # #434 condition 1. Until this step existed, the mutation audit and its
       # self-test sat in `WIRING_EXEMPT` and the audit's own assertions ran
       # NOWHERE automated — the instrument that measures whether every other

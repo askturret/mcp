@@ -2,9 +2,13 @@
 
 What AskTurret MCP supports, and — just as importantly — what it does not.
 
-**Applies to release `0.1.1`. Matrix version `2.0.0`.**
+**Applies to release `0.1.1`. Matrix version `2.1.0`.**
 
-> **Why `2.0.0` and not `1.1.0`.** Promoting Fastify from *Planned* to *Supported* is a
+> **`2.1.0` adds enforcement** — see [What this matrix is not](#what-this-matrix-is-not).
+> A minor bump: the `source` field and the checks around it are additive, and no
+> supported range moved.
+>
+> **Why the previous revision was `2.0.0` and not `1.1.0`.** Promoting Fastify from *Planned* to *Supported* is a
 > minor change on its own. But this revision also corrects the `@modelcontextprotocol/sdk`
 > row from `^0.5.0` to `^1.24.0`, and this contract's own rule is that *"removing a
 > listed version, or narrowing a supported range, is a breaking change"* — with no
@@ -15,12 +19,18 @@ What AskTurret MCP supports, and — just as importantly — what it does not.
 This page is a **versioned contract**. See [Stability of this contract](#stability-of-this-contract).
 
 > **Machine-readable version:** [`compatibility.json`](compatibility.json) carries the
-> same data for tooling to consume. **That file is the source of truth** — if this
-> table and the JSON ever disagree, the JSON governs.
+> same data for tooling to consume. **Neither file is derived from the other, and
+> neither governs the other** — both are maintained by hand and must be edited in the
+> same change. Earlier revisions of this page said the JSON was "the source of truth";
+> that was an arbitrary tie-break presented as authoritative, and it misdirected anyone
+> who found a disagreement.
 >
-> **This page is not generated from it.** There is no generator and no check that the
-> two agree; they are maintained by hand and must be edited in the same change. Both
-> carried the same stale Fastify note for exactly that reason.
+> **If the two disagree, both are suspect and the code decides.**
+> `.github/scripts/check-compatibility-contract.mjs` re-derives every machine-comparable
+> value here from `package.json` and `package-lock.json` on each run, and also compares
+> the two copies. It cannot see drift that hits both copies identically — which is
+> precisely how the `^0.5.0` SDK row survived in both — so it is the re-derivation, not
+> the comparison, that catches that class.
 
 ---
 
@@ -55,6 +65,8 @@ Declared: `engines.node` = **`>=20.0.0`**
 > gap is [Epic #5](https://github.com/askturret/mcp/issues/5)'s continuous-test matrix.
 
 ## TypeScript
+
+Declared: `devDependencies.typescript` = **`^5.5.0`**
 
 | Version | Status | Notes |
 |---|---|---|
@@ -153,13 +165,24 @@ The matrix is updated **on every release**.
 
 ### What this matrix is not
 
-It is a **published statement of intent**, not a CI-enforced guarantee. Only the
-✅ cells are backed by a test run today, and even those run on a single Node
-version. Building CI that exercises every cell is a separate
-[§17 readiness criterion](https://github.com/askturret/mcp/issues/5).
+It is **partially CI-enforced** as of matrix `2.1.0`, and the split matters:
+
+- **Enforced.** `check-compatibility-contract.mjs` fails the build when a declared
+  range disagrees with the manifest it is sourced from, when a tested version
+  disagrees with the lockfile, when a versioned row names no source, or when a ✅
+  row names an entry point this repository does not publish.
+- **Not enforced.** Actually running the suite against every cell. A ⚠️ row remains a
+  statement of expectation, and even ✅ cells run on a single Node version. That is a
+  separate [§17 readiness criterion](https://github.com/askturret/mcp/issues/5).
 
 That gap is stated deliberately: a matrix that implies coverage it does not have is
 worse than no matrix, because it converts an unknown into a false assurance.
+
+Until `2.1.0` this section said the matrix was **not** CI-enforced. That was accurate
+and honestly stated in both copies — and it is precisely the shape worth noticing: a
+correctly-labelled hazard that nobody had scheduled the work to defuse. The `^0.5.0`
+SDK row sat inside that stated bound for months. **A bound that names its own expiry is
+only worth more than one that does not if somebody eventually acts on the expiry.**
 
 ## Related
 

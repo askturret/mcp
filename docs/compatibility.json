@@ -36,6 +36,8 @@
       "framework": "express",
       "package": "packages/adapters-express",
       "entryPoint": "@askturret/mcp-adapters-express",
+      "declared": "^4.18.0 || ^5.0.0",
+      "source": "packages/adapters-express/package.json#peerDependencies.express",
       "entries": [
         { "version": "4.18.x - 4.x", "status": "supported", "note": "CI installs and tests Express 4." },
         { "version": "5.x", "status": "declared-untested", "note": "Accepted by peerDependencies, but no CI job installs Express 5 and @types/express is pinned to v4." }
@@ -45,6 +47,8 @@
       "framework": "fastify",
       "package": "packages/adapters-fastify",
       "entryPoint": "@askturret/mcp-adapters-fastify",
+      "declared": "^4.0.0 || ^5.0.0",
+      "source": "packages/adapters-fastify/package.json#peerDependencies.fastify",
       "entries": [
         { "version": "5.x", "status": "supported", "note": "The test-adapters-fastify CI job runs on every pull request against the lockfile pin, fastify 5.12.1." },
         { "version": "4.x", "status": "declared-untested", "note": "Accepted by the peerDependencies range ^4.0.0 || ^5.0.0, but the devDependency is ^5.0.0 so no CI job installs Fastify 4." }
@@ -57,9 +61,9 @@
       "kind": "openapi",
       "package": "packages/sources-openapi",
       "entries": [
-        { "version": "3.0.x", "status": "supported" },
-        { "version": "3.1.x", "status": "supported" },
-        { "version": "2.0 (Swagger)", "status": "unsupported", "note": "Rejected. Convert to OpenAPI 3.x first." }
+        { "version": "3.0.x", "status": "supported", "verifiedBy": "packages/sources-openapi/src/__tests__/from-openapi.test.ts" },
+        { "version": "3.1.x", "status": "supported", "verifiedBy": "packages/sources-openapi/src/__tests__/from-openapi.test.ts" },
+        { "version": "2.0 (Swagger)", "status": "unsupported", "verifiedBy": "packages/sources-openapi/src/__tests__/from-openapi.test.ts", "note": "Rejected. Convert to OpenAPI 3.x first." }
       ],
       "note": "Version detection matches the dotted prefixes '3.0.' and '3.1.' against the document's openapi field. A document declaring exactly \"3.0\" or \"3.1\" with no patch segment is rejected; write \"3.0.0\" or \"3.1.0\"."
     }

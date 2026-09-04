@@ -12,6 +12,9 @@
  */
 
 import { describe, it, expect } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { DiscoveryContext } from '@askturret/mcp-core';
 import { fromOpenApi } from '../from-openapi.js';
 
@@ -624,4 +627,68 @@ describe('fromOpenApi()', () => {
       expect(operations).toHaveLength(0);
     });
   });
+});
+
+// ---------------------------------------------------------------------------
+// THE CONTRACT'S OPENAPI ROWS, CHECKED AGAINST THE IMPLEMENTATION (#618)
+//
+// docs/compatibility.json publishes which OpenAPI versions are supported. Those
+// rows have no manifest field to point at — acceptance is a literal inside a
+// conditional in from-openapi.ts — so they carry `verifiedBy` naming THIS file
+// instead of a `source`.
+//
+// check-compatibility-contract.mjs deliberately does NOT read from-openapi.ts to
+// extract those literals: matching literals out of source is a pattern matcher
+// standing in for a parser, and it would keep passing after someone rewrote the
+// predicate as a regex or a Set. So the semantic check lives here, where the
+// real code can simply be imported and RUN.
+//
+// This is what makes the row's status falsifiable: flip "2.0 (Swagger)" to
+// supported in the contract and this test fails, because the implementation
+// rejects it.
+// ---------------------------------------------------------------------------
+describe('compatibility contract: OpenAPI rows match what fromOpenApi accepts (#618)', () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
+  const contract = JSON.parse(
+    readFileSync(join(repoRoot, 'docs', 'compatibility.json'), 'utf-8'),
+  ) as { sources: { kind: string; entries: { version: string; status: string }[] }[] };
+
+  const rows = contract.sources.find((s) => s.kind === 'openapi')?.entries ?? [];
+
+  it('finds the contract rows it is meant to be checking', () => {
+    // Guards the guard: an empty list would make every case below vacuous.
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  it.each(rows.map((r) => [r.version, r.status] as const))(
+    'contract row %s (%s) agrees with the implementation',
+    async (version, status) => {
+      // "3.0.x" -> "3.0.0", "2.0 (Swagger)" -> "2.0". Human notation to a
+      // concrete version the parser can actually be handed.
+      const token = /\d+(?:\.[0-9x]+)*/.exec(version)?.[0] ?? version;
+      const concrete = token.replace(/x/g, '0');
+
+      const spec = {
+        openapi: concrete,
+        info: { title: 'contract-probe', version: '1.0.0' },
+        paths: { '/probe': { get: { responses: { '200': { description: 'OK' } } } } },
+      };
+      const source = fromOpenApi(spec, { location: `contract-${concrete}.yaml` });
+      const operations = await source.discover(createTestContext());
+
+      // NOTE how refusal actually surfaces. `discover` catches everything and
+      // returns [] with a logged error — "Don't throw - return empty array with
+      // warning", from-openapi.ts:203. So an unsupported version is refused by
+      // yielding NO OPERATIONS, not by rejecting. The spec above carries exactly
+      // one operation, which is what makes the two outcomes distinguishable.
+      if (status === 'supported') {
+        expect(operations.length).toBeGreaterThan(0);
+      } else {
+        // The contract says this version is not supported. The implementation
+        // must actually refuse it, or the contract claims a restriction that
+        // does not exist.
+        expect(operations).toHaveLength(0);
+      }
+    },
+  );
 });

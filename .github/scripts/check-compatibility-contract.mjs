@@ -40,10 +40,37 @@
  *                        entry point this repository actually publishes.
  *   E  MD AGREES        every machine-comparable value in the JSON must appear
  *                        in the `.md`.
+ *   F  NO ROW ESCAPES   every row carrying a `version` must declare HOW it is
+ *                        verified — a `source` on its parent, or its own
+ *                        `verifiedBy`. Declaring neither FAILS. (#618)
+ *   G  SUPPORTED = INSTALLED  an adapter row marked `supported` must cover the
+ *                        major the lockfile actually installs. (#618)
+ *   H  THE TEST EXISTS  a `verifiedBy` must name a file that is there. (#618)
  *
  * CHECK A IS THE ONE THAT KEEPS THE REST HONEST. Without it the guard silently
  * covers only the entries somebody remembered to annotate — which is the opt-in
  * failure #612 is about, reproduced one level down inside its own fix.
+ *
+ * AND CHECK F IS THE SAME LESSON, ONE LEVEL FURTHER DOWN. A closed the door on
+ * a row omitting `source`; it could not close the door on a row carrying no
+ * `declared` at all, and SEVEN did — four adapter rows and three OpenAPI source
+ * rows, invisible to A, B and C alike (#618). So enrolment is no longer "has a
+ * `declared` key", which is a property of whether someone remembered to
+ * annotate the row; it is "carries a version", which is a property of the row.
+ *
+ * The vocabulary is deliberately two members, and they are NOT equal strength:
+ * a `source` row is re-derived every run and is time-indifferent, while a
+ * `verifiedBy` row is only as good as the test it names. The schema states that
+ * asymmetry rather than hiding it behind a single "checked" flag.
+ *
+ * WHY `verifiedBy` EXISTS AT ALL, rather than forcing a `source` everywhere:
+ * the OpenAPI rows have no manifest field to point at. Acceptance is a literal
+ * inside a conditional in `from-openapi.ts`, so a `source` there could only
+ * point at a line of TypeScript. Matching literals out of source is a pattern
+ * matcher standing in for a parser, and it would keep passing after someone
+ * rewrote the predicate as a regex or a Set. The semantic check therefore lives
+ * in that package's own test, where the real code can simply be imported and
+ * run; this guard asserts only that the named test still exists.
  *
  * ## What check E is and is not
  *
@@ -159,6 +186,55 @@ export function installedVersion(lock, pkgName) {
   if (!packages || typeof packages !== 'object') return null;
   const entry = packages[`node_modules/${pkgName}`];
   return entry && typeof entry.version === 'string' ? entry.version : null;
+}
+
+/**
+ * Every row carrying a `version`, with the object that owns its `entries` list.
+ *
+ * Check A stopped a row escaping coverage by omitting `source`. It could not
+ * stop a row escaping by carrying no `declared` at all — and seven did (#618).
+ * The walk below is what makes those rows addressable: enrolment stops being
+ * "has a `declared` key" and becomes "carries a version", which is a property
+ * of the thing itself rather than of whether someone remembered to annotate it.
+ *
+ * The owning object matters because verification lives at different levels for
+ * different kinds of row. An adapter has ONE peer range and TWO rows
+ * partitioning it by CI coverage, so `source` belongs to the adapter; a row
+ * whose authority is code rather than data carries its own `verifiedBy`.
+ */
+export function versionBearingRows(contract) {
+  const found = [];
+  (function walk(node, path, owner) {
+    if (node === null || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      node.forEach((v, i) => walk(v, `${path}[${i}]`, owner));
+      return;
+    }
+    if (typeof node.version === 'string') found.push({ path, row: node, owner });
+    for (const [k, v] of Object.entries(node)) {
+      // The object holding an `entries` array is the owner for those rows.
+      walk(v, path ? `${path}.${k}` : k, k === 'entries' ? node : owner);
+    }
+  })(contract, '', null);
+  return found;
+}
+
+/**
+ * The MAJOR versions a row's human notation names.
+ *
+ * Row versions are prose, not semver ranges — "4.18.x - 4.x", "2.0 (Swagger)".
+ * Comparing them to a peer range as STRINGS would fail on day one and get
+ * weakened to nothing by the second person to hit it, so the comparison is
+ * containment of a concrete installed version's major instead.
+ *
+ * Major granularity is deliberate and is the honest reading of what these rows
+ * assert: "4.18.x - 4.x" claims the 4 line, and an upgrade within it is not a
+ * contract change. An upgrade ACROSS it is exactly what must be caught.
+ */
+export function majorsNamedBy(versionText) {
+  if (typeof versionText !== 'string') return new Set();
+  const tokens = versionText.match(/\d+(?:\.[0-9x]+)*/g) ?? [];
+  return new Set(tokens.map((t) => Number(t.split('.')[0])).filter((n) => Number.isFinite(n)));
 }
 
 /** Every `status` value appearing anywhere under a node. */
@@ -287,6 +363,92 @@ export function main(argv) {
     }
   }
 
+  // --- F: NO ROW ESCAPES BY OMISSION (#618) ---------------------------------
+  //
+  // Check A's real principle is not "carry a source" — it is "no row escapes
+  // coverage by omission". A generalises it: a row must declare HOW it is
+  // verified, from a closed two-member vocabulary, and declaring nothing fails.
+  //
+  //   source      a machine-readable location the guard re-derives and compares
+  //   verifiedBy  the test that pins the behaviour, for rows whose authority is
+  //               code rather than data
+  //
+  // THE TWO ARE NOT EQUAL STRENGTH, and the schema says so rather than hiding
+  // it: a `source` row is re-derived every run and is time-indifferent, while a
+  // `verifiedBy` row is only as good as the test it names.
+  const rows = versionBearingRows(contract);
+
+  // Vacuity guard, scoped. "No rows at all" is only suspicious when the contract
+  // HAS entries arrays for them to live in — otherwise this fires on any
+  // minimal contract that legitimately declares none, which would make the
+  // check noisy rather than protective.
+  const hasEntriesArrays = (function look(node) {
+    if (node === null || typeof node !== 'object') return false;
+    if (Array.isArray(node)) return node.some(look);
+    if (Array.isArray(node.entries)) return true;
+    return Object.values(node).some(look);
+  })(contract);
+
+  if (hasEntriesArrays && rows.length === 0) {
+    cannotCheck.push('the contract has `entries` arrays but no row carries a `version` — either the schema changed or this walk is broken');
+  }
+
+  for (const { path, row, owner } of rows) {
+    const hasSource = owner !== null && typeof owner.source === 'string' && owner.source !== '';
+    const hasVerifiedBy = typeof row.verifiedBy === 'string' && row.verifiedBy !== '';
+
+    if (!hasSource && !hasVerifiedBy) {
+      divergences.push(
+        `${path} declares version '${row.version}' but names neither a \`source\` on its parent nor a ` +
+          `\`verifiedBy\` of its own — it is invisible to every check here, which is the omission #618 closes`,
+      );
+      continue;
+    }
+
+    // --- H: a named test must exist -----------------------------------------
+    // Weak enforcement, deliberately, and honest about being weak: it catches
+    // deletion and rename. A `verifiedBy` that merely records a string would be
+    // decoration — the shape #612 found in check-platform-claims, where a
+    // declared-unverifiable claim is printed and never affects the exit code.
+    if (hasVerifiedBy && !existsSync(join(repoRoot, row.verifiedBy))) {
+      divergences.push(
+        `${path} is verified by '${row.verifiedBy}', which does not exist — a row pointing at a missing ` +
+          `test is not a verified row`,
+      );
+    }
+  }
+
+  // --- G: A SUPPORTED ROW MUST COVER WHAT CI INSTALLS (#618) ----------------
+  //
+  // The assertion with the deadline. #585 upgrades express 4.22.2 -> 5.2.1; if
+  // it lands and nobody edits the contract, "Express 4.18.x - 4.x / Supported"
+  // becomes false while CI installs 5. This is check C's idiom applied per row,
+  // and it needs no new metadata: the npm package name is the last segment of
+  // the adapter's own `source` path.
+  for (const adapter of Array.isArray(contract.adapters) ? contract.adapters : []) {
+    if (typeof adapter.source !== 'string' || !Array.isArray(adapter.entries)) continue;
+    const npmName = adapter.source.split('#').pop().split('.').pop();
+    const installed = installedVersion(lock, npmName);
+
+    if (installed === null) {
+      cannotCheck.push(`adapters.${adapter.framework}: '${npmName}' is not in package-lock.json, so the supported row could not be checked`);
+      continue;
+    }
+
+    const installedMajor = Number(installed.split('.')[0]);
+    const supported = adapter.entries.filter((e) => e.status === 'supported');
+    const covered = supported.some((e) => majorsNamedBy(e.version).has(installedMajor));
+
+    if (!covered) {
+      divergences.push(
+        `adapters.${adapter.framework}: CI installs ${npmName} ${installed}, but no row marked 'supported' ` +
+          `covers major ${installedMajor} — supported rows name ` +
+          `${supported.length === 0 ? '(none)' : supported.map((e) => `'${e.version}'`).join(', ')}. ` +
+          `The contract claims support for a line CI does not exercise.`,
+      );
+    }
+  }
+
   // --- E: MD AGREES ---------------------------------------------------------
   // Value presence, not semantics. See the header: this would have been GREEN
   // on the SDK bug, because that row drifted identically in both copies.
@@ -300,12 +462,12 @@ export function main(argv) {
     }
   }
 
-  return report(divergences, cannotCheck, entries.length);
+  return report(divergences, cannotCheck, entries.length, rows.length);
 }
 
-function report(divergences, cannotCheck, checked) {
+function report(divergences, cannotCheck, checked, rowCount = 0) {
   console.log(
-    `check-compatibility-contract: re-derived ${checked} declared entr${checked === 1 ? 'y' : 'ies'}; ` +
+    `check-compatibility-contract: re-derived ${checked} declared entr${checked === 1 ? 'y' : 'ies'} and ${rowCount} version-bearing row(s); ` +
       `${divergences.length} divergence(s), ${cannotCheck.length} cannot-check.`,
   );
 
@@ -330,7 +492,10 @@ function report(divergences, cannotCheck, checked) {
     return EXIT_CANNOT_CHECK;
   }
 
-  console.log('check-compatibility-contract: OK — every declared range, tested version and supported entry point matches the code.');
+  console.log(
+    'check-compatibility-contract: OK — every declared range, tested version and supported entry point matches ' +
+      'the code, and every version-bearing row declares how it is verified.',
+  );
   return EXIT_OK;
 }
 

@@ -142,6 +142,23 @@ export function discoverPrivatePackageNames(repoRoot) {
   return names;
 }
 
+/**
+ * The root package's own name — the specifier package self-reference resolves.
+ *
+ * Read from the tree rather than hardcoded: the name IS the leak sentinel's
+ * subject, and a hardcoded copy would go stale exactly when the repository is
+ * renamed, silently disarming the check. Returns null if it cannot be read,
+ * which the caller must treat as cannot-check rather than as "no leak".
+ */
+export function readRootPackageName(repoRoot) {
+  try {
+    const name = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8')).name;
+    return typeof name === 'string' && name !== '' ? name : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Public workspace packages, discovered rather than hardcoded. */
 export function discoverPublicPackages(repoRoot) {
   const dir = join(repoRoot, 'packages');
@@ -259,23 +276,77 @@ export function probeImport(cleanRoom, parsed, run = spawnSync) {
   ].join('\n');
 
   const r = run(process.execPath, ['--input-type=module', '-e', probe], { cwd: cleanRoom, encoding: 'utf-8' });
-  if (!r || r.error) return { ok: false, detail: String((r && r.error && r.error.message) || 'node could not be started') };
-  if (r.status === 0) return { ok: true };
+  if (!r || r.error) {
+    return {
+      ok: false,
+      reason: 'spawn-failed',
+      detail: String((r && r.error && r.error.message) || 'node could not be started'),
+    };
+  }
+  if (r.status === 0) return { ok: true, reason: 'resolved' };
 
   // Surface the real reason: a specifier that does not resolve and a binding
   // that does not exist are different bugs with different fixes, and "exit 1"
   // tells the next reader neither.
+  //
+  // `reason` is a STABLE CODE, and callers must branch on it rather than on
+  // `detail` or on `ok` (#607). `ok: false` collapses "was not found" together
+  // with "was found and then threw", and for the leak sentinel below those are
+  // opposite answers — the second one means the module WAS resolved, which is
+  // the entire question it asks. Matching the prose instead would key a safety
+  // decision on wording that a later edit is free to reword.
   const stderr = String(r.stderr || '');
   const missing = stderr.match(/MISSING_BINDING:(\w+)/);
-  if (missing) return { ok: false, detail: `does not provide '${missing[1]}'` };
+  if (missing) return { ok: false, reason: 'missing-binding', detail: `does not provide '${missing[1]}'` };
   if (stderr.includes('ERR_MODULE_NOT_FOUND') || stderr.includes('Cannot find package')) {
-    return { ok: false, detail: `specifier does not resolve — no such package for a reader` };
+    return { ok: false, reason: 'not-found', detail: `specifier does not resolve — no such package for a reader` };
   }
   if (stderr.includes('ERR_PACKAGE_PATH_NOT_EXPORTED')) {
-    return { ok: false, detail: 'subpath is not in the package exports map' };
+    return { ok: false, reason: 'not-exported', detail: 'subpath is not in the package exports map' };
   }
   const line = stderr.trim().split('\n').find((l) => l.includes('Error')) ?? stderr.trim().split('\n')[0] ?? '';
-  return { ok: false, detail: line.slice(0, 200) };
+  return { ok: false, reason: 'threw', detail: line.slice(0, 200) };
+}
+
+/**
+ * What a leak probe's result says about the clean room (#607).
+ *
+ * The sentinel's SUBJECT was fixed first — probe the self-reference name rather
+ * than a name that exists nowhere. This is its PREDICATE, which had the same
+ * shape one axis over: it read `ok === false` as "no leak", and `ok` is false
+ * for ANY non-zero exit — including a specifier that RESOLVED and then THREW.
+ *
+ * Resolving and throwing is a leak. The module was FOUND, which is the only
+ * question this sentinel asks; what it did afterwards is irrelevant. Verified
+ * rather than reasoned: with the root's `exports['.']` pointed at a throwing
+ * module, the old predicate reported no leak and the guard printed
+ * "OK — every documented import resolves and provides its bindings for a
+ * reader" while the room was leaking.
+ *
+ *   'clean'          the name was genuinely NOT FOUND — the only proof of
+ *                    isolation, because it is the only outcome that requires
+ *                    the module to be absent
+ *   'leak'           it resolved, or resolved and then failed for any reason
+ *   'indeterminate'  the probe itself could not run; not evidence either way
+ */
+export function classifyLeakProbe(result) {
+  if (!result || typeof result !== 'object') return 'indeterminate';
+  if (result.reason === 'not-found') return 'clean';
+  if (result.reason === 'spawn-failed') return 'indeterminate';
+  return 'leak';
+}
+
+/**
+ * Whether the leak sentinel applies to this repository at all.
+ *
+ * Separated so the SKIP branch is executable rather than only readable: reaching
+ * it through `main()` needs a workspace whose root name is also a packed public
+ * package, and building one trips the unbuilt-package cannot-check long before
+ * the sentinel is reached.
+ */
+export function shouldProbeForLeak(rootName, packedNames) {
+  if (typeof rootName !== 'string' || rootName === '') return false;
+  return !packedNames.has(rootName);
 }
 
 /**
@@ -330,17 +401,77 @@ export function main(argv, run = spawnSync) {
   const internal = [];
   const privateNames = discoverPrivatePackageNames(repoRoot);
   try {
-    // Prove the room is actually isolated before trusting any green from it. If
-    // a specifier that cannot exist resolves here, resolution is leaking to the
-    // workspace and every pass below would be worthless.
-    const sentinel = probeImport(room.dir, {
-      statement: "import { nothing } from '@askturret/mcp-this-package-does-not-exist'",
-      named: ['nothing'],
-    }, run);
-    if (sentinel.ok) {
-      console.error('\n⚠️  CANNOT CHECK — a package that cannot exist resolved inside the clean room.');
-      console.error('   Resolution is leaking to the workspace; results here would be meaningless.');
+    // ---- Prove the room is isolated BEFORE trusting any green from it -------
+    //
+    // THE LEAK SENTINEL (#607). Probes the ROOT PACKAGE'S OWN NAME, because that
+    // is the specifier package self-reference resolves and a clean room must
+    // not.
+    //
+    // The original sentinel probed `@askturret/mcp-this-package-does-not-exist`,
+    // and that was the wrong question. A name that exists nowhere does not
+    // resolve under self-reference EITHER, so it stayed silent in exactly the
+    // condition it was there to detect — it verified an ADJACENT property (some
+    // package fails to resolve) rather than the one that matters (the umbrella
+    // name fails to resolve).
+    //
+    // Measured, not reasoned: with TMPDIR pointed inside the checkout the clean
+    // room lands under the repository, node's upward node_modules walk reaches
+    // the root package.json, self-reference revives, and the guard reported 2
+    // failures where the same broken docs produce 14 outside it. Twelve real
+    // defects invisible, under a check mark.
+    //
+    // Containment was only ever a property of WHERE TMPDIR happens to point —
+    // a choice made elsewhere, by the environment, which this guard neither
+    // makes nor previously checked. This probe is what turns that inherited
+    // assumption into an assertion.
+    const rootName = readRootPackageName(repoRoot);
+    const packedNames = new Set(discoverPublicPackages(repoRoot).map((p) => p.name));
+
+    if (rootName === null) {
+      console.error('\n⚠️  CANNOT CHECK — the root package.json could not be read, so the clean room could not be proven isolated.');
+      console.error('   This is NOT a pass. No documented import was verified.');
       return EXIT_CANNOT_CHECK;
+    }
+
+    // If the root name is itself a packed workspace package it SHOULD resolve
+    // here, and probing it would be a false alarm. That is not the case today —
+    // the root is not under packages/ and is never packed — but it becomes the
+    // case the day an umbrella package ships, and a guard that reddens on a
+    // correct change is one someone deletes.
+    if (!shouldProbeForLeak(rootName, packedNames)) {
+      console.log(
+        `check-readme-imports: leak sentinel skipped — '${rootName}' is itself a packed public package, so it resolves here legitimately.`,
+      );
+    } else {
+      const leak = probeImport(room.dir, {
+        statement: `import '${rootName}'`,
+        named: [],
+      }, run);
+
+      // Branch on the CLASSIFICATION, never on `ok`. Only "genuinely not found"
+      // proves isolation; resolve-then-throw means the module was found, which
+      // is a leak wearing a non-zero exit code.
+      const verdict = classifyLeakProbe(leak);
+
+      if (verdict === 'leak') {
+        console.error(`\n⚠️  CANNOT CHECK — '${rootName}' resolved inside the clean room.`);
+        console.error('   That is the repository\'s OWN package name. It resolves here only through');
+        console.error('   package self-reference, which means the room is inside the checkout and');
+        console.error('   every specifier below would resolve for a reason no reader has.');
+        if (!leak.ok) {
+          console.error(`   It then failed (${leak.detail}) — but FINDING it is the leak; what it did next is not the question.`);
+        }
+        console.error(`   Most likely cause: TMPDIR points inside the repository (TMPDIR=${process.env.TMPDIR ?? '<unset>'}).`);
+        console.error('   This is NOT a pass. No documented import was verified.');
+        return EXIT_CANNOT_CHECK;
+      }
+
+      if (verdict === 'indeterminate') {
+        console.error(`\n⚠️  CANNOT CHECK — the leak sentinel could not run: ${leak.detail}`);
+        console.error('   Isolation was therefore never established, and an unproven room is not a clean one.');
+        console.error('   This is NOT a pass. No documented import was verified.');
+        return EXIT_CANNOT_CHECK;
+      }
     }
 
     for (const parsed of imports) {

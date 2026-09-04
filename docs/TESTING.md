@@ -684,6 +684,39 @@ should have run* — the same conclusion as before, reached for a different
 reason, and still colliding with the same second failure: a set that grows
 during the run.
 
+### A queued `lane-claim` at merge time is not something to wait for (#644)
+
+`lane-check.yml` runs `check-path-filters.mjs`'s check E on the `labeled` event,
+under a per-PR `concurrency` group with `cancel-in-progress: true`. A PR that
+receives several labels therefore shows **several `lane-claim` entries, all but
+the newest cancelled.** That is the design; only the newest carries a verdict.
+
+The newest is sometimes still **queued** when the PR merges. That is harmless,
+and the reasons are worth recording because none of them is the obvious one:
+
+- **No status check gates a merge here.** Both rulesets were read at
+  `GET /repos/askturret/mcp/rulesets/{id}`, and neither carries a
+  `required_status_checks` rule — the rules are `deletion`, `non_fast_forward`
+  and `pull_request`. Merge is gated on **review**. So a *failing* `lane-claim`
+  would not block a merge either, which means the queued-versus-complete
+  distinction changes nothing on its own.
+- **Check E's subject expires at merge.** What it protects is the sequential-PR
+  capacity gate: a PR mislabelled `ci:cheap` is exempted from the cap and
+  consumes a runner slot the gate believes is free. That accounting is about
+  **open** PRs. Once merged, the PR no longer counts, so a verdict arriving
+  afterwards has nothing left to act on.
+- **The label does not decide which suites run** — the path filters do, and they
+  are label-blind. Every package job gates on `needs.changes.outputs.*`, and
+  `test.yml` contains no reference to `github.event.*.label` at all. A
+  mislabelled PR still runs the suites its paths select, so a late `lane-claim`
+  can never mean tests were skipped.
+
+So do not hold a merge for it, and do not diagnose it afresh when you see it.
+
+If you want a check to be *able* to block a merge, that is the separate and much
+larger question of whether this repository should require any status check at
+all — the empty required set above is where that starts.
+
 > **This paragraph replaced a premise that had gone false, and the replacement
 > is the point (#549).** It used to say branch protection and rulesets *"both
 > return 403 on a free-plan private repo"*, so `required_known` was `false` and

@@ -1,6 +1,6 @@
 {
   "name": "@askturret/mcp-gateway",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Standalone compatibility gateway - serves MCP from an OpenAPI spec and proxies to an existing API",
   "type": "module",
   "license": "Apache-2.0",

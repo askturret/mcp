@@ -1,6 +1,6 @@
 {
   "name": "@askturret/mcp",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Agent-facing API layer - discover, shape, govern, and serve operations through Model Context Protocol",
   "type": "module",
   "bin": {

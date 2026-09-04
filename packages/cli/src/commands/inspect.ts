@@ -303,7 +303,7 @@ async function performHandshake(url: string): Promise<ServerInfo> {
         capabilities: {},
         clientInfo: {
           name: '@askturret/mcp-cli',
-          version: '0.1.0',
+          version: '0.1.2',
         },
       },
     }),

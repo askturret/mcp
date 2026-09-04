@@ -7,4 +7,4 @@
  * between the source tree and the published tarball. A constant the release
  * bump touches alongside `package.json` cannot resolve to the wrong file.
  */
-export const GATEWAY_VERSION = '0.1.0';
+export const GATEWAY_VERSION = '0.1.2';

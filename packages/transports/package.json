@@ -1,6 +1,6 @@
 {
   "name": "@askturret/mcp-transports",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "MCP transport adapters - Streamable HTTP",
   "type": "module",
   "license": "Apache-2.0",

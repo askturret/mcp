@@ -63,10 +63,13 @@ gets trusted for work it never did.
   Release, but it is advisory and refuses nothing.
 - **It does not block a `0.x` release.** Deliberate — this page certifies 1.0
   readiness. The verdict is still reported.
-- **It has never run on a real release.** No release has ever been cut from
-  this repository, so the release-time path is built and unit-tested but
-  unexercised end to end. [`releasing.md`](releasing.md) describes the
-  rehearsal that would change that.
+- **It has never *gated* a real release.** It has run on one: the `v0.1.1`
+  Release fired `supply-chain.yml` and the Readiness matrix job completed
+  successfully, reporting its verdict. But this gate only blocks a `>= 1.0.0`
+  publish, and every release so far has been `0.x` — so every run of it has
+  been advisory. Whether it can actually *stop* a publish stays untested until
+  a `>= 1.0.0` release attempts one. [`releasing.md`](releasing.md) describes
+  the rehearsal.
 
 What it *does* enforce, it enforces without exceptions: no per-criterion
 overrides, and no evidence from unmerged branches.

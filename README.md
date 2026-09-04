@@ -217,11 +217,11 @@ A one-command worked setup (gateway + mock upstream + OTel collector) is in
 [`examples/gateway-compose`](examples/gateway-compose); see the
 [gateway README](packages/gateway/README.md) for configuration.
 
-> Not published to npm yet — this repository has never cut a release, and
-> publishing happens only from a published GitHub Release. Build and run it
-> from source in the meantime. (Privacy is not what is holding publication:
-> most workspaces are publishable. See
-> [`docs/releasing.md`](docs/releasing.md) for which nine are public.)
+> **These packages are on npm**, so the command above runs without a checkout.
+> No version is quoted here on purpose — `npm view @askturret/mcp-gateway
+> version` is the authoritative answer and cannot go stale, whereas a number
+> written on this page can. Nine workspaces are public; see
+> [`docs/releasing.md`](docs/releasing.md) for which.
 
 ### The adapter conformance contract
 

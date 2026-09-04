@@ -30,6 +30,8 @@ import {
   discoverPublicPackages,
   discoverPrivatePackageNames,
   readRootPackageName,
+  classifyLeakProbe,
+  shouldProbeForLeak,
   markdownFiles,
   probeImport,
   EXIT_OK,
@@ -315,6 +317,90 @@ const okNpm = () => ({ status: 0, stdout: '', stderr: '' });
     false,
   );
   check('no install line installs the umbrella', /npm install @askturret\/mcp(?![-\w])/.test(readme), false);
+}
+
+// ---------------------------------------------------------------------------
+// THE LEAK SENTINEL'S PREDICATE (#607, second finding).
+//
+// Fixing the sentinel's SUBJECT — which name to probe — left its PREDICATE with
+// the same shape one axis over. It read `ok === false` as "no leak", and `ok` is
+// false for ANY non-zero exit, INCLUDING a specifier that RESOLVED and then
+// THREW. That is a leak: the module was FOUND, which is the only question the
+// sentinel asks; what it did afterwards is irrelevant.
+//
+// Not hypothesis. With the root's `exports['.']` pointed at a throwing module
+// and the room inside the checkout, the old predicate returned exit 0 and the
+// guard printed "OK — every documented import resolves and provides its
+// bindings for a reader" while the room was leaking.
+//
+// Every branch is asserted, because the whole defect was one unconsidered
+// branch being folded into another.
+// ---------------------------------------------------------------------------
+{
+  check('a specifier that RESOLVES is a leak', classifyLeakProbe({ ok: true, reason: 'resolved' }), 'leak');
+
+  // THE FINDING. Non-zero exit, and still a leak.
+  check(
+    'a specifier that resolves and THEN THROWS is a leak',
+    classifyLeakProbe({ ok: false, reason: 'threw', detail: 'Error: boom' }),
+    'leak',
+  );
+
+  // Both of these also mean the module was found; only the reason it then
+  // failed differs, and the sentinel does not care which.
+  check(
+    'a package found but whose subpath is not exported is a leak',
+    classifyLeakProbe({ ok: false, reason: 'not-exported' }),
+    'leak',
+  );
+  check(
+    'a module found but missing a binding is a leak',
+    classifyLeakProbe({ ok: false, reason: 'missing-binding' }),
+    'leak',
+  );
+
+  // The ONLY outcome that proves isolation, because it is the only one that
+  // requires the module to be absent.
+  check('genuinely not found is the only clean verdict', classifyLeakProbe({ ok: false, reason: 'not-found' }), 'clean');
+
+  // A probe that could not run is not evidence of isolation. "I could not
+  // check" is never "it passed".
+  check(
+    'a probe that could not run is indeterminate, not clean',
+    classifyLeakProbe({ ok: false, reason: 'spawn-failed' }),
+    'indeterminate',
+  );
+  check('a malformed result is indeterminate, not clean', classifyLeakProbe(null), 'indeterminate');
+  check('an unrecognised reason is a leak, not a pass', classifyLeakProbe({ ok: false, reason: 'something-new' }), 'leak');
+
+  // probeImport must actually EMIT these codes — a predicate keyed on codes
+  // nothing produces would be green and inert.
+  const emitted = (stderr, status) =>
+    probeImport('/tmp', { statement: "import 'x'", named: [] }, () => ({ status, stderr })).reason;
+  check('probeImport emits not-found for ERR_MODULE_NOT_FOUND', emitted('ERR_MODULE_NOT_FOUND', 1), 'not-found');
+  check('probeImport emits threw for any other failure', emitted('Error: boom from the root entry', 1), 'threw');
+  check('probeImport emits resolved on a clean exit', emitted('', 0), 'resolved');
+}
+
+// ---------------------------------------------------------------------------
+// THE SKIP BRANCH (#607). Extracted so it is EXECUTED rather than read.
+//
+// Reaching it through main() needs a workspace whose root name is also a packed
+// public package, and building one trips the unbuilt-package cannot-check long
+// before the sentinel — which is why the end-to-end form of this branch is not
+// exercised here, and is not claimed to be.
+// ---------------------------------------------------------------------------
+{
+  const packed = new Set(discoverPublicPackages(REPO_ROOT).map((p) => p.name));
+  const rootName = readRootPackageName(REPO_ROOT);
+
+  check('the sentinel is armed for this repository today', shouldProbeForLeak(rootName, packed), true);
+  check(
+    'it disarms if the root name ever becomes a packed package',
+    shouldProbeForLeak('@askturret/mcp', new Set(['@askturret/mcp'])),
+    false,
+  );
+  check('an unreadable root name disarms it rather than probing ""', shouldProbeForLeak(null, packed), false);
 }
 
 // ---------------------------------------------------------------------------

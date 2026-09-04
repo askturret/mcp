@@ -66,6 +66,26 @@ trigger at all, and even a tag-triggered workflow **cannot refuse a tag**,
 because GitHub Actions runs after the ref already exists. A workflow can fail a
 run; it cannot un-create the thing that started it.
 
+**That inertness is measured rather than assumed, and it is contingent.** Both
+halves were read from source on 2026-09-04. No publishing path carries a `tags:`
+trigger — `supply-chain.yml` fires on `pull_request`, `push` to `main`,
+`release: published` and `workflow_dispatch`, and the only workflow with a
+`tags:` trigger is `tag-readiness-advisory.yml`, which ships nothing. And
+`GET /repos/askturret/mcp/rulesets` returned two active rulesets, **both**
+`target: branch` — there is no tag ruleset.
+
+**The two facts hold each other up.** Tag creation is left unprotected *because*
+tagging ships nothing. Add a `tags:` trigger to a publishing path and the
+argument above does not merely weaken, it **inverts**: an unprivileged act would
+publish to a public registry. So such a change must land a **tag ruleset in the
+same commit** — the gap between the two is the exposure. #622 proposed exactly
+that trigger and was refused on this evidence rather than on preference.
+
+**Both readings are re-runnable, and this passage is false the moment either
+answer changes.** Re-read the trigger blocks under `.github/workflows/` and the
+rulesets endpoint above; whoever changes one of these facts is the person
+holding the other.
+
 ---
 
 ## What is gated, and what is not

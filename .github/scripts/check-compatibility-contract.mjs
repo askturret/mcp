@@ -93,7 +93,7 @@
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_DIVERGENCE = 1;
@@ -499,7 +499,6 @@ function report(divergences, cannotCheck, checked, rowCount = 0) {
   return EXIT_OK;
 }
 
-const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+if (isProcessEntryPoint(import.meta.url)) {
   process.exit(main(process.argv));
 }

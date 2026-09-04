@@ -135,6 +135,24 @@ console.log('\n# the two false passes this replaces\n');
     }),
   );
   check_('a failed `changes` job is refused even when its outputs look complete', withOutputs.ok, false);
+
+  // AND THE BRANCH IS NAMED, not merely the refusal (#575).
+  //
+  // `ok === false` proves the line was REACHED. It cannot tell WHICH rule
+  // refused, so a mutation that changed this branch's identity while still
+  // refusing leaves the assertion above green — the distinction the disposition
+  // programme is about. The fixture above is the one only the result guard can
+  // refuse; pinning its message HERE is what makes that discrimination real,
+  // rather than resting on the ambiguous fixture's message assertion at the top
+  // of this block.
+  check_(
+    '...and it is the RESULT guard that refused, not some other rule',
+    /not 'success', so the path filters/.test(withOutputs.errors.join(' ')),
+    true,
+  );
+  // One rule, not two. If a second ever fires on this fixture it stops being
+  // discriminating, and this is what notices.
+  check_('...and exactly one rule refused it, so the fixture stays discriminating', withOutputs.errors.length, 1);
 }
 
 {
@@ -142,6 +160,12 @@ console.log('\n# the two false passes this replaces\n');
   const o = evaluate(needs({ outputs: { core: 'true' }, results: {} }));
   check_('no test jobs at all is refused, not passed by vacuity', o.ok, false);
   check_('...and says the set was empty', o.errors[0].includes('No `test-*` jobs'), true);
+  // The same discrimination as the result guard above (#575): this fixture
+  // supplies a present, successful `changes` job with declared outputs, so the
+  // empty-set rule is the ONLY one that can refuse it. Asserting the count is
+  // what keeps that true — if another rule starts firing here, the message
+  // assertion above would still pass while no longer proving which branch ran.
+  check_('...and exactly one rule refused it, so the fixture stays discriminating', o.errors.length, 1);
 }
 
 {

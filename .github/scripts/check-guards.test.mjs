@@ -32,7 +32,7 @@
  * Run: node .github/scripts/check-guards.test.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -2318,6 +2318,103 @@ function probeSpawnSafety(scriptPath, cwd) {
   // weak link in the chain above.
   const found = spawningScripts(dir).map((d) => d.name).sort().join(',');
   check('spawn: the deriver finds every fixture', found, 'bad.mjs,guarded.mjs,other-idiom.mjs');
+}
+
+// ---------------------------------------------------------------------------
+// META: NO GUARD GOES SILENT WHEN INVOKED THROUGH A SYMLINKED PATH (#639)
+//
+// A guard decides "was I run directly, or imported?" by comparing
+// `import.meta.url` against `process.argv[1]`. Node resolves `import.meta.url`
+// through symlinks; `pathToFileURL(argv[1])` does not. So a guard that compares
+// the two WITHOUT `realpathSync` never matches when it is invoked through a
+// symlinked path — it skips its main block and EXITS 0 HAVING CHECKED NOTHING.
+//
+// That is the worst available failure for a guard: a silent pass. It is also
+// invisible where it is least supervised — every workflow invokes these with a
+// relative path from a non-symlinked checkout, so CI never sees it, while an
+// agent worktree reaches the tree through a symlink and does. Six guards
+// carried it, and it produced one wrong experimental result before a negative
+// control caught it (#593).
+//
+// THE ASSERTION IS BEHAVIOURAL, NOT STRUCTURAL, and that is deliberate. Pinning
+// "every guard must import lib/entry-point.mjs" would forbid one spelling of a
+// correct answer while a seventh copy of the wrong one could still appear in
+// some other form. What must hold is the PROPERTY: invoked through a symlink, a
+// guard still runs. Any implementation with that property passes.
+// ---------------------------------------------------------------------------
+{
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  // A guard "has an entry point" if it decides whether to run itself at all.
+  const hasEntryPoint = (src) =>
+    /isProcessEntryPoint/.test(src) || /import\.meta\.url\s*===/.test(src);
+
+  const guards = readdirSync(here)
+    .filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs'))
+    .filter((f) => hasEntryPoint(readFileSync(join(here, f), 'utf-8')))
+    .sort();
+
+  // Reaches the SAME files by a path containing a symlink component, which is
+  // what an agent worktree does and what CI does not.
+  const linkRoot = mkdtempSync(join(tmpdir(), 'guard-symlink-'));
+  tmpDirs.push(linkRoot);
+  const linked = join(linkRoot, 'link');
+  symlinkSync(resolve(here, '..', '..'), linked);
+
+  // Run against a root that does not exist, so every guard bails immediately
+  // rather than doing its real work. What is under test is whether it runs AT
+  // ALL, not what it concludes.
+  const viaSymlink = (name) =>
+    spawnSync(process.execPath, [join(linked, '.github', 'scripts', name), join(linkRoot, 'no-such-repo')], {
+      encoding: 'utf-8',
+    });
+
+  // The failure signature, exactly: exit 0 with nothing said.
+  const wentSilent = (r) => r.status === 0 && `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() === '';
+
+  // THE NEGATIVE CONTROL, and this is the half that makes the rest mean
+  // anything. Two fixture guards behind a symlink — one comparing WITHOUT
+  // `realpathSync`, one with. If the unsafe one does not go silent here, this
+  // probe cannot see the defect and every pass below is vacuous.
+  {
+    const fixDir = mkdtempSync(join(tmpdir(), 'guard-symlink-fixture-'));
+    tmpDirs.push(fixDir);
+    const real = join(fixDir, 'real');
+    mkdirSync(real, { recursive: true });
+    writeFileSync(
+      join(real, 'unsafe.mjs'),
+      "import { pathToFileURL } from 'node:url';\n" +
+        'const entry = process.argv[1];\n' +
+        'if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {\n' +
+        "  console.log('unsafe guard ran');\n  process.exit(3);\n}\n",
+    );
+    writeFileSync(
+      join(real, 'safe.mjs'),
+      "import { realpathSync } from 'node:fs';\nimport { pathToFileURL } from 'node:url';\n" +
+        'const entry = process.argv[1];\n' +
+        'if (entry !== undefined && import.meta.url === pathToFileURL(realpathSync(entry)).href) {\n' +
+        "  console.log('safe guard ran');\n  process.exit(3);\n}\n",
+    );
+    const fixLink = join(fixDir, 'link');
+    symlinkSync(real, fixLink);
+
+    const run = (n) => spawnSync(process.execPath, [join(fixLink, n)], { encoding: 'utf-8' });
+    const unsafe = run('unsafe.mjs');
+    const safe = run('safe.mjs');
+
+    check('symlink: NEGATIVE CONTROL — an unsafe compare DOES go silent behind a symlink', wentSilent(unsafe), true);
+    check('symlink: ...and a realpathSync compare does NOT', wentSilent(safe), false);
+    check('symlink: ...the safe fixture really ran its body', safe.status, 3);
+  }
+
+  // Every real guard, against the probe the control just proved discriminating.
+  check('symlink: the deriver found guards to check', guards.length > 0, true);
+  const silent = guards.filter((g) => wentSilent(viaSymlink(g)));
+  check(
+    `symlink: no guard goes silent when reached through a symlink (checked ${guards.length})`,
+    silent.join(', '),
+    '',
+  );
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });

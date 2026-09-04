@@ -81,6 +81,13 @@ publish to a public registry. So such a change must land a **tag ruleset in the
 same commit** — the gap between the two is the exposure. #622 proposed exactly
 that trigger and was refused on this evidence rather than on preference.
 
+**Nothing enforces that.** No guard under `.github/scripts/` reads workflow
+`tags:` triggers, and none looks for a tag ruleset — so the sentence above is an
+instruction, not a guarantee, and it holds only if whoever adds the trigger
+reads this paragraph first. Said plainly because a rule with no guard behind it,
+left unmarked in a passage about what is merely measured, would be the same
+defect this passage exists to record.
+
 **Both readings are re-runnable, and this passage is false the moment either
 answer changes.** Re-read the trigger blocks under `.github/workflows/` and the
 rulesets endpoint above; whoever changes one of these facts is the person

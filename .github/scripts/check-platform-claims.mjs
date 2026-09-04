@@ -78,7 +78,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, relative, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 /**
  * The CLOSED vocabulary of platform properties.
@@ -429,7 +429,6 @@ export async function main(argv) {
   return 0;
 }
 
-const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+if (isProcessEntryPoint(import.meta.url)) {
   process.exit(await main(process.argv));
 }

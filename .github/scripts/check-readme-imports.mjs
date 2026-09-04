@@ -56,7 +56,7 @@ import { readFileSync, mkdtempSync, mkdirSync, rmSync, existsSync, symlinkSync, 
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_DIVERGENCE = 1;
@@ -511,7 +511,6 @@ export function main(argv, run = spawnSync) {
   return EXIT_OK;
 }
 
-const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+if (isProcessEntryPoint(import.meta.url)) {
   process.exit(main(process.argv));
 }

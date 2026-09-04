@@ -61,7 +61,7 @@
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { pathToFileURL } from 'node:url';
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
 
@@ -1373,7 +1373,6 @@ async function main(argv) {
   return 0;
 }
 
-const entry = process.argv[1];
-if (entry !== undefined && import.meta.url === pathToFileURL(entry).href) {
+if (isProcessEntryPoint(import.meta.url)) {
   process.exit(await main(process.argv));
 }

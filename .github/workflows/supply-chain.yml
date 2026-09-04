@@ -198,8 +198,10 @@ jobs:
     #
     # The guard permits this through a NARROW carve-out keyed on
     # `supply-chain.yml::publish`. If another job ever needs a hosted runner, add
-    # another named entry — do NOT put a hosted label in APPROVED_LABELS, which
-    # would permit all 24 jobs at once.
+    # another named entry — do NOT put a hosted label in APPROVED_LABELS. That
+    # would not on its own let anything run hosted, since REQUIRED_LABEL still
+    # demands `self-hosted`; it removes one of two locks for every job in the
+    # repository, leaving REQUIRED_LABEL as the only thing holding the line.
     runs-on: ubuntu-latest
     permissions:
       contents: read

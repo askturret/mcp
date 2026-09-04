@@ -598,13 +598,24 @@ jobs:
   checkIncludes('...and reports the two populations apart', r.out, 'on the approved self-hosted pool');
 }
 
-// The refusal must point at the carve-out rather than at APPROVED_LABELS.
-// Widening that set is the wrong fix, and this message is where someone reads
-// which lever to reach for.
+// The refusal must point at the carve-out rather than at APPROVED_LABELS, and
+// must describe the guard's TWO locks accurately.
+//
+// This message is where someone reads which lever to reach for, so an
+// overstatement lands here worst. Telling a reader APPROVED_LABELS is THE lock
+// invites them to relax REQUIRED_LABEL as cosmetic — and REQUIRED_LABEL is the
+// lock actually holding the line. Established by experiment: widening
+// APPROVED_LABELS with the carve-out removed still exits 1, on the
+// omits-'self-hosted' branch. A confidently wrong signpost is worse than none.
 {
   const r = carved({ 'test.yml': workflow('runs-on: ubuntu-latest', CARVED_JOB) });
   checkIncludes('a hosted refusal names HOSTED_JOB_CARVE_OUTS', r.err, 'HOSTED_JOB_CARVE_OUTS');
-  checkIncludes('...and warns that widening APPROVED_LABELS reopens #280', r.err, '#280 reopened');
+  checkIncludes(
+    '...and says widening APPROVED_LABELS does NOT by itself permit hosted jobs',
+    r.err,
+    'does not by itself let anything run hosted',
+  );
+  checkIncludes('...and names REQUIRED_LABEL as the lock still holding', r.err, 'REQUIRED_LABEL still demands');
 }
 
 // ---------------------------------------------------------------------------

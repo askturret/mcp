@@ -43,11 +43,21 @@
  * IF YOU ARE HERE BECAUSE ONE JOB MUST RUN ON A GITHUB-HOSTED RUNNER (#595)
  * ---------------------------------------------------------------------------
  *
- * Do NOT add the hosted label to APPROVED_LABELS. That set is repo-wide, so a
- * single entry there would permit EVERY job in every workflow to go hosted —
- * all 24 of them, each failing at "Set up job" with an empty log the moment the
- * budget runs out. That is #280 reopened, and it would be reopened silently, by
- * a change that looks like the two-line edit the paragraph above invites.
+ * Do NOT add the hosted label to APPROVED_LABELS. That set is repo-wide, so an
+ * entry there applies to EVERY job in every workflow rather than to the one that
+ * needs it.
+ *
+ * Be precise about what that does on its own, because the imprecise version
+ * misdirects: widening APPROVED_LABELS alone does NOT permit hosted jobs.
+ * REQUIRED_LABEL still demands `self-hosted`, and a job cannot reach a hosted
+ * runner while carrying it — so such a job is still refused, just with a
+ * different message. There are TWO locks, and #280 reopens only when BOTH fall:
+ * the label is approved AND nothing requires `self-hosted` any more.
+ *
+ * That makes REQUIRED_LABEL the lock actually holding the line, which is exactly
+ * why the wrong lever is dangerous here. A reader who believes APPROVED_LABELS
+ * is the only lock may relax REQUIRED_LABEL as cosmetic — and that is the edit
+ * that reopens #280, silently, across every job at once.
  *
  * Use HOSTED_JOB_CARVE_OUTS instead. It is keyed by `file::job`, so it permits
  * exactly one named job in one named workflow, and only with the exact labels
@@ -127,9 +137,11 @@ const REQUIRED_LABEL = 'self-hosted';
  * file, a same-named job in a different file, or the same job on different
  * labels. Anything not matching all three falls through to the normal rules.
  *
- * This is deliberately not a label allowlist. See the header — widening
- * APPROVED_LABELS would permit every job in the repository to go hosted, which
- * is the failure #280 exists to prevent.
+ * This is deliberately not a label allowlist. See the header: an APPROVED_LABELS
+ * entry is repo-wide, and while widening it alone does not permit hosted jobs —
+ * REQUIRED_LABEL still demands `self-hosted` — it removes one of the two locks
+ * for every job at once, leaving the whole repository one edit away from #280.
+ * A carve-out removes nothing for anyone else.
  *
  * Each entry must record WHY the job is worth hosted minutes, because that is
  * the judgement a reviewer has to re-make when the budget is next under
@@ -535,8 +547,11 @@ if (violations.length > 0) {
       `If a new SELF-HOSTED pool was added, extend APPROVED_LABELS in ` +
       `.github/scripts/check-runners.mjs rather than removing the guard — see its header. ` +
       `If ONE job genuinely needs a GitHub-hosted runner, add a named entry to ` +
-      `HOSTED_JOB_CARVE_OUTS instead: putting a hosted label in APPROVED_LABELS would ` +
-      `permit every job in the repository to go hosted, which is #280 reopened.`,
+      `HOSTED_JOB_CARVE_OUTS instead — NOT a hosted label in APPROVED_LABELS. ` +
+      `Adding one there does not by itself let anything run hosted, because ` +
+      `REQUIRED_LABEL still demands '${REQUIRED_LABEL}'; it removes one of two locks ` +
+      `for EVERY job at once, and REQUIRED_LABEL is then the only thing holding the ` +
+      `line. Relaxing that second lock is what reopens #280.`,
   );
   process.exit(1);
 }

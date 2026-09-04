@@ -404,7 +404,7 @@ Read the full [DCO text](https://developercertificate.org/).
 
 ### DCO Enforcement
 
-All pull requests are automatically checked for DCO sign-off via CI. The check is the **DCO sign-off** job in [`.github/workflows/dco.yml`](.github/workflows/dco.yml), which runs [`.github/scripts/dco-check.sh`](.github/scripts/dco-check.sh) against every commit the pull request adds. Pull requests with unsigned commits **will not be merged**.
+All pull requests are automatically checked for DCO sign-off via CI. The check is the **DCO sign-off** job in [`.github/workflows/dco.yml`](.github/workflows/dco.yml), which runs [`.github/scripts/dco-check.sh`](.github/scripts/dco-check.sh) against every commit the pull request adds. Pull requests with unsigned commits **will not be merged**. There is one pull request that fails this check permanently and by design — see [Dependabot pull requests](#dependabot-pull-requests-convert-and-close) at the end of this section.
 
 The check requires each commit — merge commits excepted, since the forge generates those — to carry a `Signed-off-by` trailer matching that commit's author or committer. The match is case-insensitive.
 
@@ -430,6 +430,22 @@ You can run the same check locally before pushing:
 ```bash
 .github/scripts/dco-check.sh origin/main HEAD
 ```
+
+#### Dependabot pull requests: convert and close
+
+A bot commit carries no `Signed-off-by` trailer, so **a dependabot pull request fails the DCO check by construction** — there is no state in which it passes, and no rerun changes that. That red is not a fault to investigate and not a case to except. **It is the signal that the pull request needs converting**, and it is the expected outcome rather than a surprise.
+
+**DCO is a provenance attestation, not a lint rule.** A `Signed-off-by` line is a person certifying, under the Developer Certificate of Origin, that they have the right to submit the code. A bot cannot make that certification. Exempting one would not be a configuration tweak — it would change what the attestation means for every other commit in the repository. There is deliberately **no bot allowlist in `dco-check.sh`**, and adding one is not the fix.
+
+Instead:
+
+1. **Open a dependency issue** capturing the bump — or **update the existing open issue** if that dependency is already tracked.
+2. **Close the dependabot pull request.** It is never a merge candidate.
+3. Let the change proceed through the normal pipeline as reviewed engineering, on a branch whose commits are signed off.
+
+**One issue per dependency, updated on repeat bumps** — not a fresh issue each time the same package moves. A second bump of a dependency that is already tracked is retired by the same change as the first, so it belongs on the same issue rather than beside it.
+
+**Read the bot's analysis before you close it.** Dependabot reports which packages it had to move together and what a lockfile will not resolve, and that reasoning is often the most useful part of the pull request. The licence, NOTICE and SBOM checks a dependency change needs are run on the branch that actually merges, so closing the bot's pull request discards no evidence.
 
 ## Dependency Licences
 

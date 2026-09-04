@@ -38,6 +38,19 @@ function check(desc, actual, expected) {
   }
 }
 
+// For properties that are not an exit code and not a substring — a partition
+// holding over a population whose size is nobody's business. `detail` carries
+// the actual numbers, so a red says which way it broke rather than just "false".
+function checkTrue(desc, condition, detail) {
+  if (condition) {
+    console.log(`ok   - ${desc}`);
+    passed++;
+  } else {
+    console.log(`FAIL - ${desc}${detail ? ` (${detail})` : ''}`);
+    failed++;
+  }
+}
+
 function checkIncludes(desc, haystack, needle) {
   if (haystack.includes(needle)) {
     console.log(`ok   - ${desc}`);
@@ -630,12 +643,71 @@ checkIncludes('the real run reports the jobs it actually checked', real.out, 'ch
 // Pins the real blast radius: EXACTLY ONE job is exempt today. If a second is
 // ever added, this line goes red and the addition has to be argued for rather
 // than absorbed — which is the whole point of keeping the carve-out narrow.
+//
+// This literal STAYS. Here the number IS the property: the carve-out set is
+// deliberately narrow, and the correct response to a red is to argue the
+// addition, not to bump the count. Contrast the self-hosted population below.
+// The invariant-output record on #652 draws exactly this line — "is the number
+// the property, or a by-product of it?" — and rules that pinned counts are not
+// automatically defects.
 checkIncludes(
   'exactly one job in the real repository is on a hosted carve-out',
   real.out,
   '1 on a named per-job hosted carve-out',
 );
-checkIncludes('...and the rest remain self-hosted', real.out, '23 on the approved self-hosted pool');
+
+// ...and the rest remain self-hosted. Asserted as a PARTITION, never as a tally.
+//
+// This line used to pin '23 on the approved self-hosted pool'. That number is a
+// BY-PRODUCT: the self-hosted population grows whenever any job is added
+// anywhere in the repository, so the literal reddened on changes that had
+// nothing to do with runners, and the only available response was to bump it —
+// which guarantees it reddens again and makes the bump reflexive. #652 names
+// that the tally trap and cites this exact line as its example. It went red for
+// the third job this branch adds to reliability-nightly.yml; bumping 23 -> 24
+// would have reproduced the defect with a later expiry date.
+//
+// What must hold at ANY count is the property the assertion's name already
+// claims: the two populations are exhaustive and disjoint over the jobs the
+// guard actually checked. Every job is either on the approved pool or on a
+// NAMED carve-out, with nothing falling between them.
+const summary = real.out.split('\n').find((l) => l.startsWith('check-runners: OK'));
+checkTrue('the real run prints a summary line to read the populations off', summary !== undefined);
+
+const countIn = (re) => {
+  const m = re.exec(summary ?? '');
+  return m ? Number(m[1]) : null;
+};
+const jobsChecked = countIn(/OK — (\d+) job\(s\) checked/);
+const selfHosted = countIn(/(\d+) on the approved self-hosted pool/);
+const carveOuts = countIn(/(\d+) on a named per-job hosted carve-out/) ?? 0;
+const populations = `checked ${jobsChecked}, pool ${selfHosted}, carve-outs ${carveOuts}`;
+
+checkTrue(
+  '...and the rest remain self-hosted: the two populations partition the jobs checked',
+  jobsChecked !== null && selfHosted !== null && selfHosted + carveOuts === jobsChecked,
+  populations,
+);
+
+// A partition is satisfied trivially by 0 + 0 === 0, which is exactly what a
+// guard that discovered nothing would print. Absence of a result must not read
+// as a pass (#652), so the population has to be non-empty for the assertion
+// above to mean anything.
+checkTrue(
+  '...over a non-empty population, so a guard that scanned nothing cannot pass here',
+  jobsChecked !== null && jobsChecked > carveOuts,
+  populations,
+);
+
+// The carve-out tally must be backed by the same number of NAMED entries. A
+// count that cannot be traced back to a name is the exemption going quiet,
+// which is the one thing the carve-out reporting exists to prevent.
+const namedCarveOuts = real.out.split('\n').filter((l) => l.startsWith('  - ')).length;
+checkTrue(
+  'every carve-out counted in the summary is also named on the run',
+  namedCarveOuts === carveOuts,
+  `named ${namedCarveOuts}, counted ${carveOuts}`,
+);
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

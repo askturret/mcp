@@ -101,3 +101,41 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/check-platform-claims.mjs . --live
+
+  # #599 — GitHub Releases reconciled against the npm registry.
+  #
+  # A Release existing has never been evidence that npm has the package, and
+  # nothing compared the two. That gap cost ~19 hours of a priority:critical
+  # issue describing a condition already resolved for 18 of them: the failure
+  # was invisible, the RECOVERY was invisible, and the only detector in either
+  # direction was a person deciding to look.
+  #
+  # WHY THIS IS NOT A JOB ON THE RELEASE PATH, so nobody rebuilds one. A
+  # `verify-published` job with `needs: [publish]` is SKIPPED when `publish`
+  # fails — it goes quiet in exactly the case it exists for. And the manual
+  # publish that repaired the incident happened AFTER an already-red run, off
+  # the release path entirely, where no event would have observed it. An
+  # observer on a SCHEDULE reading the REGISTRY sees both; a gate on an EVENT
+  # reading the WORKFLOW sees neither.
+  #
+  # EXIT 2 IS EXPECTED AND CORRECT when the registry or the API cannot be read.
+  # It reddens this nightly job and gates nothing (#535/#281). Do not convert it
+  # to a pass, and do not move it into the PR path — same ruling as the job
+  # above, for the same reason.
+  #
+  # It rides this workflow for the same reason platform-claims does: the
+  # schedule already exists, and a networked observer needs nothing else.
+  release-registry-reconcile:
+    runs-on: [self-hosted, Linux, X64, askturret]
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No `npm ci` — Node builtins and `fetch` only.
+      - name: GitHub Releases and the npm registry still agree
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/check-release-registry-reconcile.mjs . --live

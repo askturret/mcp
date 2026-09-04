@@ -82,3 +82,4 @@
 {"ts":"2026-08-29T13:39:26Z","branch":"feat/issue-511-platform-vs-project-triage","files":[".operum/agents/pm.md"],"result":"overridden"}
 {"ts":"2026-08-29T16:45:19Z","branch":"fix/issue-454-comment-in-export-gap","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
 {"ts":"2026-08-29T16:27:31Z","branch":"fix/issue-506-inverted-scope-gloss","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}
+{"ts":"2026-09-04T16:05:53Z","branch":"agent/tester","files":[".operum/knowledge/repo-map.toml"],"result":"path-restore"}

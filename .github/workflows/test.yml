@@ -497,6 +497,18 @@ jobs:
       - name: Platform-claim declarations are well-formed
         run: node .github/scripts/check-platform-claims.mjs .
 
+      # #599's reconciler, split the same way and for the same reason: this
+      # self-test is OFFLINE BY CONSTRUCTION — every arm drives an injected
+      # `readState`, so it never touches the network and can block a PR. The
+      # live comparison runs on a SCHEDULE in reliability-nightly.yml. Do not
+      # add --live here; a registry outage must not redden every PR.
+      #
+      # What it pins is that the reconciler goes RED — in BOTH directions, and
+      # that a baselined pair does not suppress a new one. A reconciler never
+      # shown failing is the same class of defect it exists to catch.
+      - name: Self-test the release/registry reconciler
+        run: node .github/scripts/check-release-registry-reconcile.test.mjs
+
       # #280: the Actions budget is exhausted, so a job on a GitHub-hosted
       # runner is refused at "Set up job" with an EMPTY LOG — no error, nothing
       # naming the cause. That shape cost a full investigation cycle on #278

@@ -1,0 +1,91 @@
+{
+  "$schema-note": [
+    "DECLARED EXCEPTIONS for check-release-registry-reconcile.mjs (#599).",
+    "",
+    "Each entry suppresses exactly ONE package+version pair in the",
+    "REGISTRY -> RELEASE direction: a version that is on npm with no GitHub",
+    "Release naming it. Nothing else is suppressed, and the RELEASE -> REGISTRY",
+    "direction has no baseline at all — a publish that did not land is never",
+    "expected.",
+    "",
+    "THIS IS A LIST OF PAIRS AND MUST NEVER BECOME A CUTOFF. An",
+    "'ignore anything below X' rule would silence the exact case this direction",
+    "exists to catch, because the next manual publish will also be below some",
+    "later version. Every entry names a package, a version, a date and a reason,",
+    "and the reconciler prints all of them on every run — a suppression that",
+    "nobody sees is the same defect as no detector.",
+    "",
+    "TO ADD AN ENTRY you must be able to say why the pair can never be",
+    "reconciled. 'It is old' is not a reason. 'It was published by hand before",
+    "the release path existed, and no Release can now be cut for it' is.",
+    "",
+    "A NEW manual publish must still fire. If you are tempted to add an entry",
+    "for a version published this week, the finding is real and the fix is a",
+    "Release, not a line here."
+  ],
+  "baseline": [
+    {
+      "package": "@askturret/mcp-core",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    },
+    {
+      "package": "@askturret/mcp-transports",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    },
+    {
+      "package": "@askturret/mcp-sources-openapi",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    },
+    {
+      "package": "@askturret/mcp-explorer",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    },
+    {
+      "package": "@askturret/mcp-observability",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    },
+    {
+      "package": "@askturret/mcp-adapters-express",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    },
+    {
+      "package": "@askturret/mcp-adapters-fastify",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    },
+    {
+      "package": "@askturret/mcp-gateway",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    },
+    {
+      "package": "@askturret/mcp-cli",
+      "version": "0.1.0",
+      "recorded": "2026-09-04",
+      "reason": "Published by hand before any GitHub Release existed. No v0.1.0 Release was ever cut and none can be cut retroactively for an already-published version, so this pair is permanently irreconcilable.",
+      "evidence": "registry.npmjs.org carries 0.1.0; GET /repos/askturret/mcp/releases lists no v0.1.0."
+    }
+  ]
+}

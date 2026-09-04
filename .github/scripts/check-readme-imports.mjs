@@ -142,6 +142,23 @@ export function discoverPrivatePackageNames(repoRoot) {
   return names;
 }
 
+/**
+ * The root package's own name — the specifier package self-reference resolves.
+ *
+ * Read from the tree rather than hardcoded: the name IS the leak sentinel's
+ * subject, and a hardcoded copy would go stale exactly when the repository is
+ * renamed, silently disarming the check. Returns null if it cannot be read,
+ * which the caller must treat as cannot-check rather than as "no leak".
+ */
+export function readRootPackageName(repoRoot) {
+  try {
+    const name = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8')).name;
+    return typeof name === 'string' && name !== '' ? name : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Public workspace packages, discovered rather than hardcoded. */
 export function discoverPublicPackages(repoRoot) {
   const dir = join(repoRoot, 'packages');
@@ -330,17 +347,62 @@ export function main(argv, run = spawnSync) {
   const internal = [];
   const privateNames = discoverPrivatePackageNames(repoRoot);
   try {
-    // Prove the room is actually isolated before trusting any green from it. If
-    // a specifier that cannot exist resolves here, resolution is leaking to the
-    // workspace and every pass below would be worthless.
-    const sentinel = probeImport(room.dir, {
-      statement: "import { nothing } from '@askturret/mcp-this-package-does-not-exist'",
-      named: ['nothing'],
-    }, run);
-    if (sentinel.ok) {
-      console.error('\n⚠️  CANNOT CHECK — a package that cannot exist resolved inside the clean room.');
-      console.error('   Resolution is leaking to the workspace; results here would be meaningless.');
+    // ---- Prove the room is isolated BEFORE trusting any green from it -------
+    //
+    // THE LEAK SENTINEL (#607). Probes the ROOT PACKAGE'S OWN NAME, because that
+    // is the specifier package self-reference resolves and a clean room must
+    // not.
+    //
+    // The original sentinel probed `@askturret/mcp-this-package-does-not-exist`,
+    // and that was the wrong question. A name that exists nowhere does not
+    // resolve under self-reference EITHER, so it stayed silent in exactly the
+    // condition it was there to detect — it verified an ADJACENT property (some
+    // package fails to resolve) rather than the one that matters (the umbrella
+    // name fails to resolve).
+    //
+    // Measured, not reasoned: with TMPDIR pointed inside the checkout the clean
+    // room lands under the repository, node's upward node_modules walk reaches
+    // the root package.json, self-reference revives, and the guard reported 2
+    // failures where the same broken docs produce 14 outside it. Twelve real
+    // defects invisible, under a check mark.
+    //
+    // Containment was only ever a property of WHERE TMPDIR happens to point —
+    // a choice made elsewhere, by the environment, which this guard neither
+    // makes nor previously checked. This probe is what turns that inherited
+    // assumption into an assertion.
+    const rootName = readRootPackageName(repoRoot);
+    const packedNames = new Set(discoverPublicPackages(repoRoot).map((p) => p.name));
+
+    if (rootName === null) {
+      console.error('\n⚠️  CANNOT CHECK — the root package.json could not be read, so the clean room could not be proven isolated.');
+      console.error('   This is NOT a pass. No documented import was verified.');
       return EXIT_CANNOT_CHECK;
+    }
+
+    // If the root name is itself a packed workspace package it SHOULD resolve
+    // here, and probing it would be a false alarm. That is not the case today —
+    // the root is not under packages/ and is never packed — but it becomes the
+    // case the day an umbrella package ships, and a guard that reddens on a
+    // correct change is one someone deletes.
+    if (packedNames.has(rootName)) {
+      console.log(
+        `check-readme-imports: leak sentinel skipped — '${rootName}' is itself a packed public package, so it resolves here legitimately.`,
+      );
+    } else {
+      const leak = probeImport(room.dir, {
+        statement: `import '${rootName}'`,
+        named: [],
+      }, run);
+
+      if (leak.ok) {
+        console.error(`\n⚠️  CANNOT CHECK — '${rootName}' resolved inside the clean room.`);
+        console.error('   That is the repository\'s OWN package name. It resolves here only through');
+        console.error('   package self-reference, which means the room is inside the checkout and');
+        console.error('   every specifier below would resolve for a reason no reader has.');
+        console.error(`   Most likely cause: TMPDIR points inside the repository (TMPDIR=${process.env.TMPDIR ?? '<unset>'}).`);
+        console.error('   This is NOT a pass. No documented import was verified.');
+        return EXIT_CANNOT_CHECK;
+      }
     }
 
     for (const parsed of imports) {

@@ -2,11 +2,15 @@
 
 What AskTurret MCP supports, and — just as importantly — what it does not.
 
-**Applies to release `0.1.2`. Matrix version `2.1.0`.**
+**Applies to release `0.1.2`. Matrix version `2.2.0`.**
 
-> **`2.1.0` adds enforcement** — see [What this matrix is not](#what-this-matrix-is-not).
-> A minor bump: the `source` field and the checks around it are additive, and no
-> supported range moved.
+> **`2.2.0` widens enforcement** — see [What this matrix is not](#what-this-matrix-is-not).
+> A minor bump on the same grounds `2.1.0` was one: adapter-level `declared` /
+> `source`, row-level `verifiedBy`, and the three checks around them are
+> additive, and no supported range moved.
+>
+> **`2.1.0` added enforcement** — the `source` field and the checks around it,
+> also additive.
 >
 > **Why the previous revision was `2.0.0` and not `1.1.0`.** Promoting Fastify from *Planned* to *Supported* is a
 > minor change on its own. But this revision also corrects the `@modelcontextprotocol/sdk`
@@ -165,15 +169,40 @@ The matrix is updated **on every release**.
 
 ### What this matrix is not
 
-It is **partially CI-enforced** as of matrix `2.1.0`, and the split matters:
+It is **partially CI-enforced** as of matrix `2.1.0` and more so as of `2.2.0`, and
+the split matters:
 
-- **Enforced.** `check-compatibility-contract.mjs` fails the build when a declared
-  range disagrees with the manifest it is sourced from, when a tested version
-  disagrees with the lockfile, when a versioned row names no source, or when a ✅
-  row names an entry point this repository does not publish.
+- **Enforced.** `check-compatibility-contract.mjs` runs **eight** checks and fails
+  the build on any of them:
+
+  | | fails when |
+  |---|---|
+  | **A** | an entry carrying `declared` names no `source` |
+  | **B** | a declared range disagrees with the manifest it is sourced from |
+  | **C** | a tested version disagrees with the lockfile |
+  | **D** | a ✅ row names an entry point this repository does not publish |
+  | **E** | a machine-comparable value in the JSON is absent from this file |
+  | **F** | a row carrying a `version` declares neither a `source` on its parent nor its own `verifiedBy` |
+  | **G** | no ✅ row covers the major the lockfile actually installs |
+  | **H** | a `verifiedBy` names a file that does not exist |
+
+  **F, G and H arrived in `2.2.0`.** F also changed what *enrolment* means: a row is
+  enrolled by carrying a `version`, not by carrying a `declared`. So a version-bearing
+  row naming only `verifiedBy` now passes **without** a `source`. Until `2.2.0` this
+  section said a versioned row naming no source fails the build — that is no longer
+  true, and A is a narrower claim than it read as.
+
+  The two members of that vocabulary are **not equal strength**, and the schema says
+  so rather than hiding it: a `source` row is re-derived every run and is
+  time-indifferent, while a `verifiedBy` row is only as good as the test it names —
+  H asserts that the test still exists, not that it still asserts anything.
 - **Not enforced.** Actually running the suite against every cell. A ⚠️ row remains a
   statement of expectation, and even ✅ cells run on a single Node version. That is a
   separate [§17 readiness criterion](https://github.com/askturret/mcp/issues/5).
+- **Not enforced: this prose.** Check E compares *machine-comparable values* — the
+  matrix version, the release, declared ranges, entry points — not the two copies of
+  this enforcement description. Nothing fails if they drift apart, which is the same
+  shape [#612](https://github.com/askturret/mcp/issues/612) is about, one level down.
 
 That gap is stated deliberately: a matrix that implies coverage it does not have is
 worse than no matrix, because it converts an unknown into a false assurance.

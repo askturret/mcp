@@ -3,11 +3,21 @@ name: Supply chain
 # Licence review runs on every PR (issue #24 acceptance criterion).
 # SBOM generation is dry-runnable on demand and on release, so it can be proven
 # to work before a release is ever cut.
+#
+# `tags: ['v*']` is here because it was NOT, and the absence was invisible (#622).
+# Every document describing this release path — docs/releasing.md, #619 — said
+# "push the tag, that triggers the release workflow". It did not: `push` was
+# filtered to `branches: [main]`, and a TAG PUSH IS NOT A BRANCH PUSH, so this
+# workflow was never entered at all. On 2026-09-04 the v0.1.2 tag was pushed and
+# the only run it produced was tag-readiness-advisory.yml; the registry stayed
+# at 0.1.1 on all nine packages. The instruction was correct-sounding, followed
+# exactly, and did nothing.
 on:
   pull_request:
     branches: [main]
   push:
     branches: [main]
+    tags: ['v*']
   release:
     types: [published]
   workflow_dispatch:
@@ -132,7 +142,12 @@ jobs:
   # this job below. docs/releasing.md states the distinction.
   readiness:
     name: Readiness matrix
-    if: github.event_name == 'release'
+    # Release OR tag push (#622) — and this job's gate is NOT cosmetic here.
+    # `publish` declares `needs: [supply-chain, readiness]`, and a SKIPPED need
+    # skips its dependents. So had only `publish` been widened to accept tags,
+    # this job would still have skipped on a tag push and taken `publish` down
+    # with it: a change that reads as correct, passes review, and fires nothing.
+    if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4
@@ -147,7 +162,12 @@ jobs:
 
       - name: Evaluate the readiness matrix
         env:
-          TAG: ${{ github.event.release.tag_name }}
+          # On a tag push there is no `github.event.release`, so the release
+          # field is empty and `github.ref_name` carries the tag. Without the
+          # fallback TAG would be "", MAJOR would not be "0", and the matrix
+          # would run BLOCKING on a 0.x release — failing the publish for the
+          # wrong reason on the very path this change adds.
+          TAG: ${{ github.event.release.tag_name || github.ref_name }}
         run: |
           # readiness.md certifies 1.0 readiness, and compatibility-policy.md is
           # explicit that 0.x "carries no compatibility guarantee at all" — so
@@ -170,7 +190,16 @@ jobs:
   # Release-triggered only: it must never run on a PR.
   publish:
     name: Publish with provenance
-    if: github.event_name == 'release'
+    # Release OR tag push (#622) — tag-OR-release, never tag-INSTEAD-OF-release.
+    # The release path is the one that has actually shipped every version of
+    # this project, and it must keep working; widening must not narrow.
+    #
+    # The second conjunct is what keeps a merge to main from publishing. A bare
+    # `github.event_name == 'push'` would fire on every push to main, and the
+    # `skipped` you see on an ordinary merge is correct behaviour that has to
+    # survive this change. `startsWith(github.ref, 'refs/tags/v')` matches the
+    # `tags: ['v*']` filter above, so the trigger and the gate agree.
+    if: github.event_name == 'release' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
     # `readiness` is the one-word gate (#269): a 1.0.* release with a red
     # matrix fails that job, so this one never runs. A 0.x release passes it
     # advisorily and publishes, saying so in the job summary.

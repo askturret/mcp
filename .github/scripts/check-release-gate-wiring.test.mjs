@@ -72,9 +72,64 @@ check('supply-chain.yml declares a readiness job', jobBlock(supplyChain, 'readin
 const readiness = jobBlock(supplyChain, 'readiness') ?? '';
 check('the readiness job runs the shared evaluator', readiness.includes('check-readiness-matrix.mjs'));
 check('the readiness job self-tests the evaluator first', readiness.includes('check-readiness-matrix.test.mjs'));
+// --- the release-path gates (#269, widened by #622) -------------------------
+//
+// This pinned `event_name == 'release'` alone until #622. That was accurate,
+// and it was also the bug: a tag push never entered this workflow, so the
+// documented "push the tag to release" sequence did nothing at all.
+//
+// Widened to release-OR-TAG and asserted in BOTH directions, because the two
+// dangerous edits here are opposite in shape:
+//   - narrowing to tag-only breaks the path that has shipped every version
+//     this project has ever published
+//   - loosening to a bare `event_name == 'push'` publishes on every merge to
+//     main, which is the one thing the original gate existed to prevent
+const RELEASE_OR_TAG =
+  /if:\s*github\.event_name == 'release' \|\| \(github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)\)/;
+const BARE_PUSH_GATE = /if:\s*github\.event_name == 'push'\s*$/m;
+
+check('the readiness job still runs for release events', RELEASE_OR_TAG.test(readiness));
 check(
-  'the readiness job only runs for release events',
-  /if:\s*github\.event_name == 'release'/.test(readiness),
+  'the readiness job does NOT fire on a bare branch push',
+  !BARE_PUSH_GATE.test(readiness),
+  'a gate on event_name == push alone would run this on every merge to main',
+);
+
+// `publish` had NO wiring assertion before #622 — which is how its gate could
+// have been widened without anyone noticing the `needs: readiness` interaction.
+const publishGate = jobBlock(supplyChain, 'publish') ?? '';
+check('the publish job runs for release events and v* tags', RELEASE_OR_TAG.test(publishGate));
+check(
+  'the publish job does NOT fire on a bare branch push',
+  !BARE_PUSH_GATE.test(publishGate),
+  'publishing on every merge to main is the failure the original gate prevented',
+);
+
+// The interaction that makes these two gates ONE decision rather than two: a
+// SKIPPED need skips its dependents, so publish can never outrun readiness. If
+// they disagree, publish silently stops firing on the events readiness excludes
+// — which presents as nothing happening rather than as a failure.
+check(
+  'readiness and publish carry the SAME gate, because publish needs readiness',
+  RELEASE_OR_TAG.test(readiness) === RELEASE_OR_TAG.test(publishGate),
+  'a narrower readiness gate silently disables publish on the events it excludes',
+);
+
+// The trigger itself. Without it the gates above are unreachable on a tag,
+// which is exactly the #622 state: correct-looking `if:` conditions sitting on
+// a workflow the event never entered.
+check(
+  'supply-chain.yml is triggered by a v* tag push at all',
+  /push:\s*\n\s*branches:\s*\[main\]\s*\n\s*tags:\s*\['v\*'\]/.test(supplyChain),
+  'the job gates are unreachable on a tag unless the workflow listens for one',
+);
+
+// On a tag push there is no `github.event.release`, so the TAG the matrix reads
+// must fall back to the ref name or it evaluates an empty version.
+check(
+  'the readiness matrix resolves TAG on both event shapes',
+  /TAG:\s*\$\{\{ github\.event\.release\.tag_name \|\| github\.ref_name \}\}/.test(readiness),
+  'an empty TAG makes MAJOR non-zero, running the matrix BLOCKING on a 0.x release',
 );
 check(
   'the readiness job can still block — it does not pass --advisory unconditionally',

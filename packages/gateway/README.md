@@ -14,7 +14,7 @@ npx @askturret/mcp-gateway \
 > **Not published yet.** This repository has never cut a release, and
 > publishing happens only from a published GitHub Release — so the `npx` line
 > above does not resolve today. It is not a privacy question: `mcp-gateway` is
-> one of the nine packages [`docs/releasing.md`](../../docs/releasing.md) lists
+> one of the nine packages [`docs/releasing.md`](https://github.com/askturret/mcp/blob/main/docs/releasing.md) lists
 > as public, so it is publishable already. What remains is a release-policy
 > decision (under what compatibility promise) plus credentials, not something a
 > feature PR settles — the same split #54 made when it filed #173. See
@@ -133,7 +133,7 @@ docker build -f packages/gateway/Dockerfile -t askturret/mcp-gateway .
 ```
 
 A full worked setup — gateway + mock upstream + OTel collector, in one command —
-is in [`examples/gateway-compose`](../../examples/gateway-compose).
+is in [`examples/gateway-compose`](https://github.com/askturret/mcp/tree/main/examples/gateway-compose).
 
 ## Publishing
 

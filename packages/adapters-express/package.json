@@ -4,6 +4,15 @@
   "description": "Express framework adapter",
   "type": "module",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/askturret/mcp.git",
+    "directory": "packages/adapters-express"
+  },
+  "homepage": "https://github.com/askturret/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/askturret/mcp/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {

@@ -33,6 +33,7 @@ import { join } from 'node:path';
 import {
   checkLive,
   reconcile,
+  report,
   versionOfTag,
   discoverPublicPackages,
   EXIT_OK,
@@ -75,6 +76,14 @@ function fixture({ packages = { core: false, cli: false }, baseline = [] } = {})
 
 const reader = (state) => async () => state;
 const v = (attested = false) => ({ attested });
+
+/** Everything `report` would put on stdout and stderr, as one string. */
+function capture(result) {
+  const lines = [];
+  const sink = (m) => lines.push(String(m));
+  report(result, { log: sink, error: sink });
+  return lines.join('\n');
+}
 
 // ---------------------------------------------------------------------------
 // 1. THE 2026-09-03 SHAPE. A Release exists; the registry does not have it.
@@ -202,6 +211,75 @@ const v = (attested = false) => ({ attested });
     readState: reader({ releases: null, registry: {}, unreadable: [{ what: 'releases', reason: 'API returned 502' }] }),
   });
   check('outage: an unreadable release list is CANNOT CHECK, not "no releases"', noReleases.code, EXIT_CANNOT_CHECK);
+}
+
+// ---------------------------------------------------------------------------
+// 4b. THE MIXED STATE: a genuine divergence AND an unreadable package, together.
+//
+//     Neither pure case above exercises this, which is exactly why the defect
+//     survived review (#649). Cannot-check outranks divergence for the exit
+//     code — that ordering is correct and is asserted here unchanged — but the
+//     report used to return from the cannot-check branch BEFORE printing the
+//     divergences it had already computed. The operator was told "Nothing was
+//     compared" while a package had in fact been compared and had produced the
+//     incident-shaped finding.
+//
+//     This is the shape of the reconciler's FIRST real exercise: nine registry
+//     reads, and any one of them hiccuping suppresses the naming of a package
+//     that did not publish.
+// ---------------------------------------------------------------------------
+{
+  const dir = fixture();
+  const mixed = await checkLive({
+    rootDir: dir,
+    readState: reader({
+      releases: [{ tag: 'v0.1.1' }],
+      // core reads fine and DIVERGES — the publish did not land.
+      // cli cannot be read at all.
+      registry: { '@askturret/mcp-core': { versions: {}, absent: false } },
+      unreadable: [{ what: '@askturret/mcp-cli', reason: 'registry returned 503' }],
+    }),
+  });
+
+  check('mixed: cannot-check still OUTRANKS divergence for the exit code', mixed.code, EXIT_CANNOT_CHECK);
+  check(
+    'mixed: ...and the divergence really is computed, so suppressing it would lose a finding',
+    mixed.divergences.some((d) => d.includes('@askturret/mcp-core@0.1.1') && d.includes('did not land')),
+    true,
+  );
+
+  const printed = capture(mixed);
+  check('mixed: the divergence is PRINTED, not returned past (#649)', printed.includes('@askturret/mcp-core@0.1.1'), true);
+  check('mixed: ...alongside the cannot-check block, which still names the outage', printed.includes('503'), true);
+  check(
+    'mixed: ...and the report never claims nothing was compared when something was',
+    printed.includes('Nothing was compared'),
+    false,
+  );
+  check(
+    'mixed: ...it states what WAS and was not compared, so the reader can size the gap',
+    printed.includes('1 of 2 package(s) were compared'),
+    true,
+  );
+
+  // CONTROL. Without this, the assertion above is satisfied by deleting the
+  // sentence outright — and the sentence is CORRECT when it is true. A pure
+  // cannot-check, nothing compared at all, must still say so.
+  const nothing = await checkLive({
+    rootDir: dir,
+    readState: reader({ releases: null, registry: {}, unreadable: [{ what: 'releases', reason: 'API returned 502' }] }),
+  });
+  const nothingPrinted = capture(nothing);
+  check(
+    'CONTROL: when nothing genuinely was compared, the report still says exactly that',
+    nothingPrinted.includes('Nothing was compared. This is NOT a pass.'),
+    true,
+  );
+  check(
+    'CONTROL: ...and invents no divergence it did not find',
+    nothingPrinted.includes('DIVERGENCE'),
+    false,
+  );
 }
 
 // ---------------------------------------------------------------------------

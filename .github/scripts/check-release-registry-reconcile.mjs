@@ -206,9 +206,15 @@ export function reconcile({ releases, registry, packages, baseline = [] }) {
   const attestations = [];
   const suppressed = [];
 
+  // How much of the intended comparison actually happened. Carried out of here
+  // so the report can state what WAS and was NOT compared instead of asserting
+  // a flat "nothing" that is false the moment one package read fine (#649).
+  const considered = packages.length;
+  let compared = 0;
+
   if (releases === null) {
     cannotCheck.push('the release list could not be read, so neither direction could be compared');
-    return { divergences, cannotCheck, attestations, suppressed };
+    return { divergences, cannotCheck, attestations, suppressed, compared, considered };
   }
 
   const baselined = new Set(baseline.map((b) => `${b.package}@${b.version}`));
@@ -220,6 +226,7 @@ export function reconcile({ releases, registry, packages, baseline = [] }) {
       cannotCheck.push(`${name}: not read from the registry, so it could not be compared`);
       continue;
     }
+    compared += 1;
 
     // ---- RELEASE -> REGISTRY. The publish did not land. ---------------------
     for (const version of [...releaseVersions].sort()) {
@@ -249,17 +256,17 @@ export function reconcile({ releases, registry, packages, baseline = [] }) {
     }
   }
 
-  return { divergences, cannotCheck, attestations, suppressed };
+  return { divergences, cannotCheck, attestations, suppressed, compared, considered };
 }
 
 export async function checkLive({ rootDir, readState = readLiveState }) {
   const discovered = discoverPublicPackages(rootDir);
   if (discovered.packages === null) {
-    return { code: EXIT_CANNOT_CHECK, divergences: [], cannotCheck: [discovered.reason], attestations: [], suppressed: [] };
+    return { code: EXIT_CANNOT_CHECK, divergences: [], cannotCheck: [discovered.reason], attestations: [], suppressed: [], compared: 0, considered: 0 };
   }
   const base = readBaseline(rootDir);
   if (base.entries === null) {
-    return { code: EXIT_CANNOT_CHECK, divergences: [], cannotCheck: [base.reason], attestations: [], suppressed: [] };
+    return { code: EXIT_CANNOT_CHECK, divergences: [], cannotCheck: [base.reason], attestations: [], suppressed: [], compared: 0, considered: 0 };
   }
 
   const { releases, registry, unreadable } = await readState({ packages: discovered.packages });
@@ -273,6 +280,62 @@ export async function checkLive({ rootDir, readState = readLiveState }) {
   return { ...result, cannotCheck, code };
 }
 
+/**
+ * PRINTS the run. The exit code is `checkLive`'s ranking, never re-derived here.
+ *
+ * Split out of `main()` so the self-test can drive it offline with injected
+ * sinks. The MIXED state — a genuine divergence AND an unreadable package in the
+ * same run — is not exercised by either pure case, and it is the only state in
+ * which the old reporting was wrong (#649).
+ *
+ * Cannot-check outranks divergence for the EXIT CODE, and that ordering stays:
+ * an unread package can manufacture a "missing from the registry" finding that
+ * is really an outage. But outranking a finding is not the same as deleting it.
+ * Divergences are printed whenever they were found, and the incomplete-read
+ * block then says why the run is still not a pass. Nothing computed is
+ * discarded, and no sentence claims more than was actually compared (ADR-024).
+ */
+export function report(result, { log = console.log, error = console.error } = {}) {
+  const { divergences, cannotCheck, attestations, suppressed, compared = 0, considered = 0 } = result;
+
+  for (const a of attestations) log(`   ${a}`);
+  if (suppressed.length > 0) {
+    log(`\ncheck-release-registry-reconcile: ${suppressed.length} baselined pair(s), declared in ${BASELINE_REL}:`);
+    for (const s of suppressed) log(`   ${s}`);
+  }
+
+  if (divergences.length > 0) {
+    error('\ncheck-release-registry-reconcile: DIVERGENCE\n');
+    for (const d of [...new Set(divergences)].sort()) error(`  - ${d}`);
+    error(`\n${divergences.length} divergence(s).`);
+  }
+
+  if (cannotCheck.length > 0) {
+    error('\ncheck-release-registry-reconcile: CANNOT CHECK — live state could not be read:');
+    for (const c of cannotCheck) error(`   ${c}`);
+    error(
+      compared === 0
+        ? '   Nothing was compared. This is NOT a pass.'
+        : `   ${compared} of ${considered} package(s) were compared; the rest could not be read. ` +
+            'This is NOT a pass — an incomplete comparison cannot rule out what it never read.',
+    );
+    if (divergences.length > 0) {
+      error(
+        `   The ${divergences.length} divergence(s) above were found among the packages that COULD be ` +
+          'read, and stand as findings. Cannot-check outranks them for the exit code only.',
+      );
+    }
+    return;
+  }
+
+  if (divergences.length > 0) return;
+
+  log(
+    `\ncheck-release-registry-reconcile: OK — every GitHub Release is on the registry and every registry ` +
+      `version has a Release${suppressed.length ? `, modulo ${suppressed.length} declared baseline pair(s)` : ''}.`,
+  );
+}
+
 export async function main(argv) {
   const rootDir = argv[2] && !argv[2].startsWith('--') ? argv[2] : '.';
   if (!argv.includes('--live')) {
@@ -283,32 +346,9 @@ export async function main(argv) {
     return EXIT_CANNOT_CHECK;
   }
 
-  const { code, divergences, cannotCheck, attestations, suppressed } = await checkLive({ rootDir });
-
-  for (const a of attestations) console.log(`   ${a}`);
-  if (suppressed.length > 0) {
-    console.log(`\ncheck-release-registry-reconcile: ${suppressed.length} baselined pair(s), declared in ${BASELINE_REL}:`);
-    for (const s of suppressed) console.log(`   ${s}`);
-  }
-
-  if (cannotCheck.length > 0) {
-    console.error('\ncheck-release-registry-reconcile: CANNOT CHECK — live state could not be read:');
-    for (const c of cannotCheck) console.error(`   ${c}`);
-    console.error('   Nothing was compared. This is NOT a pass.');
-    return EXIT_CANNOT_CHECK;
-  }
-  if (divergences.length > 0) {
-    console.error('\ncheck-release-registry-reconcile: DIVERGENCE\n');
-    for (const d of [...new Set(divergences)].sort()) console.error(`  - ${d}`);
-    console.error(`\n${divergences.length} divergence(s).`);
-    return EXIT_DIVERGENCE;
-  }
-
-  console.log(
-    `\ncheck-release-registry-reconcile: OK — every GitHub Release is on the registry and every registry ` +
-      `version has a Release${suppressed.length ? `, modulo ${suppressed.length} declared baseline pair(s)` : ''}.`,
-  );
-  return EXIT_OK;
+  const result = await checkLive({ rootDir });
+  report(result);
+  return result.code;
 }
 
 if (isProcessEntryPoint(import.meta.url)) {

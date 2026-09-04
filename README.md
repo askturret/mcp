@@ -133,8 +133,8 @@ npm install @askturret/mcp-adapters-fastify
 npm install --save-dev @askturret/mcp-cli
 ```
 
-There is no `@askturret/mcp` umbrella package on npm; the nine published
-packages are all `@askturret/mcp-*`. Import `@askturret/mcp-core` directly when
+There is no `@askturret/mcp` umbrella package on npm; the published packages
+are all `@askturret/mcp-*`. Import `@askturret/mcp-core` directly when
 you compose a server yourself — it is already present as a dependency of either
 adapter, and it is the surface the [compatibility policy](docs/compatibility-policy.md) covers.
 
@@ -217,11 +217,11 @@ A one-command worked setup (gateway + mock upstream + OTel collector) is in
 [`examples/gateway-compose`](examples/gateway-compose); see the
 [gateway README](packages/gateway/README.md) for configuration.
 
-> Not published to npm yet — this repository has never cut a release, and
-> publishing happens only from a published GitHub Release. Build and run it
-> from source in the meantime. (Privacy is not what is holding publication:
-> most workspaces are publishable. See
-> [`docs/releasing.md`](docs/releasing.md) for which nine are public.)
+> **These packages are on npm**, so the command above runs without a checkout.
+> No version is quoted here on purpose — `npm view @askturret/mcp-gateway
+> version` is the authoritative answer and cannot go stale, whereas a number
+> written on this page can. See [`docs/releasing.md`](docs/releasing.md) for
+> which workspaces are public.
 
 ### The adapter conformance contract
 

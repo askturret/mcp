@@ -504,6 +504,110 @@ jobs:
 // asserting a different branch under its name.
 
 // ---------------------------------------------------------------------------
+// THE NARROW PER-JOB CARVE-OUT (#595).
+//
+// The whole risk of this feature is that it stops being narrow. A carve-out
+// that accidentally permits any hosted job is #280 reopened SILENTLY — the
+// guard still exits 0, still prints OK, and nothing says the blast radius
+// changed. So the negatives below matter more than the positive: each pins one
+// axis the carve-out must NOT generalise along.
+//
+// A carve-out only ever observed PERMITTING has not been shown to be capable of
+// REFUSING, which is the property that keeps #280 shut.
+// ---------------------------------------------------------------------------
+
+/** The real carve-out's coordinates. Each case below varies exactly one. */
+const CARVED_FILE = 'supply-chain.yml';
+const CARVED_JOB = 'publish';
+
+const carved = (files) => withFixture(files, run);
+
+// The positive: the exact job, in the exact file, on the exact label.
+check(
+  'the carved-out job on its exact label PASSES',
+  carved({ [CARVED_FILE]: workflow('runs-on: ubuntu-latest', CARVED_JOB) }).code,
+  0,
+);
+
+// Axis 1 — JOB NAME. Another job in the same file gets nothing.
+check(
+  'a DIFFERENT job in the carved-out file still FAILS',
+  carved({ [CARVED_FILE]: workflow('runs-on: ubuntu-latest', 'build') }).code,
+  1,
+);
+
+// Axis 2 — FILE. A new workflow file is exactly how #280 says a hosted runner
+// comes back, so a filename-blind carve-out would be the dangerous shape.
+check(
+  'the carved-out job NAME in a different file still FAILS',
+  carved({ 'test.yml': workflow('runs-on: ubuntu-latest', CARVED_JOB) }).code,
+  1,
+);
+
+// Axis 3 — LABEL VALUE. A different hosted runner is not the reviewed job.
+check(
+  'the carved-out job on a DIFFERENT hosted label still FAILS',
+  carved({ [CARVED_FILE]: workflow('runs-on: ubuntu-24.04', CARVED_JOB) }).code,
+  1,
+);
+
+// Axis 4 — LABEL SET. Gaining a label makes it a different job from the one
+// reviewed, so the exemption lapses rather than stretching to cover it.
+check(
+  'the carved-out job with an EXTRA label still FAILS',
+  carved({ [CARVED_FILE]: workflow('runs-on: [ubuntu-latest, gpu]', CARVED_JOB) }).code,
+  1,
+);
+
+// Casing is presentation, not identity — the same set still passes.
+check(
+  'the carved-out label set is compared case-insensitively',
+  carved({ [CARVED_FILE]: workflow('runs-on: Ubuntu-Latest', CARVED_JOB) }).code,
+  0,
+);
+
+// Two hosted jobs where only one is carved out. A carve-out that passed the
+// FILE rather than the JOB would go green here, which is the #280 reopening in
+// its most plausible form.
+check(
+  'a carved-out job does NOT license a second hosted job beside it',
+  carved({
+    [CARVED_FILE]: `name: fixture
+on: [push]
+
+jobs:
+  ${CARVED_JOB}:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hello
+  other:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hello
+`,
+  }).code,
+  1,
+);
+
+// The carve-out must be VISIBLE on a green run. An exemption nobody sees is one
+// nobody re-examines when the Actions budget is next under pressure.
+{
+  const r = carved({ [CARVED_FILE]: workflow('runs-on: ubuntu-latest', CARVED_JOB) });
+  checkIncludes('a green run names the carve-out in effect', r.out, 'named per-job carve-out(s) in effect');
+  checkIncludes('...and says WHY it exists', r.out, 'provenance');
+  checkIncludes('...and reports the two populations apart', r.out, 'on the approved self-hosted pool');
+}
+
+// The refusal must point at the carve-out rather than at APPROVED_LABELS.
+// Widening that set is the wrong fix, and this message is where someone reads
+// which lever to reach for.
+{
+  const r = carved({ 'test.yml': workflow('runs-on: ubuntu-latest', CARVED_JOB) });
+  checkIncludes('a hosted refusal names HOSTED_JOB_CARVE_OUTS', r.err, 'HOSTED_JOB_CARVE_OUTS');
+  checkIncludes('...and warns that widening APPROVED_LABELS reopens #280', r.err, '#280 reopened');
+}
+
+// ---------------------------------------------------------------------------
 // The guard must be green on the real repository it ships in.
 // ---------------------------------------------------------------------------
 
@@ -511,6 +615,16 @@ const realRepo = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const real = run(realRepo);
 check('the real repository passes its own guard', real.code, 0);
 checkIncludes('the real run reports the jobs it actually checked', real.out, 'check-runners: OK');
+
+// Pins the real blast radius: EXACTLY ONE job is exempt today. If a second is
+// ever added, this line goes red and the addition has to be argued for rather
+// than absorbed — which is the whole point of keeping the carve-out narrow.
+checkIncludes(
+  'exactly one job in the real repository is on a hosted carve-out',
+  real.out,
+  '1 on a named per-job hosted carve-out',
+);
+checkIncludes('...and the rest remain self-hosted', real.out, '23 on the approved self-hosted pool');
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

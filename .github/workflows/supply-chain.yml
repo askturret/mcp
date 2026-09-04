@@ -175,7 +175,32 @@ jobs:
     # matrix fails that job, so this one never runs. A 0.x release passes it
     # advisorily and publishes, saying so in the job summary.
     needs: [supply-chain, readiness]
-    runs-on: [self-hosted, Linux, X64, askturret]
+    # THE ONE GITHUB-HOSTED JOB IN THIS REPOSITORY (#595). Every other job runs
+    # on the self-hosted pool, enforced by .github/scripts/check-runners.mjs,
+    # because a hosted job is refused at "Set up job" with an empty log once the
+    # Actions budget is exhausted (#111/#280).
+    #
+    # This job is the exception because npm refuses `--provenance` on a
+    # self-hosted runner OUTRIGHT. Observed on run 33784073765, not inferred:
+    #
+    #   npm error 422 Unprocessable Entity
+    #     Error verifying sigstore provenance bundle: Unsupported GitHub Actions
+    #     runner environment: "self-hosted". Only "github-hosted" runners are
+    #     supported when publishing with provenance.
+    #
+    # So `--provenance` and `runs-on: [self-hosted, ...]` are mutually
+    # exclusive: with both, no release publishes through CI at all — not
+    # partially, and not without an attestation.
+    #
+    # The cost is bounded by the `if:` above — RELEASE EVENTS ONLY, so this is
+    # minutes per release rather than the 17-jobs-per-PR load that drove #280 to
+    # self-hosting in the first place.
+    #
+    # The guard permits this through a NARROW carve-out keyed on
+    # `supply-chain.yml::publish`. If another job ever needs a hosted runner, add
+    # another named entry — do NOT put a hosted label in APPROVED_LABELS, which
+    # would permit all 24 jobs at once.
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       # Required for npm provenance — it is what lets npm attest that this

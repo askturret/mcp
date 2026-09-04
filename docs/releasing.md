@@ -12,13 +12,16 @@ copy would be wrong within one release and would create two places to update:
 - **[CHANGELOG.md](../CHANGELOG.md)** — entry format, and the rule that a
   `Changed` or `Removed` entry names the covered surface it touches.
 
-> **Two releases have been tagged; one has been published.** `v0.1.1` and
-> `v0.1.2` both exist as tags. `v0.1.1` was published as a GitHub Release on
-> 2026-09-03, and that `release: published` event did fire `supply-chain.yml` —
-> CI attached the SBOM. `v0.1.2` is tagged but **not published**, so nothing has
-> shipped for it. The automated `npm publish` at the end of step 4 has still
-> never been confirmed to have published anything: both prior npm publishes were
-> performed by hand. See
+> **The automated `npm publish` has never been confirmed to have published
+> anything.** Every npm publish this project has made was performed by hand. The
+> earlier legs of step 4 have been observed working — a published Release does
+> fire `supply-chain.yml`, and CI does attach the SBOM — but the leg that puts a
+> tarball on the registry has not, so that is the one this page cannot vouch for.
+>
+> **This claim expires the first time a run is observed publishing**, and
+> whoever observes it is the one to remove it. Until then, confirm a publish
+> against `registry.npmjs.org` rather than against the workflow's own success
+> message, and see
 > [Rehearsing before it matters](#rehearsing-before-it-matters).
 
 ---
@@ -119,9 +122,9 @@ knowing about rather than assuming closed.
 
 ## Rehearsing before it matters
 
-The whole path above is unexercised. Two of its steps were **broken** until
-this document was written, and neither failure could have been observed without
-running it:
+The `npm publish` at the end of the path above has never been observed running.
+Two of its steps were **broken** until this document was written, and neither
+failure could have been observed without running it:
 
 1. The `supply-chain` job runs `gh release upload`, which needs
    `contents: write`. The job inherited the workflow-level `contents: read` and
@@ -131,8 +134,9 @@ running it:
    **skips** private packages with a warning and exits `0` — so the publish job
    would have reported success having published nothing.
 
-Both are fixed. The point of recording them here is that a release path nobody
-has run is not a release path yet, it is an untested one.
+Both are fixed. The point of recording them here is that a release path whose
+publish step nobody has watched run is not a release path yet, it is an untested
+one.
 
 **Rehearse with `workflow_dispatch`.** `supply-chain.yml` already accepts a
 manual trigger, which runs licence review, NOTICE checking and SBOM generation

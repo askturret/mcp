@@ -2,13 +2,25 @@
 
 What AskTurret MCP supports, and — just as importantly — what it does not.
 
-**Applies to release `0.1.0`. Matrix version `1.0.0`.**
+**Applies to release `0.1.1`. Matrix version `2.0.0`.**
+
+> **Why `2.0.0` and not `1.1.0`.** Promoting Fastify from *Planned* to *Supported* is a
+> minor change on its own. But this revision also corrects the `@modelcontextprotocol/sdk`
+> row from `^0.5.0` to `^1.24.0`, and this contract's own rule is that *"removing a
+> listed version, or narrowing a supported range, is a breaking change"* — with no
+> exception for a listing that was mistaken. The narrowing is a correction rather than a
+> withdrawal of real support, but an adopter who relied on the published row cannot tell
+> those apart, which is precisely who the rule protects.
 
 This page is a **versioned contract**. See [Stability of this contract](#stability-of-this-contract).
 
 > **Machine-readable version:** [`compatibility.json`](compatibility.json) carries the
 > same data for tooling to consume. **That file is the source of truth** — if this
 > table and the JSON ever disagree, the JSON governs.
+>
+> **This page is not generated from it.** There is no generator and no check that the
+> two agree; they are maintained by hand and must be edited in the same change. Both
+> carried the same stale Fastify note for exactly that reason.
 
 ---
 
@@ -53,18 +65,28 @@ Declared: `engines.node` = **`>=20.0.0`**
 
 | Framework | Versions | Status | Entry point |
 |---|---|---|---|
-| **Express** | 4.18.x – 4.x | ✅ Supported | `@askturret/mcp/express` |
-| **Express** | 5.x | ⚠️ Declared, untested | `@askturret/mcp/express` |
-| **Fastify** | 4.x, 5.x | 🔜 Planned — [#41](https://github.com/askturret/mcp/issues/41) | — |
+| **Express** | 4.18.x – 4.x | ✅ Supported | `@askturret/mcp-adapters-express` |
+| **Express** | 5.x | ⚠️ Declared, untested | `@askturret/mcp-adapters-express` |
+| **Fastify** | 5.x | ✅ Supported | `@askturret/mcp-adapters-fastify` |
+| **Fastify** | 4.x | ⚠️ Declared, untested | `@askturret/mcp-adapters-fastify` |
 
 > **Express 5 is allowed but not verified.** The `peerDependencies` range accepts
 > `^4.18.0 || ^5.0.0`, but CI installs Express 4 and `@types/express` is pinned to
 > v4 types. Treat Express 5 as best-effort until a CI job covers it.
 
-> **Fastify does not work today.** There is an optional `fastify` peer-dependency
-> range in `package.json`, but **no adapter package, no `fromFastify` export, and no
-> implementation.** The presence of the peer range is not a support claim. Track
-> [#41](https://github.com/askturret/mcp/issues/41).
+> **Fastify 5 is verified; Fastify 4 is not.** The adapter ships as
+> `@askturret/mcp-adapters-fastify` and the `test-adapters-fastify` CI job exercises it
+> on every pull request — but that job installs the workspace lockfile, which pins
+> `fastify` at **5.12.1**, so only the 5.x row is backed by a run. The
+> `peerDependencies` range accepts `^4.0.0 || ^5.0.0`; treat Fastify 4 as best-effort
+> until a CI job covers it, exactly as for Express 5 above.
+
+> **There is no `fromFastify` export, and there never has been.** The adapter's
+> exports are `mcpFromOpenApi` and `fastifyMcp`. This is stated explicitly because
+> older material — including an earlier revision of this matrix — listed
+> `fromFastify` as stable API. That was wrong when it was written: the identifier has
+> never existed in this repository, on any branch, at any point. If you are porting
+> from a document that names it, there is nothing to port to.
 
 ## Sources
 
@@ -86,12 +108,19 @@ Declared: `engines.node` = **`>=20.0.0`**
 | Item | Value | Status |
 |---|---|---|
 | MCP protocol version | `2024-11-05` | ✅ Supported |
-| `@modelcontextprotocol/sdk` | `^0.5.0` (tested against `0.5.0`) | ✅ Supported |
+| `@modelcontextprotocol/sdk` | `^1.24.0` (tested against `1.30.0`) | ✅ Supported |
 
 > **The protocol version is reported, not negotiated.** `2024-11-05` is returned in
 > the `initialize` result regardless of what version the client asks for. A client
 > requesting a different protocol version will not be rejected, and will not be
 > served a different one.
+
+> **The SDK floor is a security boundary, not a preference.** `^1.24.0` is the first
+> range the advisory in [#140](https://github.com/askturret/mcp/issues/140)
+> (GHSA-w48q-cv73-mx4w) considers patched, and `packages/transports/src/sdk-peer-range.test.ts`
+> fails if either declaration drops below it. Until this revision the matrix published
+> `^0.5.0` — a range the code had already excluded for that advisory — so the contract
+> was naming the vulnerable line as supported while CI enforced the opposite.
 
 > **SDK isolation.** The MCP SDK is imported by `packages/transports` alone and does
 > not appear in any public API surface, so an SDK upgrade is contained to one

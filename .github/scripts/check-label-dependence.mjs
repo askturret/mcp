@@ -9,19 +9,46 @@
  * population changes and nobody finds out.
  *
  * So the enumeration is a committed artifact — `.github/label-dependent-checks.json`
- * — and this guard compares it against the tree in BOTH directions:
+ * — and this guard compares it against the tree in two directions. THE TWO ARE
+ * NOT THE SAME STRENGTH. This comment used to say only "BOTH directions",
+ * which reads as though they were (#602):
  *
- *   - a label-dependent site that is NOT declared    -> FAIL
- *   - a declared entry whose file is gone, or has    -> FAIL
- *     stopped being label-dependent
+ *   REGISTRY -> TREE   EXHAUSTIVE over the registry. Every entry is checked:
+ *                      its file must exist, must still branch on a label, and
+ *                      must contain the label it names. Nothing declared here
+ *                      escapes.
  *
- * THE SECOND DIRECTION IS THE ONE THAT DECAYS, and it is the whole reason this
- * exists rather than a comment. Before it, `check-path-filters.mjs` asserted in
- * prose that lane-check.yml "will refuse it" and the self-test asserted only
- * that the STRING appeared. Deleting lane-check.yml, or typoing `ci:cheap`
- * inside it, left the suite green while the promise became false. Prose
- * asserting external state with nothing noticing when it diverges is exactly
- * the class #535 was filed about — reproduced, in the fix for #565.
+ *   TREE -> REGISTRY   BEST-EFFORT. It fails on the undeclared sites it finds,
+ *                      and is SILENT on the ones it does not. Finding is
+ *                      bounded by where it looks and by the shapes it
+ *                      recognises.
+ *
+ * THE TREE -> REGISTRY BOUND IS `scanTree` AND THE TWO PREDICATES BELOW — NOT
+ * THIS PARAGRAPH. Read them: they are the only accurate statement of reach, and
+ * they can be widened without anyone editing this text. As they stand today
+ * they are regex matches over the TOP LEVEL of two directories, so a
+ * label-dependent site in a subdirectory, in a file type not scanned, or
+ * written in a shape the patterns do not recognise is not found. #593 is the
+ * issue that widens them, and it enumerates the known blind spots.
+ *
+ * WHAT THAT MEANS FOR YOU, PRACTICALLY: adding an entry here IS checked.
+ * FAILING to add one may not be.
+ *
+ * REGISTRY -> TREE IS THE ONE THAT DECAYS, and it is the whole reason this
+ * guard exists rather than a comment. Before this guard, `check-path-filters.mjs`
+ * asserted in prose that lane-check.yml "will refuse it" and the self-test
+ * asserted only that the STRING appeared. Deleting lane-check.yml, or typoing
+ * `ci:cheap` inside it, left the suite green while the promise became false.
+ * Prose asserting external state with nothing noticing when it diverges is
+ * exactly the class #535 was filed about — reproduced, in the fix for #565.
+ *
+ * NAMED, NEVER NUMBERED — and that is a correction to this very comment (#602).
+ * An earlier revision of it said "THE FIRST DIRECTION", which was accurate only
+ * for the order the two happened to be listed in. Reordering the list above
+ * silently inverted it against `// REGISTRY -> TREE` below and against the
+ * self-test, and nothing could notice: an ordinal expires when the DOCUMENT
+ * changes rather than when the world does, which is a tally in a costume. Name
+ * the direction and it cannot invert.
  *
  * WHY A LABEL-DEPENDENCE REGISTRY AT ALL
  *
@@ -191,7 +218,7 @@ export function main(argv) {
     if (declared.has(entry.path)) violations.push(`${entry.path} is declared twice`);
     declared.add(entry.path);
 
-    // DIRECTION 2 — the one that decays.
+    // REGISTRY -> TREE — the one that decays.
     const abs = join(repoRoot, entry.path);
     if (!existsSync(abs)) {
       violations.push(
@@ -216,7 +243,7 @@ export function main(argv) {
     }
   }
 
-  // DIRECTION 1 — a new label-dependent check appearing undeclared.
+  // TREE -> REGISTRY — a new label-dependent check appearing undeclared.
   for (const path of found) {
     if (!declared.has(path)) {
       violations.push(

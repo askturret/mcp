@@ -3,13 +3,23 @@
 /**
  * Self-test for the label-dependence registry guard (#565).
  *
- * BOTH DIRECTIONS ARE WITNESSED, and the second is the one that decays:
+ * BOTH DIRECTIONS ARE WITNESSED, and REGISTRY -> TREE is the one that decays:
  *
- *   direction 1  a label-dependent site appears and is not declared
- *   direction 2  a declared entry's file is DELETED, stops branching on a
- *                label, or names a label the file does not contain
+ *   tree -> registry  a label-dependent site appears and is not declared
+ *   registry -> tree  a declared entry's file is DELETED, stops branching on a
+ *                     label, or names a label the file does not contain
  *
- * Direction 2 is why this guard exists at all. `check-path-filters.mjs` states
+ * Named rather than numbered (#602): an ordinal is accurate only for the order
+ * a list happens to be in, so reordering one inverts every reference to it and
+ * nothing notices.
+ *
+ * NOTE WHAT THIS PARAGRAPH DOES AND DOES NOT CLAIM. "Both directions are
+ * witnessed" is a claim about THESE TESTS — each direction has cases below —
+ * and not about the guard's reach. The guard's reach is asymmetric and the
+ * guard's own header says so: registry -> tree is exhaustive, tree -> registry
+ * is best-effort. A test existing for a direction is not coverage of it.
+ *
+ * REGISTRY -> TREE is why this guard exists at all. `check-path-filters.mjs` states
  * in prose that lane-check.yml "will refuse it", and before this the suite
  * asserted only that the STRING appeared — so deleting lane-check.yml, or
  * typoing `ci:cheap` inside it, left everything green while the promise became
@@ -118,23 +128,23 @@ const AGREEING = () => ({
 }
 
 // --------------------------------------------------------------------------
-// DIRECTION 1 — an undeclared label-dependent site.
+// TREE -> REGISTRY — an undeclared label-dependent site.
 // --------------------------------------------------------------------------
 {
   const spec = AGREEING();
   spec.workflows['sneaky.yml'] = DEPENDENT_WORKFLOW;
   const r = runGuard(fixture(spec));
-  check('direction 1: an undeclared label-dependent workflow -> exit 1', r.code, EXIT_DIVERGENCE);
+  check('tree -> registry: an undeclared label-dependent workflow -> exit 1', r.code, EXIT_DIVERGENCE);
   check('...and names the file', r.out.includes('sneaky.yml'), true);
 
   const spec2 = AGREEING();
   spec2.scripts['sneaky.mjs'] = DEPENDENT_SCRIPT;
   const r2 = runGuard(fixture(spec2));
-  check('direction 1: an undeclared label-dependent script -> exit 1', r2.code, EXIT_DIVERGENCE);
+  check('tree -> registry: an undeclared label-dependent script -> exit 1', r2.code, EXIT_DIVERGENCE);
 }
 
 // --------------------------------------------------------------------------
-// DIRECTION 2 — THE MUTATIONS QA NAMED. Before this guard, both of these left
+// REGISTRY -> TREE — THE MUTATIONS QA NAMED. Before this guard, both of these left
 // the suite green while `check-path-filters.mjs` went on promising in prose
 // that lane-check.yml would refuse a mislabelled PR.
 // --------------------------------------------------------------------------
@@ -143,7 +153,7 @@ const AGREEING = () => ({
   const spec = AGREEING();
   delete spec.workflows['lane-check.yml'];
   const r = runGuard(fixture(spec));
-  check('direction 2: DELETING the declared workflow -> exit 1', r.code, EXIT_DIVERGENCE);
+  check('registry -> tree: DELETING the declared workflow -> exit 1', r.code, EXIT_DIVERGENCE);
   check('...and says it does not exist', r.out.includes('DOES NOT EXIST'), true);
 
   // TYPO the label: ci:cheap -> ci:chepa. The workflow still exists and is
@@ -151,14 +161,14 @@ const AGREEING = () => ({
   const typo = AGREEING();
   typo.workflows['lane-check.yml'] = DEPENDENT_WORKFLOW.replace("'ci:cheap'", "'ci:chepa'");
   const rt = runGuard(fixture(typo));
-  check('direction 2: TYPOING the label in the workflow -> exit 1', rt.code, EXIT_DIVERGENCE);
+  check('registry -> tree: TYPOING the label in the workflow -> exit 1', rt.code, EXIT_DIVERGENCE);
   check('...and says the label does not appear in the file', rt.out.includes('does not appear in the file'), true);
 
   // The file survives but stops branching on a label at all.
   const inert = AGREEING();
   inert.workflows['lane-check.yml'] = PLAIN_WORKFLOW;
   const ri = runGuard(fixture(inert));
-  check('direction 2: a declared file that no longer branches on a label -> exit 1', ri.code, EXIT_DIVERGENCE);
+  check('registry -> tree: a declared file that no longer branches on a label -> exit 1', ri.code, EXIT_DIVERGENCE);
   check('...and says so rather than blaming the path', ri.out.includes('no longer branches'), true);
 }
 

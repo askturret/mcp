@@ -647,9 +647,9 @@ checkIncludes('the real run reports the jobs it actually checked', real.out, 'ch
 // This literal STAYS. Here the number IS the property: the carve-out set is
 // deliberately narrow, and the correct response to a red is to argue the
 // addition, not to bump the count. Contrast the self-hosted population below.
-// ADR-024 draws exactly this line — "is the number the property, or a
-// by-product of it?" — and rules that pinned counts are not automatically
-// defects.
+// The invariant-output record on #652 draws exactly this line — "is the number
+// the property, or a by-product of it?" — and rules that pinned counts are not
+// automatically defects.
 checkIncludes(
   'exactly one job in the real repository is on a hosted carve-out',
   real.out,
@@ -662,7 +662,7 @@ checkIncludes(
 // BY-PRODUCT: the self-hosted population grows whenever any job is added
 // anywhere in the repository, so the literal reddened on changes that had
 // nothing to do with runners, and the only available response was to bump it —
-// which guarantees it reddens again and makes the bump reflexive. ADR-024 names
+// which guarantees it reddens again and makes the bump reflexive. #652 names
 // that the tally trap and cites this exact line as its example. It went red for
 // the third job this branch adds to reliability-nightly.yml; bumping 23 -> 24
 // would have reproduced the defect with a later expiry date.
@@ -691,7 +691,7 @@ checkTrue(
 
 // A partition is satisfied trivially by 0 + 0 === 0, which is exactly what a
 // guard that discovered nothing would print. Absence of a result must not read
-// as a pass (ADR-024), so the population has to be non-empty for the assertion
+// as a pass (#652), so the population has to be non-empty for the assertion
 // above to mean anything.
 checkTrue(
   '...over a non-empty population, so a guard that scanned nothing cannot pass here',

@@ -39,8 +39,9 @@ services:
 
   gateway:
     build:
-      # The workspace root: the gateway's siblings are unpublished, so the image
-      # compiles them from source. See packages/gateway/Dockerfile.
+      # The workspace root: the image compiles the gateway and its siblings from
+      # source, so it reflects this tree rather than whatever the registry holds.
+      # See packages/gateway/Dockerfile.
       context: ../..
       dockerfile: packages/gateway/Dockerfile
     depends_on:

@@ -459,12 +459,19 @@ jobs:
       # an issue comment is not one: nothing reads it, so it goes stale silently.
       #
       # The registry is committed and this guard compares it against the tree in
-      # BOTH directions. The second is the one that decays: check-path-filters
-      # promises in prose that lane-check.yml "will refuse it", and DELETING that
-      # workflow — or typoing `ci:cheap` inside it — used to leave every suite
-      # green while the promise became false. Prose asserting external state with
-      # nothing noticing when it diverges is the #535 class, and #565's own fix
+      # two directions, which are NOT the same strength. REGISTRY -> TREE is
+      # exhaustive, and it is the one that decays: check-path-filters promises in
+      # prose that lane-check.yml "will refuse it", and DELETING that workflow —
+      # or typoing `ci:cheap` inside it — used to leave every suite green while
+      # the promise became false. Prose asserting external state with nothing
+      # noticing when it diverges is the #535 class, and #565's own fix
       # reproduced it.
+      #
+      # TREE -> REGISTRY is BEST-EFFORT: it finds undeclared sites only where it
+      # looks and only in the shapes it recognises. The guard's own header states
+      # that reach and #593 measures it — read those rather than this comment.
+      # Directions are NAMED here, not numbered: an ordinal silently inverts when
+      # the list it indexes is reordered, which is #602.
       #
       # Self-tested first, like every guard here, and here for a specific reason:
       # its detection predicates DECIDE the population, so a false negative
@@ -889,9 +896,16 @@ jobs:
       #
       # COMMIT-TIME ONLY (#233). This comment used to end "A tag matching v1.0.*
       # is refused if any row is red" — which was never true here: this workflow
-      # triggers on pull_request and push to main, and no workflow in the repo
-      # has a tag trigger at all. docs/readiness.md carried the same false claim
-      # and is corrected in the same change. The tag-time gate is #269.
+      # triggers on pull_request and push to main, so it cannot see a tag at all.
+      # docs/readiness.md carried the same false claim and was corrected in the
+      # same change. The tag-time gate is #269.
+      #
+      # The correction itself then went stale (#633). It used to add "and no
+      # workflow in the repo has a tag trigger at all", which stopped being true
+      # when tag-readiness-advisory.yml landed with `push: tags: ['v*']`. That
+      # workflow is ADVISORY — it reports the matrix on a tag and refuses
+      # nothing — so the point above is unchanged, but the supporting claim was
+      # false and is removed rather than reworded around.
       #
       # Worth keeping the correction rather than just deleting the sentence: a
       # grep for "tag" in this directory used to find only that comment, which

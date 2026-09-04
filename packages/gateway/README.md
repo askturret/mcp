@@ -11,14 +11,12 @@ npx @askturret/mcp-gateway \
   --port 7000
 ```
 
-> **Not published yet.** This repository has never cut a release, and
-> publishing happens only from a published GitHub Release — so the `npx` line
-> above does not resolve today. It is not a privacy question: `mcp-gateway` is
-> one of the nine packages [`docs/releasing.md`](https://github.com/askturret/mcp/blob/main/docs/releasing.md) lists
-> as public, so it is publishable already. What remains is a release-policy
-> decision (under what compatibility promise) plus credentials, not something a
-> feature PR settles — the same split #54 made when it filed #173. See
-> **Publishing** below.
+> **`@askturret/mcp-gateway` is on npm**, so the `npx` line above resolves
+> without a checkout. No version is quoted here on purpose — `npm view
+> @askturret/mcp-gateway version` is the authoritative answer and cannot go
+> stale, whereas a number written on this page can.
+> [`docs/releasing.md`](https://github.com/askturret/mcp/blob/main/docs/releasing.md)
+> lists which workspaces are public.
 
 ## What it is for
 
@@ -127,8 +125,8 @@ requests is wedged.
 ## Docker
 
 ```bash
-# From the workspace root — the gateway's siblings are unpublished, so the
-# image compiles them from source.
+# From the workspace root — the image compiles the gateway and its siblings
+# from source rather than installing them, so it builds the working tree.
 docker build -f packages/gateway/Dockerfile -t askturret/mcp-gateway .
 ```
 
@@ -140,15 +138,15 @@ is in [`examples/gateway-compose`](https://github.com/askturret/mcp/tree/main/ex
 Three acceptance items on #57 are **release steps, not engineering steps**, and
 are tracked separately:
 
-| Step | Blocked on |
+| Step | State |
 |---|---|
-| npm publish | no GitHub Release has been published (#173's release-policy decision) + `NPM_TOKEN` |
-| Docker image publish | registry choice + credentials |
-| MCP Registry entry | the above, plus the §18.8 metadata process |
+| npm publish | **done** — the package is on the registry; `npm view @askturret/mcp-gateway version` is the authoritative answer |
+| Docker image publish | outstanding — registry choice + credentials |
+| MCP Registry entry | outstanding — the above, plus the §18.8 metadata process |
 
-The gateway itself is complete and runnable from source today; what is missing
-is the decision about which packages become public and the credentials to push
-them. See the follow-up issue linked from #57.
+The gateway is installable from npm and runnable from source. What remains is
+the Docker and MCP-Registry distribution, not npm. See the follow-up issue
+linked from #57.
 
 ---
 *Operum Engineer · [operum.ai](https://operum.ai)*

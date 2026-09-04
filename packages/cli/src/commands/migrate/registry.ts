@@ -11,66 +11,47 @@
  * as the reference". **There is no published 0.x → 1.0 migration below, because
  * there is nothing to migrate.**
  *
- * Checked rather than assumed: this project is at `0.1.2`, there is no 1.0
- * release, and `git log` contains no adopter-facing rename or removal — the
- * only rename commit in the history renames an unused parameter inside
- * `via-handler`.
+ * Checked rather than assumed: there is no 1.0 release, and `git log` contains
+ * no adopter-facing rename or removal — the only rename commit in the history
+ * renames an unused parameter inside `via-handler`. No version is quoted here;
+ * the re-derivation commands below cannot go stale.
  *
- * ## Nothing has been published — but NOT for the reason this used to give
+ * ## The packages ARE published now, and the old argument here is retired
  *
- * This paragraph used to argue from the privacy flag: that every workspace
- * carried it, and therefore nobody could have installed a version to migrate
- * from. **The conclusion is still true. The premise is false and had decayed
- * silently** (#433): most workspaces are publishable today.
+ * This section used to argue that nothing had been published — first from the
+ * privacy flag, then, after that premise decayed (#433), from "no release has
+ * ever been cut". **Both premises are now false.** The public workspaces are on
+ * the registry and releases have been cut.
  *
- * The old sentence is paraphrased rather than quoted, deliberately. The test in
- * `migrate.test.ts` matches on its literal text, so reproducing it here to
- * explain it would trip the very check that keeps it from returning — the same
- * shape as describing a closing keyword by spelling it beside its number.
+ * **The conclusion above is untouched by that.** It rests on there being no 1.0
+ * and no adopter-facing break, not on the absence of a registry.
  *
- * That distinction is the whole point, because `private: true` was the
- * MECHANISM that made the conclusion safe, and it is gone. What holds now is
- * weaker and easier to lose:
+ * The retired sentences are paraphrased rather than quoted, deliberately. The
+ * test in `migrate.test.ts` matches this file's literal text, so reproducing a
+ * withdrawn claim here in order to explain it would re-arm the check that keeps
+ * it from returning — the same shape as describing a closing keyword by
+ * spelling it beside its number.
  *
- *   the only publish path is `npm publish --workspaces --provenance
- *   --access public` in `supply-chain.yml`, gated on
- *   `if: github.event_name == 'release'` — and this repository has never cut
- *   a release.
+ * **What changed for a migration author, stated plainly: the safety this
+ * section used to describe is gone.** It was "nobody can have installed a
+ * version to migrate from". Adopters can install one now. A compatibility break
+ * is no longer theoretical, and this file is where a migration for one lands.
  *
- * So the protection is procedural, not structural: it is "no release has been
- * published", and it is no longer a property of the packages.
+ * ## A pushed tag still ships nothing — measured, and contingent
  *
- * **ONE PUBLISHED GITHUB RELEASE ENDS IT — not a tag push.** An earlier version
- * of this paragraph said a `git tag` push would, and that is wrong:
  * `supply-chain.yml` triggers on `pull_request`, `push:[main]`,
- * `release:[published]` and `workflow_dispatch`. There is no tag trigger, so a
- * pushed tag is inert here. Overstating the trigger of the thing that ends the
- * protection is the same category of error this docstring is repairing, which
- * is why it is corrected rather than quietly adjusted.
+ * `release:[published]` and `workflow_dispatch`, and the only workflow in the
+ * repository carrying a `tags:` trigger is `tag-readiness-advisory.yml`, which
+ * publishes nothing. So a pushed tag is inert here and publication is ended by
+ * a published GitHub Release.
  *
- * ## And it ends for ALL NINE AT ONCE
- *
- * The step is `npm publish --workspaces`, so the first release ever cut
- * publishes every publishable package simultaneously, with provenance, as a
- * public debut. There is no incremental first package and no chance to watch
- * one land before the rest follow. From that moment the compatibility policy
- * binds for all nine together — which is the reason any of this matters, and
- * why "nothing is published" is a statement with an expiry rather than a
- * standing fact.
- *
- * ## WHICH CLAIM IS BEING MADE, precisely
- *
- * **Supported: nothing has been published BY THIS REPOSITORY.** That rests on
- * the publish path above plus zero releases, and it is what the evidence
- * establishes.
- *
- * The stronger reading — *nothing exists under these names anywhere* — is
- * probable but not proven by the same evidence. Every publishable name returns
- * 404 unauthenticated, and a negative control confirms the probe discriminates,
- * but a package published MANUALLY with `--access restricted`, outside this
- * repository's path, would also 404. That residual is stated rather than
- * blurred, because collapsing the two is how the sentence above went wrong in
- * the first place.
+ * That is a fact about the current workflows, not a property of tags, and it
+ * stops being true the moment a `tags:` trigger reaches a publishing path.
+ * `docs/releasing.md` states the same thing together with what it depends on
+ * and what would falsify it — read it there rather than trusting this comment.
+ * An earlier revision of this paragraph asserted the opposite, that a tag push
+ * would publish, so this claim has been wrong in both directions and is worth
+ * re-deriving rather than believing.
  *
  * ## Re-derive it; do not trust this paragraph
  *

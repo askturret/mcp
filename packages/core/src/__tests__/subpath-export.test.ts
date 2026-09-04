@@ -131,18 +131,34 @@ function markdownFiles(dir: string, found: string[] = []): string[] {
 const docFiles = markdownFiles(REPO_ROOT);
 
 /**
- * Every `@askturret/mcp[/subpath]` our own documentation tells a user to import.
+ * Every core-owned specifier our own documentation tells a user to import.
  *
  * Scanned across all markdown rather than README.md alone. #149 was a README
  * line, but the bug class is "we documented an import and nothing checked it",
  * and that is not a property of one file.
+ *
+ * #598 changed WHICH specifiers appear. The docs used to say `@askturret/mcp`
+ * and `@askturret/mcp/policies`; that umbrella package returns 404 on npm and
+ * resolved here only through package self-reference, so the docs now name the
+ * real published packages. Both forms are still matched deliberately: if the
+ * umbrella is ever reintroduced into the docs, it lands in this set and the
+ * resolve case below has to account for it rather than the regression passing
+ * unseen.
+ *
+ * Scoped to CORE's own specifiers on purpose. This suite runs in a job that
+ * builds core alone, so listing a sibling package here would fail on an unbuilt
+ * neighbour rather than on anything this test is about. The whole-docs property
+ * across every package is owned by `.github/scripts/check-readme-imports.mjs`,
+ * which runs after the full build and resolves against packed tarballs.
  */
 const documentedSpecifiers = [
   ...new Set(
     docFiles.flatMap((file) =>
-      [...readFileSync(file, 'utf-8').matchAll(/from\s+['"](@askturret\/mcp(?:\/[\w-]+)?)['"]/g)].map(
-        (m) => m[1] as string,
-      ),
+      [
+        ...readFileSync(file, 'utf-8').matchAll(
+          /from\s+['"](@askturret\/mcp-core|@askturret\/mcp(?:\/[\w-]+)?)['"]/g,
+        ),
+      ].map((m) => m[1] as string),
     ),
   ),
 ].sort();
@@ -155,8 +171,11 @@ describe('documented subpath exports resolve', () => {
     // this repository's other guards are written to avoid.
     expect(docFiles.length).toBeGreaterThan(1);
     expect(docFiles.some((f) => f.endsWith('README.md'))).toBe(true);
-    expect(documentedSpecifiers).toContain('@askturret/mcp/policies');
-    expect(documentedSpecifiers.length).toBeGreaterThan(1);
+    // Was `@askturret/mcp/policies` until #598. The docs now name the package
+    // that is actually published; core is the one this suite can resolve in a
+    // core-only build, and it is what the policy examples import.
+    expect(documentedSpecifiers).toContain('@askturret/mcp-core');
+    expect(documentedSpecifiers.length).toBeGreaterThanOrEqual(1);
     expect(exportSubpaths).toContain('.');
   });
 

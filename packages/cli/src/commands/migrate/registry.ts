@@ -11,7 +11,7 @@
  * as the reference". **There is no published 0.x → 1.0 migration below, because
  * there is nothing to migrate.**
  *
- * Checked rather than assumed: this project is at `0.1.0`, there is no 1.0
+ * Checked rather than assumed: this project is at `0.1.2`, there is no 1.0
  * release, and `git log` contains no adopter-facing rename or removal — the
  * only rename commit in the history renames an unused parameter inside
  * `via-handler`.

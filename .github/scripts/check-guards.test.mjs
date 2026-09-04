@@ -2341,18 +2341,84 @@ function probeSpawnSafety(scriptPath, cwd) {
 // correct answer while a seventh copy of the wrong one could still appear in
 // some other form. What must hold is the PROPERTY: invoked through a symlink, a
 // guard still runs. Any implementation with that property passes.
+//
+// ## Two probes, because one domain was not enough (#646)
+//
+// The directory-symlink probe below was reported as showing "0 unsafe". That
+// claim was wrong, and the reason is worth stating precisely, because the same
+// mechanism produced the wrong figures AND the blind spot:
+//
+//   THE CLASSIFIER COUNTED BY NAME. `/isProcessEntryPoint/` matches a file that
+//   IMPORTS the shared helper and a file that DEFINES its own copy identically,
+//   so the two were never distinguished. The true breakdown at the time was
+//   11 importing + 5 local-but-safe + 1 local-and-UNSAFE, which sums to the
+//   single "17" that was reported as though it were all imports.
+//
+//   AND THE PROBE INHERITED IT. Symlinking the containing DIRECTORY preserves
+//   each file's basename, so a guard that decides "am I the entry point?" by
+//   SUFFIX-MATCHING ITS OWN FILENAME passes — the name it matches is still
+//   there. `check-workspace-artifacts.mjs` did exactly that, and went silent
+//   only under a symlink that RENAMES. Measured, not inferred: exit 0 with zero
+//   bytes of output through a renaming symlink, exit 2 with a real report when
+//   invoked directly.
+//
+// So the probe below is not a constant wearing a verdict — it discriminates
+// over most of its domain and was blind on one sub-region. That is INCOMPLETE
+// COVERAGE, and the remedy is a DOMAIN fix (widen the inputs), not a structural
+// one. See docs/adr/ADR-024-output-must-vary-with-the-fact.md, which considered
+// this case and deliberately excluded it for that reason.
+//
+// The renaming probe is therefore ADDED BESIDE the directory one rather than
+// replacing it. They fail on different populations, and a guard can be blind to
+// one while running correctly under the other.
 // ---------------------------------------------------------------------------
 {
   const here = dirname(fileURLToPath(import.meta.url));
 
-  // A guard "has an entry point" if it decides whether to run itself at all.
-  const hasEntryPoint = (src) =>
-    /isProcessEntryPoint/.test(src) || /import\.meta\.url\s*===/.test(src);
+  // The classifier distinguishes IMPORTING the shared helper from DEFINING a
+  // local copy. Counting by name alone is what produced the wrong figures, so
+  // the two are separated here and the breakdown is DERIVED on every run rather
+  // than written down — a figure in a comment cannot go red when it stops being
+  // true.
+  const IMPORTS_SHARED = /from\s+'\.\/lib\/entry-point\.mjs'/;
+  const DEFINES_LOCAL = /function\s+isProcessEntryPoint\s*\(/;
+  const INLINE_COMPARE = /import\.meta\.url\s*===/;
 
-  const guards = readdirSync(here)
-    .filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs'))
-    .filter((f) => hasEntryPoint(readFileSync(join(here, f), 'utf-8')))
+  // A guard "has an entry point" if it decides whether to run itself at all.
+  const hasEntryPoint = (src) => IMPORTS_SHARED.test(src) || DEFINES_LOCAL.test(src) || INLINE_COMPARE.test(src);
+
+  const classify = (src) =>
+    IMPORTS_SHARED.test(src) ? 'import' : DEFINES_LOCAL.test(src) ? 'local-definition' : 'inline-comparison';
+
+  const sources = new Map(
+    readdirSync(here)
+      .filter((f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs'))
+      .map((f) => [f, readFileSync(join(here, f), 'utf-8')]),
+  );
+
+  const guards = [...sources.entries()]
+    .filter(([, src]) => hasEntryPoint(src))
+    .map(([f]) => f)
     .sort();
+
+  const kinds = guards.map((g) => classify(sources.get(g)));
+  const countOf = (k) => kinds.filter((x) => x === k).length;
+  const localDefiners = guards.filter((g) => classify(sources.get(g)) === 'local-definition');
+
+  // Printed, not asserted: the population grows and the split is a by-product,
+  // so pinning either number is the tally trap. What IS asserted is the
+  // behaviour, below — and the names are listed so a local copy is visible to
+  // review rather than absorbed into a total.
+  console.log(
+    `     entry-point guards: ${guards.length} — ${countOf('import')} import the shared helper, ` +
+      `${countOf('local-definition')} define a local copy, ${countOf('inline-comparison')} compare inline` +
+      (localDefiners.length > 0 ? `\n     local definitions: ${localDefiners.join(', ')}` : ''),
+  );
+
+  // The categorisation must ACCOUNT for every guard it found. A guard that is
+  // none of the three kinds would silently drop out of the breakdown while
+  // still being probed, which is how a miscount hides.
+  check('symlink: every guard found is classified', countOf('import') + countOf('local-definition') + countOf('inline-comparison'), guards.length);
 
   // Reaches the SAME files by a path containing a symlink component, which is
   // what an agent worktree does and what CI does not.
@@ -2395,16 +2461,54 @@ function probeSpawnSafety(scriptPath, cwd) {
         'if (entry !== undefined && import.meta.url === pathToFileURL(realpathSync(entry)).href) {\n' +
         "  console.log('safe guard ran');\n  process.exit(3);\n}\n",
     );
+    // The third fixture is the one #646 is about: it decides by SUFFIX-MATCHING
+    // ITS OWN FILENAME. Under the directory symlink its basename is unchanged,
+    // so it runs and the probe calls it safe. It is caught only by renaming.
+    writeFileSync(
+      join(real, 'suffix.mjs'),
+      "import { resolve } from 'node:path';\n" +
+        'const entry = process.argv[1];\n' +
+        "if (entry !== undefined && resolve(entry).endsWith('suffix.mjs')) {\n" +
+        "  console.log('suffix guard ran');\n  process.exit(3);\n}\n",
+    );
     const fixLink = join(fixDir, 'link');
     symlinkSync(real, fixLink);
 
     const run = (n) => spawnSync(process.execPath, [join(fixLink, n)], { encoding: 'utf-8' });
     const unsafe = run('unsafe.mjs');
     const safe = run('safe.mjs');
+    const suffix = run('suffix.mjs');
 
     check('symlink: NEGATIVE CONTROL — an unsafe compare DOES go silent behind a symlink', wentSilent(unsafe), true);
     check('symlink: ...and a realpathSync compare does NOT', wentSilent(safe), false);
     check('symlink: ...the safe fixture really ran its body', safe.status, 3);
+
+    // THE BLIND SPOT, PINNED AS A FACT ABOUT THIS PROBE rather than left as
+    // prose. If this ever starts going silent under the directory symlink, the
+    // renaming probe below has stopped being the thing that catches suffix
+    // matchers, and the reason for its existence needs re-reading.
+    check('symlink: ...but a SUFFIX matcher survives it — this probe cannot see that defect', wentSilent(suffix), false);
+
+    // Renaming the SAME fixture is what exposes it. This is the control that
+    // makes every renaming assertion below non-vacuous: without it, a renaming
+    // probe that silently exercised nothing would report the same clean pass.
+    const renamed = (n, alias) => {
+      const link = join(fixDir, alias);
+      symlinkSync(join(real, n), link);
+      return spawnSync(process.execPath, [link], { encoding: 'utf-8' });
+    };
+    // The alias must not merely PREFIX the original name: `endsWith` is a
+    // string-suffix test, not a basename comparison, so an alias of
+    // `aliased-suffix.mjs` still ends with `suffix.mjs` and the matcher still
+    // matches. The first draft of this control did exactly that and reported a
+    // clean pass for the wrong reason — caught only because the control is
+    // asserted rather than assumed.
+    const suffixRenamed = renamed('suffix.mjs', 'wholly-different.mjs');
+    const safeRenamed = renamed('safe.mjs', 'entirely-other.mjs');
+
+    check('rename: NEGATIVE CONTROL — a SUFFIX matcher DOES go silent when renamed', wentSilent(suffixRenamed), true);
+    check('rename: ...and a realpathSync compare does NOT', wentSilent(safeRenamed), false);
+    check('rename: ...the safe fixture really ran its body under a new name', safeRenamed.status, 3);
   }
 
   // Every real guard, against the probe the control just proved discriminating.
@@ -2413,6 +2517,26 @@ function probeSpawnSafety(scriptPath, cwd) {
   check(
     `symlink: no guard goes silent when reached through a symlink (checked ${guards.length})`,
     silent.join(', '),
+    '',
+  );
+
+  // The SECOND domain: reached through a symlink that also RENAMES the file.
+  // Every guard is invoked under a basename it cannot recognise, so a decision
+  // made on the filename fails here and nowhere else. The alias keeps the .mjs
+  // extension — Node needs it to load the module at all, and the point is to
+  // change the NAME, not the module type.
+  const renameRoot = mkdtempSync(join(tmpdir(), 'guard-rename-'));
+  tmpDirs.push(renameRoot);
+  const viaRenamingSymlink = (name, i) => {
+    const alias = join(renameRoot, `aliased-${i}.mjs`);
+    symlinkSync(join(here, name), alias);
+    return spawnSync(process.execPath, [alias, join(renameRoot, 'no-such-repo')], { encoding: 'utf-8' });
+  };
+
+  const silentRenamed = guards.filter((g, i) => wentSilent(viaRenamingSymlink(g, i)));
+  check(
+    `rename: no guard goes silent when reached through a RENAMING symlink (checked ${guards.length})`,
+    silentRenamed.join(', '),
     '',
   );
 }

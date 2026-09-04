@@ -95,6 +95,8 @@ import { existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 
 export const PASS = 'pass';
@@ -261,13 +263,7 @@ export function defaultChecks(rootDir) {
   ];
 }
 
-function isProcessEntryPoint() {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  return resolve(entry).endsWith('check-workspace-artifacts.mjs');
-}
-
-if (isProcessEntryPoint()) {
+if (isProcessEntryPoint(import.meta.url)) {
   const rootDir = resolve(process.argv[2] ?? join(here, '..', '..'));
   const { results, code } = runChecks(defaultChecks(rootDir));
 

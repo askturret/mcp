@@ -6,11 +6,12 @@
 #
 #   docker build -f packages/gateway/Dockerfile -t askturret/mcp-gateway .
 #
-# The gateway depends on four sibling workspace packages, and none of them are
-# published yet (see the release-policy issue referenced in the README). So the
-# image has to compile them from source rather than install them — a Dockerfile
-# that ran `npm i @askturret/mcp-gateway` would not build today, and would go on
-# not building silently once the registry did have a stale version.
+# The gateway depends on sibling workspace packages. The image compiles them
+# from source rather than installing them, and that is deliberate now that they
+# ARE on the registry: a Dockerfile running `npm i @askturret/mcp-gateway` would
+# build whatever version the registry happens to hold, so the image would stop
+# reflecting the working tree it was built from — and would keep passing while
+# testing something else.
 
 # --- build -------------------------------------------------------------------
 FROM node:20-alpine AS build

@@ -2013,7 +2013,18 @@ describe('the registry docstring rests on a checkable premise (#433)', () => {
     // Deleting the false sentence without replacing it would leave the next
     // reader to re-derive the whole question from nothing. The docstring has to
     // carry the corrected fact, not merely stop carrying the wrong one.
-    expect(normalise(registrySource)).toMatch(/never cut a release/i);
+    //
+    // THIS ASSERTION USED TO PIN `/never cut a release/i` (#633). That phrase
+    // was the corrected fact when it was written and became false when the
+    // first release shipped — at which point this test was ENFORCING the
+    // falsehood, holding it in the docstring under a name claiming the
+    // opposite. A test that pins a STATE inherits that state's expiry.
+    //
+    // So it now pins the RE-DERIVATION instead. "Go and run this" cannot go
+    // stale the way "this is the situation" can, and it is the property the
+    // docstring is actually for.
+    expect(normalise(registrySource)).toMatch(/npm view @askturret/i);
+    expect(normalise(registrySource)).toMatch(/gh release list/i);
     expect(normalise(registrySource)).toMatch(/licenses nothing/i);
   });
 });

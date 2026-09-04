@@ -28,8 +28,10 @@ jobs:
       # `gh release upload` below needs contents: write. The workflow-level
       # default is contents: read, which this job inherited — so the upload
       # would have failed with a 403 on the first real release (#269). It was
-      # never observed because no release has ever been cut. `publish` already
-      # declares its own block for id-token: write; this job was simply missed.
+      # fixed before any release exercised it, so the 403 was reasoned about
+      # rather than observed — the SBOM upload has since run green on a real
+      # release. `publish` already declares its own block for id-token: write;
+      # this job was simply missed.
       contents: write
     steps:
       - uses: actions/checkout@v4

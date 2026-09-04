@@ -85,8 +85,9 @@ acknowledgement, and a `verifyEvidence` module. See the
 - The mock upstream serves `POST /pets` too, which the spec does not expose.
   That is realistic rather than sloppy: an upstream generally has more routes
   than the surface you choose to expose, and the spec is what decides.
-- The image is built from the **workspace root**, because the gateway's sibling
-  packages are not published yet.
+- The image is built from the **workspace root** so it compiles the gateway and
+  its siblings from source. They are on npm, but installing them would build
+  whatever version the registry holds rather than the tree you are running.
 
 ---
 *Operum Engineer · [operum.ai](https://operum.ai)*

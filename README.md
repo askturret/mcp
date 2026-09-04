@@ -133,8 +133,8 @@ npm install @askturret/mcp-adapters-fastify
 npm install --save-dev @askturret/mcp-cli
 ```
 
-There is no `@askturret/mcp` umbrella package on npm; the nine published
-packages are all `@askturret/mcp-*`. Import `@askturret/mcp-core` directly when
+There is no `@askturret/mcp` umbrella package on npm; the published packages
+are all `@askturret/mcp-*`. Import `@askturret/mcp-core` directly when
 you compose a server yourself — it is already present as a dependency of either
 adapter, and it is the surface the [compatibility policy](docs/compatibility-policy.md) covers.
 

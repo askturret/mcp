@@ -2,7 +2,7 @@
 
 What AskTurret MCP supports, and — just as importantly — what it does not.
 
-**Applies to release `0.1.1`. Matrix version `2.1.0`.**
+**Applies to release `0.1.2`. Matrix version `2.1.0`.**
 
 > **`2.1.0` adds enforcement** — see [What this matrix is not](#what-this-matrix-is-not).
 > A minor bump: the `source` field and the checks around it are additive, and no

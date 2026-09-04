@@ -33,11 +33,40 @@
  * would make the guard tautological — it would approve whatever it found,
  * including the `ubuntu-latest` it exists to reject.
  *
- * IF YOU ARE HERE BECAUSE YOU ADDED A SECOND POOL: add its labels to
- * APPROVED_LABELS and say why in the commit. That is the intended path, and it
- * is two lines. Deleting the guard, or widening it to "anything self-hosted-ish",
- * is not — it restores a silent failure mode that has already cost this project
- * a full investigation cycle once.
+ * IF YOU ARE HERE BECAUSE YOU ADDED A SECOND SELF-HOSTED POOL: add its labels
+ * to APPROVED_LABELS and say why in the commit. That is the intended path, and
+ * it is two lines. Deleting the guard, or widening it to "anything
+ * self-hosted-ish", is not — it restores a silent failure mode that has already
+ * cost this project a full investigation cycle once.
+ *
+ * ---------------------------------------------------------------------------
+ * IF YOU ARE HERE BECAUSE ONE JOB MUST RUN ON A GITHUB-HOSTED RUNNER (#595)
+ * ---------------------------------------------------------------------------
+ *
+ * Do NOT add the hosted label to APPROVED_LABELS. That set is repo-wide, so an
+ * entry there applies to EVERY job in every workflow rather than to the one that
+ * needs it.
+ *
+ * Be precise about what that does on its own, because the imprecise version
+ * misdirects: widening APPROVED_LABELS alone does NOT permit hosted jobs.
+ * REQUIRED_LABEL still demands `self-hosted`, and a job cannot reach a hosted
+ * runner while carrying it — so such a job is still refused, just with a
+ * different message. There are TWO locks, and #280 reopens only when BOTH fall:
+ * the label is approved AND nothing requires `self-hosted` any more.
+ *
+ * That makes REQUIRED_LABEL the lock actually holding the line, which is exactly
+ * why the wrong lever is dangerous here. A reader who believes APPROVED_LABELS
+ * is the only lock may relax REQUIRED_LABEL as cosmetic — and that is the edit
+ * that reopens #280, silently, across every job at once.
+ *
+ * Use HOSTED_JOB_CARVE_OUTS instead. It is keyed by `file::job`, so it permits
+ * exactly one named job in one named workflow, and only with the exact labels
+ * recorded against it. Every other job — including another job in the same
+ * file, and a same-named job in a different file — is still refused.
+ *
+ * A carve-out is reviewable as itself: it names the job, the labels and the
+ * reason in one place, and a reviewer can see its blast radius without
+ * reasoning about what else the change might have permitted.
  *
  * ---------------------------------------------------------------------------
  *
@@ -78,7 +107,7 @@
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
@@ -99,6 +128,57 @@ const APPROVED_LABELS = new Set(['self-hosted', 'linux', 'x64', 'askturret']);
  * this guard is protecting.
  */
 const REQUIRED_LABEL = 'self-hosted';
+
+/**
+ * Named per-job exemptions from the self-hosted rule (#595).
+ *
+ * Keyed `<workflow path>::<job name>` and carrying the EXACT labels permitted,
+ * so an entry cannot generalise: it does not cover another job in the same
+ * file, a same-named job in a different file, or the same job on different
+ * labels. Anything not matching all three falls through to the normal rules.
+ *
+ * This is deliberately not a label allowlist. See the header: an APPROVED_LABELS
+ * entry is repo-wide, and while widening it alone does not permit hosted jobs —
+ * REQUIRED_LABEL still demands `self-hosted` — it removes one of the two locks
+ * for every job at once, leaving the whole repository one edit away from #280.
+ * A carve-out removes nothing for anyone else.
+ *
+ * Each entry must record WHY the job is worth hosted minutes, because that is
+ * the judgement a reviewer has to re-make when the budget is next under
+ * pressure.
+ */
+const HOSTED_JOB_CARVE_OUTS = new Map([
+  [
+    '.github/workflows/supply-chain.yml::publish',
+    {
+      labels: ['ubuntu-latest'],
+      reason:
+        'npm refuses `--provenance` on a self-hosted runner outright — E422 ' +
+        '"Only \'github-hosted\' runners are supported when publishing with provenance" ' +
+        '(#595, observed, not inferred). The job is `if: github.event_name == \'release\'`, ' +
+        'so it costs minutes per release rather than the 17-jobs-per-PR load that drove #280.',
+    },
+  ],
+]);
+
+/**
+ * The carve-out for a job, if one applies to it EXACTLY.
+ *
+ * Label comparison is case-insensitive, order-insensitive and length-checked:
+ * a carved-out job that quietly gains a second label is no longer the job that
+ * was reviewed, so it is refused rather than tolerated.
+ */
+function carveOutFor(relPath, jobName, labels) {
+  const entry = HOSTED_JOB_CARVE_OUTS.get(`${relPath.split(sep).join('/')}::${jobName}`);
+  if (entry === undefined) return null;
+
+  const got = labels.map((l) => l.toLowerCase()).sort();
+  const want = entry.labels.map((l) => l.toLowerCase()).sort();
+  if (got.length !== want.length) return null;
+  if (!got.every((l, i) => l === want[i])) return null;
+
+  return entry;
+}
 
 const repoRoot = resolve(
   process.argv[2] ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..'),
@@ -370,6 +450,7 @@ if (workflowFiles.length === 0) cannotCheck(`no workflow files found in ${workfl
 
 const violations = [];
 const unknowns = [];
+const carvedOut = [];
 let jobsChecked = 0;
 let delegated = 0;
 
@@ -408,6 +489,15 @@ for (const file of workflowFiles) {
 
     if (labels.length === 0) {
       violations.push(`${where}: \`runs-on\` resolves to an empty label set`);
+      continue;
+    }
+
+    // A named per-job carve-out (#595), checked BEFORE the label rules because
+    // its whole purpose is to permit labels those rules refuse. It matches on
+    // file, job name AND exact labels, so it cannot widen to anything else.
+    const carveOut = carveOutFor(rel, job.name, labels);
+    if (carveOut) {
+      carvedOut.push(`${where}: runs on ${labels.map((l) => `'${l}'`).join(', ')} — ${carveOut.reason}`);
       continue;
     }
 
@@ -454,15 +544,29 @@ if (violations.length > 0) {
   console.error(
     `\n${violations.length} problem(s). Every job must declare ` +
       `\`runs-on: [${[...APPROVED_LABELS].join(', ')}]\` (matching is case-insensitive). ` +
-      `If a new runner pool was added, extend APPROVED_LABELS in ` +
-      `.github/scripts/check-runners.mjs rather than removing the guard — see its header.`,
+      `If a new SELF-HOSTED pool was added, extend APPROVED_LABELS in ` +
+      `.github/scripts/check-runners.mjs rather than removing the guard — see its header. ` +
+      `If ONE job genuinely needs a GitHub-hosted runner, add a named entry to ` +
+      `HOSTED_JOB_CARVE_OUTS instead — NOT a hosted label in APPROVED_LABELS. ` +
+      `Adding one there does not by itself let anything run hosted, because ` +
+      `REQUIRED_LABEL still demands '${REQUIRED_LABEL}'; it removes one of two locks ` +
+      `for EVERY job at once, and REQUIRED_LABEL is then the only thing holding the ` +
+      `line. Relaxing that second lock is what reopens #280.`,
   );
   process.exit(1);
 }
 
+// Printed on success, not only on failure: a carve-out that nobody sees is a
+// carve-out nobody re-examines when the Actions budget is next under pressure.
+if (carvedOut.length > 0) {
+  console.log(`check-runners: ${carvedOut.length} named per-job carve-out(s) in effect (#595):`);
+  for (const c of carvedOut) console.log(`  - ${c}`);
+}
+
 console.log(
-  `check-runners: OK — ${jobsChecked} job(s) across ${workflowFiles.length} workflow file(s) ` +
-    `run on the approved self-hosted pool` +
+  `check-runners: OK — ${jobsChecked} job(s) checked across ${workflowFiles.length} workflow ` +
+    `file(s): ${jobsChecked - carvedOut.length} on the approved self-hosted pool` +
+    (carvedOut.length > 0 ? `, ${carvedOut.length} on a named per-job hosted carve-out` : '') +
     (delegated > 0 ? `, ${delegated} delegated to reusable workflows` : '') +
     '.',
 );

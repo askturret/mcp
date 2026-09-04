@@ -14,7 +14,7 @@ of it becomes advisory.
 ## Writing one
 
 ```ts
-import { PLUGIN_API_VERSION, type AskTurretPlugin } from '@askturret/mcp';
+import { PLUGIN_API_VERSION, type AskTurretPlugin } from '@askturret/mcp-core';
 
 export const acmeMetrics: AskTurretPlugin<'observability'> = {
   manifest: {
@@ -33,7 +33,7 @@ export const acmeMetrics: AskTurretPlugin<'observability'> = {
 Load them:
 
 ```ts
-import { loadPlugins } from '@askturret/mcp';
+import { loadPlugins } from '@askturret/mcp-core';
 
 const registrations = await loadPlugins([acmeMetrics]);
 ```

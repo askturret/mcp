@@ -4,7 +4,7 @@ Add a production-grade MCP layer to your existing API.
 
 Discover from OpenAPI, routes, schemas, or handlers. Shape agent-friendly tools. Govern access. Observe every call.
 
-[![npm version](https://img.shields.io/npm/v/@askturret/mcp.svg?style=flat-square)](https://www.npmjs.com/package/@askturret/mcp)
+[![npm version](https://img.shields.io/npm/v/@askturret/mcp-core.svg?style=flat-square)](https://www.npmjs.com/package/@askturret/mcp-core)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5%2B-blue?style=flat-square)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-green?style=flat-square)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square)](LICENSE)
@@ -17,11 +17,11 @@ Discover from OpenAPI, routes, schemas, or handlers. Shape agent-friendly tools.
 <summary><strong>Click to expand: 20-second terminal demo</strong></summary>
 
 ```bash
-# Install
-npm install @askturret/mcp
+# Install (the adapter pulls in core, the OpenAPI source and the Explorer)
+npm install @askturret/mcp-adapters-express
 
 # Check readiness of an OpenAPI spec
-npx mcp doctor petstore.yaml
+npx @askturret/mcp-cli doctor petstore.yaml
 # Output:
 # ✓ 8/10 operations ready
 # ✓ All schemas valid
@@ -32,7 +32,7 @@ npx mcp doctor petstore.yaml
 
 ```javascript
 import express from 'express';
-import { mcpFromOpenApi } from '@askturret/mcp/express';
+import { mcpFromOpenApi } from '@askturret/mcp-adapters-express';
 
 const app = express();
 app.use('/mcp', mcpFromOpenApi('./petstore.yaml'));
@@ -59,7 +59,7 @@ Add MCP to your existing API with one function call. No boilerplate, no regenera
 
 ```ts
 // Light facade — production-ready defaults
-import { mcpFromOpenApi } from '@askturret/mcp/express';
+import { mcpFromOpenApi } from '@askturret/mcp-adapters-express';
 
 app.use('/mcp', mcpFromOpenApi('./openapi.yaml'));
 ```
@@ -70,7 +70,8 @@ Combine OpenAPI specs and explicit TypeScript definitions in a single server. Sw
 
 ```ts
 // Mix multiple sources
-import { createMcpServer, fromOpenApi, fromDefinitions } from '@askturret/mcp';
+import { createMcpServer, fromDefinitions } from '@askturret/mcp-core';
+import { fromOpenApi } from '@askturret/mcp-sources-openapi';
 
 const server = createMcpServer({
   preset: 'production',
@@ -86,7 +87,7 @@ const server = createMcpServer({
 Define policies once. Enforce them at call time. Every action is audited and redacted.
 
 ```ts
-import { confirmationForEffects, authenticated, allOf } from '@askturret/mcp/policies';
+import { confirmationForEffects, authenticated, allOf } from '@askturret/mcp-core';
 
 const server = createMcpServer({
   preset: 'production',
@@ -101,20 +102,20 @@ const server = createMcpServer({
 
 ### 4. **Lifecycle — Production tools included**
 
-- **`mcp doctor`** — Readiness score. Identifies which operations are agent-ready.
+- **`turret doctor`** — Readiness score. Identifies which operations are agent-ready.
 - **Explorer UI** — Browse, test, and inspect tools locally. See policies, confirmation requirements, and execution outcomes.
-- **`mcp diff`** — Compare registry snapshots. Track changes across versions.
+- **`turret diff`** — Compare registry snapshots. Track changes across versions.
 - **OpenTelemetry** — Traces, metrics, and structured logs. Observe every call in production.
 
 ```bash
 # Score readiness
-mcp doctor ./openapi.yaml
+turret doctor ./openapi.yaml
 
-# Run a local mock server
-mcp mock --spec openapi.yaml --policies production
+# Inspect a running server
+turret inspect --url http://localhost:7000/mcp
 
 # Compare versions
-mcp diff snapshot-v1.json snapshot-v2.json
+turret diff --before snapshot-v1.json --after snapshot-v2.json
 ```
 
 ---
@@ -122,8 +123,20 @@ mcp diff snapshot-v1.json snapshot-v2.json
 ## Installation
 
 ```bash
-npm install @askturret/mcp
+# Express app — pulls in core, the OpenAPI source, transports and the Explorer
+npm install @askturret/mcp-adapters-express
+
+# Fastify app
+npm install @askturret/mcp-adapters-fastify
+
+# The CLI (`turret`), usually as a dev dependency or via npx
+npm install --save-dev @askturret/mcp-cli
 ```
+
+There is no `@askturret/mcp` umbrella package on npm; the nine published
+packages are all `@askturret/mcp-*`. Import `@askturret/mcp-core` directly when
+you compose a server yourself — it is already present as a dependency of either
+adapter, and it is the surface the [compatibility policy](docs/compatibility-policy.md) covers.
 
 **Requirements:** Node.js 20+, TypeScript 5.5+ — see the [compatibility matrix](docs/compatibility.md) for the full supported-version contract, and the [compatibility policy](docs/compatibility-policy.md) for what we promise about changing it.
 
@@ -305,7 +318,7 @@ stricter than Production on every control.
 - Tighter bounds: 512 KiB request, 1 MiB response, 20s deadline
 
 ```ts
-import { regulatedPreset } from '@askturret/mcp';
+import { regulatedPreset } from '@askturret/mcp-core';
 
 const preset = regulatedPreset({
   auditSink: { id: 'postgres-audit', durability: 'durable' },
@@ -322,7 +335,7 @@ starting and being weakened later.
 
 Inspect the full expansion — including which controls are declared but not yet
 enforced — with `describePreset('regulated', options)`. For a tighter support
-bundle, `askturret-mcp diagnostics --regulated` omits schemas and config paths.
+bundle, `turret diagnostics --regulated` omits schemas and config paths.
 
 ---
 
@@ -357,7 +370,7 @@ Learn more: [Why not just generate code?](docs/why-not-generate.md)
 
 ```ts
 import express from 'express';
-import { mcpFromOpenApi } from '@askturret/mcp/express';
+import { mcpFromOpenApi } from '@askturret/mcp-adapters-express';
 
 const app = express();
 
@@ -377,7 +390,7 @@ as Express — swap the import and change nothing else.
 
 ```ts
 import Fastify from 'fastify';
-import { mcpFromOpenApi } from '@askturret/mcp/fastify';
+import { mcpFromOpenApi } from '@askturret/mcp-adapters-fastify';
 
 const app = Fastify();
 
@@ -394,9 +407,9 @@ await app.listen({ port: 7000 });
 Composable form, identical in shape to the Express one:
 
 ```ts
-import { fastifyMcp } from '@askturret/mcp/fastify';
-import { fromOpenApi } from '@askturret/mcp/openapi';
-import { viaHttp } from '@askturret/mcp';
+import { fastifyMcp } from '@askturret/mcp-adapters-fastify';
+import { fromOpenApi } from '@askturret/mcp-sources-openapi';
+import { viaHttp } from '@askturret/mcp-core';
 
 await app.register(
   fastifyMcp({
@@ -421,8 +434,9 @@ cannot. `{ prefix: '/tools' }` just works, where Express needs a matching
 ### Production Policies
 
 ```ts
-import { createMcpServer, fromOpenApi, authenticated, authorizationPolicy } from '@askturret/mcp';
-import { openTelemetry } from '@askturret/mcp/otel';
+import { createMcpServer, allOf, authenticated, permissionPolicy } from '@askturret/mcp-core';
+import { fromOpenApi } from '@askturret/mcp-sources-openapi';
+import { openTelemetry } from '@askturret/mcp-observability';
 
 const server = createMcpServer({
   preset: 'production',
@@ -430,10 +444,10 @@ const server = createMcpServer({
   
   policy: allOf([
     authenticated(),  // Require identity
-    authorizationPolicy({  // Role-based access
-      'admin': ['*'],
-      'user': ['listPets', 'createPet'],  // Limited set of operations
-    }),
+    permissionPolicy({  // Operation -> permissions the caller must hold
+      listPets: ['pets:read'],
+      createPet: ['pets:write'],
+    }),  // Operations absent from the map are denied by default
   ]),
   
   observability: openTelemetry({

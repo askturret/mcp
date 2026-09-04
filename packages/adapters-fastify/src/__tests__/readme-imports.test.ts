@@ -24,16 +24,27 @@
  * why this is a test rather than another manual probe: a check I have to
  * remember to repeat is one I will eventually report as done without doing.
  *
- * ## Deliberately scoped to the Fastify section
+ * ## Scoped to the Fastify section — and NOT the authority (#598)
  *
- * The same mistake exists elsewhere in the README — line 73 makes the identical
- * `fromOpenApi`-from-root error, and lines 89 and 320 are broken too. Those are
- * on `origin/main`, predate this branch, and are tracked by #149. Widening this
- * test to the whole README would fail the build for defects this PR did not
- * introduce and does not own.
+ * An earlier note here said widening `SECTION_HEADING` to the whole README was
+ * "the natural next step" and "a one-line change". **Both halves were wrong,
+ * and #598 is what that cost.**
  *
- * When #149 lands, widening `SECTION_HEADING` to scan the whole file is the
- * natural next step, and this file is written so that is a one-line change.
+ * Wrong on placement: this suite runs in the `test-adapters-fastify` job, which
+ * builds only core, sources-openapi, transports, explorer and adapters-fastify.
+ * The README also imports adapters-express and observability, whose `dist/`
+ * does not exist here. Widening this file would fail on packages the job never
+ * built.
+ *
+ * Wrong on sufficiency, which is the more important half: this test runs with
+ * `cwd: REPO_ROOT`, and widening it would have kept it GREEN while the README
+ * stayed broken for every reader. That is not a smaller version of the check —
+ * it is the same blind spot with more surface.
+ *
+ * The whole-README property is owned by `.github/scripts/check-readme-imports.mjs`,
+ * which runs in `test-integrity` after the full build and probes each import
+ * against PACKED TARBALLS in a temp directory, where self-reference cannot
+ * reach. This file stays as the fast, in-package pin on its own section.
  */
 
 import { describe, it, expect } from '@jest/globals';
@@ -91,7 +102,7 @@ describe('README Fastify section imports', () => {
     expect(fastifySection()).not.toBe('');
     expect(imports.length).toBeGreaterThanOrEqual(2);
     expect(imports.map((i) => i.specifier)).toEqual(
-      expect.arrayContaining(['@askturret/mcp/fastify']),
+      expect.arrayContaining(['@askturret/mcp-adapters-fastify']),
     );
   });
 
@@ -130,14 +141,29 @@ describe('README Fastify section imports', () => {
     },
   );
 
-  it('imports fromOpenApi from the /openapi subpath, not the root', () => {
-    // The exact round-3 defect, pinned by name: `fromOpenApi` is not a root
-    // export, and writing it as one produces a SyntaxError at import time
-    // rather than anything a type-check would catch.
-    const fromRoot = imports.find(
-      (i) => i.specifier === '@askturret/mcp' && i.named.includes('fromOpenApi'),
+  it('imports fromOpenApi from its own package, not from core or the umbrella', () => {
+    // The exact round-3 defect, pinned by name and now stated in terms of real
+    // package names: `fromOpenApi` is not a core export, and writing it as one
+    // produces a SyntaxError at import time rather than anything a type-check
+    // would catch.
+    //
+    // Widened from `=== '@askturret/mcp'` to "anything that is not its own
+    // package": the old form pinned one wrong specifier, so renaming the
+    // umbrella to core would have moved the identical defect straight past it.
+    const misplaced = imports.filter(
+      (i) => i.named.includes('fromOpenApi') && i.specifier !== '@askturret/mcp-sources-openapi',
     );
 
-    expect(fromRoot).toBeUndefined();
+    expect(misplaced.map((i) => i.specifier)).toEqual([]);
+  });
+
+  it('names no package that this repository does not publish', () => {
+    // The #598 defect in its section-local form. The authority is the
+    // clean-room guard; this catches a reintroduction in the fast lane.
+    const umbrella = imports.filter(
+      (i) => i.specifier === '@askturret/mcp' || i.specifier.startsWith('@askturret/mcp/'),
+    );
+
+    expect(umbrella.map((i) => i.specifier)).toEqual([]);
   });
 });

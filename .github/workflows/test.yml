@@ -755,6 +755,30 @@ jobs:
       - name: Published tarballs carry README, LICENSE and NOTICE
         run: node .github/scripts/check-tarball-compliance.mjs .
 
+      # #598: the README's imports resolved for three rounds of fixes and for no
+      # reader. The root package is named `@askturret/mcp` and declares
+      # `exports`, so every specifier resolved here through package
+      # SELF-REFERENCE while `@askturret/mcp` returned 404 on npm. #41 round 2,
+      # #41 round 3 and #149 were each found, each fixed, and each verified in
+      # the one environment where the package need not exist — #149's acceptance
+      # even demanded "real import resolution", and was met honestly.
+      #
+      # So this guard does not run in the repository. It packs, extracts into a
+      # temp directory that node's upward node_modules walk cannot escape into
+      # this workspace, and executes each import statement there. It also probes
+      # a package that cannot exist and refuses to report a pass if that
+      # resolves — a clean room that is not clean would make every green
+      # meaningless, which is the failure being corrected.
+      #
+      # RUNS AFTER `npm run build` above, for the same reason as the guard
+      # above it: an unbuilt package packs without dist/ and is reported
+      # cannot-check, never passed.
+      - name: Self-test the README imports guard
+        run: node .github/scripts/check-readme-imports.test.mjs
+
+      - name: README imports work for a reader, not just in this repo
+        run: node .github/scripts/check-readme-imports.mjs .
+
       # #62: docs/migrations/README.md is GENERATED from the migration registry.
       # A migration added without regenerating it would ship an index that
       # silently omits it — the same failure docs/adapters.md is generated to

@@ -26,6 +26,7 @@ reconstruct the answer from commit archaeology.
 | [021](ADR-021-two-logger-types.md) | Two logger types in `core`, and when the older one retires | written at the time (#133) |
 | [022](ADR-022-concealment-allowlist-is-evidence-bound.md) | The concealment allowlist is evidence-bound: no template without a captured message | written at the time (#276) |
 | [023](ADR-023-remedy-test-and-the-two-axes.md) | An issue is a unit of remedy, and a claim states exactly what it verified | written at the time (#566) |
+| [024](ADR-024-output-must-vary-with-the-fact.md) | A check's output must vary with the fact it reports | written at the time (#652) |
 
 ⚠ = the number is cited for more than one subject; the ADR records that
 ambiguity rather than resolving it by invention.

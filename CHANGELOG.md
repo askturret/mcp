@@ -59,9 +59,16 @@ at a guide describing a change the tool does not make.
 
 ## [Unreleased]
 
-Nothing released yet. The project is at `0.1.0` and **pre-1.0, so no
-compatibility guarantee is in force** — see the policy document for what changes
-when `1.0.0` ships.
+Entries below this heading are merged but not yet in a tagged release. The
+project is **pre-1.0, so no compatibility guarantee is in force** — see the
+policy document for what changes when `1.0.0` ships.
+
+For what has actually shipped, read the tagged sections below, the GitHub
+releases, or `npm view @askturret/mcp versions`. This heading names no current
+version deliberately: it previously read *"Nothing released yet. The project is
+at `0.1.0`"*, and went on saying it after the project had both tagged and
+published — a sentence that was true when written and had no way to notice it
+had stopped being true.
 
 ### Added
 - `NOT_FOUND` on `OperationErrorCode` (#201). An upstream 404 or 410 now returns

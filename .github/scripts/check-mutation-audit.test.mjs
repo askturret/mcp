@@ -97,6 +97,9 @@ import {
   discoverGuards,
   renderInventory,
   parseInventoryTotals,
+  unaccountedSites,
+  partitionIdentity,
+  PARTITION_VERDICTS,
   inventoryDelta,
   evaluateExemptions,
   siteSource,
@@ -1682,6 +1685,121 @@ process.exit(0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+// ---------------------------------------------------------------------------
+// THE PARTITION MUST CLOSE, AND MUST NAME WHAT ESCAPES IT (#651)
+//
+// The partition summed witnessed + unwitnessed + cannot-check sites. `auditGuard`
+// emits FIVE verdicts, so `not-mutatable`, `unparseable` and `did-not-terminate`
+// fell through it. Only the first occurs today, at exactly one ledger-gated site
+// (#558) — which is why the gap read as an off-by-one for three days rather than
+// as a missing class of three.
+//
+// The check now NAMES the sites. Reporting only that a sum is wrong hands the
+// next reader the whole search, which is exactly what it cost here.
+//
+// CONTROL, and it is the point of the case: a deliberately mis-bucketed site is
+// DETECTED and NAMED. A partition check never shown to catch a real gap is the
+// decoration this repository has spent the week removing.
+// ---------------------------------------------------------------------------
+{
+  const guard = (results) => [{
+    name: 'check-fixture.mjs',
+    status: 'measured',
+    sites: [
+      { line: 10, kind: 'throw' },
+      { line: 20, kind: 'errors-push' },
+    ],
+    results,
+  }];
+
+  const complete = guard([
+    { line: 10, kind: 'throw', verdict: 'witnessed' },
+    { line: 20, kind: 'errors-push', verdict: 'unwitnessed' },
+  ]);
+  check('partition: a fully accounted guard produces no orphans', unaccountedSites(complete).length, 0);
+
+  // The real shape of this defect: a site whose loop path emitted no result.
+  const missing = guard([{ line: 10, kind: 'throw', verdict: 'witnessed' }]);
+  const orphanA = unaccountedSites(missing);
+  check('partition: CONTROL — a site with no verdict is DETECTED', orphanA.length, 1);
+  check(
+    'partition: ...and NAMED by script, line and kind',
+    `${orphanA[0].name} ${orphanA[0].line} ${orphanA[0].kind}`,
+    'check-fixture.mjs 20 errors-push',
+  );
+
+  // The shape that will recur: a SIXTH verdict added without a bucket. Membership
+  // is tested rather than five names counted, so this is caught by construction.
+  const unknown = guard([
+    { line: 10, kind: 'throw', verdict: 'witnessed' },
+    { line: 20, kind: 'errors-push', verdict: 'invented-later' },
+  ]);
+  const orphanB = unaccountedSites(unknown);
+  check('partition: CONTROL — a verdict in no bucket is DETECTED', orphanB.length, 1);
+  check(
+    'partition: ...and the message names the verdict and the remedy',
+    orphanB[0].reason.includes('invented-later') && orphanB[0].reason.includes('PARTITION_VERDICTS'),
+    true,
+  );
+
+  // not-mutatable is the FOURTH STATE, legitimately in none of the other three:
+  // the ledger gates it, it is never mutated, so there is no verdict to compare.
+  // It must be ACCOUNTED, not reported as an orphan.
+  const gated = guard([
+    { line: 10, kind: 'throw', verdict: 'not-mutatable' },
+    { line: 20, kind: 'errors-push', verdict: 'unwitnessed' },
+  ]);
+  check('partition: a ledger-gated site is accounted for, not orphaned', unaccountedSites(gated).length, 0);
+
+  // A cannot-check guard reaches no per-site verdict at all; its sites are
+  // counted wholesale, so per-site orphan reporting would double-count them.
+  const cannot = [{ name: 'x.mjs', status: 'cannot-check', sites: [{ line: 1, kind: 'throw' }], results: [] }];
+  check('partition: a cannot-check guard is not reported site-by-site', unaccountedSites(cannot).length, 0);
+
+  // END TO END, through the reported text rather than the helper.
+  const totals = { ...TOTALS, sites: 2, witnessed: 1, unwitnessed: 0, notMutatable: 0, unparseable: 0, didNotTerminate: 0 };
+  const out = inventoryDelta(null, totals, missing).join('\n');
+  check('partition: the report says it does not close', /Partition does not close/.test(out), true);
+  check('partition: ...and NAMES the site rather than only the sum', /check-fixture\.mjs line 20 \(errors-push\)/.test(out), true);
+
+  // "I could not localise" must not render as "nothing to localise".
+  const noGuards = inventoryDelta(null, totals).join('\n');
+  check('partition: a caller with no guards says so rather than implying none exist', /NOT localised/.test(noGuards), true);
+
+  // -------------------------------------------------------------------------
+  // THE PRINTED IDENTITY MUST NAME EVERY BUCKET THE CODE SUMS (#651)
+  //
+  // Adding the three missing buckets closed the arithmetic and left the
+  // inventory still printing `witnessed + unwitnessed + cannot-check sites =
+  // failure sites` — directly beneath totals reading 167 + 17 + 0 against 185.
+  // The sum was fixed; the artifact went on asserting the identity the sum had
+  // just abandoned. That is #651 one level up, and it is how the first one
+  // survived three days: the document and the code each looked right alone.
+  //
+  // MEMBERSHIP, not a fixed sentence. Pinning the expected string would pass
+  // whatever the code sums, which is the failure being guarded — the identity
+  // is DERIVED from PARTITION_VERDICTS, so a sixth verdict is named here
+  // automatically or this assertion goes red.
+  for (const v of PARTITION_VERDICTS) {
+    check(`identity: the printed identity names the \`${v}\` bucket`, partitionIdentity().includes(v), true);
+  }
+  check(
+    'identity: ...and names cannot-check sites, which is a guard status rather than a verdict',
+    partitionIdentity().includes('cannot-check sites'),
+    true,
+  );
+
+  const doc = rendered(TOTALS);
+  check('identity: the rendered inventory prints that identity', doc.includes(partitionIdentity()), true);
+  // CONTROL: the superseded three-term sentence is genuinely gone from the
+  // artifact, not merely joined by a longer one elsewhere in the document.
+  check(
+    'identity: CONTROL — the superseded three-term sentence is absent',
+    doc.includes('`witnessed + unwitnessed + cannot-check sites = failure sites`'),
+    false,
+  );
 }
 
 console.log('');

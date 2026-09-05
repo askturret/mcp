@@ -201,8 +201,38 @@ export function fromOpenApi(
           location,
         });
 
-        // Don't throw - return empty array with warning
-        // Compiler will handle missing operations gracefully
+        // DON'T THROW — return an empty array. The compiler handles missing
+        // operations gracefully.
+        //
+        // THE ARGUMENT, not just the decision (#625). This comment used to state
+        // only the rule, which is the shape a future reader "cleans up" because
+        // discovery functions ought to throw. Three reasons it must not:
+        //
+        //   1. `[]` is already this source's established "nothing from me"
+        //      signal on non-error paths — an aborted discovery returns `[]`
+        //      above, and that is not a special case invented for refusals.
+        //   2. The same judgement is already made and documented one case over,
+        //      where a missing upstream base URL is explicitly non-fatal so
+        //      "discovery still works and tools/list stays useful".
+        //   3. `discover()` is reached on a MULTI-SOURCE path. Throwing lets one
+        //      bad source take down a server that is serving others, and the
+        //      caller has no way to opt out — the throw would happen inside a
+        //      function whose whole job is to survey sources.
+        //
+        // The breadth of the catch above is LOAD-BEARING for the same reason.
+        // Narrowing it reintroduces exactly the failure this prevents.
+        //
+        // This is public contract, not an implementation detail: an unsupported
+        // version is refused by yielding zero operations and a logged error, and
+        // docs/compatibility.{md,json} now say so. A competent reader previously
+        // inferred a throw and wrote `rejects.toThrow()`, which failed — the
+        // cheap version of the same mistake.
+        //
+        // KNOWN GAP, deliberately not closed here: a version refusal and an
+        // internal error both log 'OpenAPI discovery failed' and differ only in
+        // error.message, which compatibility-policy.md forbids parsing. That is
+        // an ADR-011 typed-outcome gap with its own remedy, tracked separately
+        // as #628 — do not fold a fix for it into this catch.
         return [];
       }
     },

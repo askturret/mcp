@@ -118,12 +118,14 @@ Declared: `devDependencies.typescript` = **`^5.5.0`**
 |---|---|---|
 | 3.0.x | ✅ Supported | |
 | 3.1.x | ✅ Supported | |
-| 2.0 (Swagger) | 🚫 Unsupported | Convert to OpenAPI 3.x first. |
+| 2.0 (Swagger) | 🚫 Unsupported | Rejected. Convert to OpenAPI 3.x first. Refusal surfaces as zero operations and a logged error, not a thrown exception. |
 
 > **Write a full three-part version.** Detection matches the dotted prefixes
 > `3.0.` and `3.1.` against the document's `openapi` field, so `"3.0.0"` and
 > `"3.1.0"` are accepted while a bare `"3.0"` or `"3.1"` is **rejected**. This is a
-> known sharp edge, not an intentional restriction.
+> known sharp edge, not an intentional restriction. Refusal surfaces as zero
+> operations and a logged error, not a thrown exception — the same code path as
+> the 2.0 row above, since one version check refuses both.
 
 ## MCP protocol and SDK
 

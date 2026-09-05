@@ -103,7 +103,13 @@ holding the other.
 |---|---|---|
 | `npm publish` | licence review + NOTICE freshness + SBOM generation | `publish` job `needs: [supply-chain, …]` |
 | `npm publish` of a **`>= 1.0.0`** release | readiness matrix, all 12 rows `✅ met` | `publish` job `needs: [… , readiness]` |
-| Merging to `main` | readiness matrix, at commit time | `test-integrity` job in `test.yml` |
+| Opening or updating a PR to `main` | readiness matrix, at commit time | `test-integrity` job in `test.yml` |
+
+The last row says *pull request*, not *merge*, and the distinction is real:
+`test.yml` stopped running on `push: main` in #687 change 3, so the matrix is
+evaluated on the PR's tree before the merge rather than on the merged tree
+after it. It also does not block anything on its own — this repository has no
+required status checks (#647).
 
 The version is parsed from the release tag. A tag whose version cannot be
 parsed is treated as `>= 1.0.0` and therefore **blocks** — the safe direction,

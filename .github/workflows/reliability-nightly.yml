@@ -68,6 +68,83 @@ jobs:
           path: reliability-evidence.json
           retention-days: 30
 
+  # THE INTEGRATED TREE (#687 change 3) — the compensating control for dropping
+  # `push: main` from test.yml.
+  #
+  # WHAT WAS DROPPED, and why it was not a duplicate. test.yml ran a second full
+  # matrix on every merge. The issue framed that as re-proving the tree the pull
+  # request had just proved; the Architect corrected it, and the correction is
+  # why this job exists. A pre-merge run proves THE PR'S TREE. The squashed
+  # commit is that PR merged into whatever `main` had become BY MERGE TIME — and
+  # main moves constantly, measured at eleven merges in four minutes. So the
+  # post-merge run proved THE INTEGRATED TREE, which no pull-request run ever
+  # saw, and the failure it caught is the semantic conflict: two changes each
+  # green alone, broken together. This repository has no required status checks
+  # (#647), so nothing else catches it and nothing requires a branch be up to
+  # date before merging.
+  #
+  # THE EXPOSURE THIS BUYS, stated as a cost rather than buried: up to ~24 hours
+  # between a bad integration landing and this run catching it. During that
+  # window the symptom is the NEXT pull request's CI going red for reasons that
+  # are not its own, which costs diagnosis time and is itself a throughput tax.
+  # Judged acceptable against roughly half the queue — but it is real.
+  #
+  # IT MUST NOT REUSE test.yml's `changes` JOB, and this is the trap the whole
+  # design turns on. That job is a paths-filter over a pull request's diff; on a
+  # schedule there is no diff, so it trips no filter, schedules ZERO suites, and
+  # the run REPORTS GREEN HAVING RUN NOTHING. A constant wearing a verdict —
+  # ADR-024, arriving in the one place with no second observer. The runner below
+  # has no filter in reach at all, by construction rather than by discipline,
+  # and its self-test asserts that structurally against its own source.
+  #
+  # EXIT 2 IS EXPECTED AND CORRECT when a suite could not be RUN, and it
+  # outranks a genuine failure. Do not convert it to a pass. This is the sole
+  # proof for the integrated tree, so "could not check" resolving as "passed" is
+  # the worst outcome available here (#281/#535).
+  #
+  # It rides this workflow rather than adding a sixth file for the same reason
+  # the two jobs below do: the 03:00 UTC schedule already exists, and its own
+  # comment describes that moment as "after the day's merges have landed" —
+  # precisely the population this verifies. It is a separate job because it
+  # shares nothing with the reliability suite but the cron.
+  integrated-tree:
+    # SCHEDULE AND MANUAL ONLY — NOT `push`. This workflow also triggers on
+    # pushes to main touching reliability/core/transports, and without this
+    # condition those merges would each schedule twelve suites: the post-merge
+    # full run this change exists to remove, reintroduced through a side door on
+    # the three most frequently-touched packages in the repository.
+    #
+    # `workflow_dispatch` is kept deliberately rather than narrowed to
+    # `schedule`. The claim this job makes — twelve suites, no diff, no filter
+    # consulted — is one a reviewer should be able to OBSERVE on demand instead
+    # of waiting for 03:00 UTC and taking it on faith.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Linux, X64, askturret]
+    # Twelve suites on one serial runner. Generous, but bounded: a hung suite
+    # must fail the job rather than hold the pool until the platform's limit.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # FIRST, and unconditional. Everything below can fail, and a nightly read
+      # the next morning by someone who merged none of the day's commits needs
+      # to know WHICH tree was under test before it reads why it broke.
+      - name: Name the tree under test
+        run: echo "Integrated tree under test: $GITHUB_SHA"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+
+      # The root build is `tsc -b`, which walks the whole project graph — so
+      # unlike test.yml's per-suite `npm run build -w <list>`, there is no build
+      # ORDER to get wrong here and no per-package list to keep in step.
+      - run: npm run build
+
+      - name: Every package suite, against main's tip
+        run: node .github/scripts/nightly-integrated-tree.mjs .
+
   # PART B of #535 — divergence detection for prose asserting platform state.
   #
   # WHY IT LIVES ON A SCHEDULE AND NOT IN test.yml. It makes a live GitHub API

@@ -1,9 +1,30 @@
 name: Test
 
+# PULL REQUESTS ONLY. THE `push: main` TRIGGER WAS DROPPED (#687 change 3).
+#
+# It fired a second full run of this workflow on every merge — measured at
+# eleven merges between 11:00 and 11:04 on 2026-09-05, each adding a `Test` run
+# to a strictly serial single runner, two of them still queued 47 minutes later
+# and sitting in front of live PR work.
+#
+# WHAT THAT RUN UNIQUELY PROVED, because it was NOT merely a repeat. A
+# pre-merge run proves THE PR'S TREE. The squashed commit is that PR merged
+# into whatever `main` had become by merge time, and main moves constantly — so
+# the post-merge run proved THE INTEGRATED TREE, which no PR run ever saw. The
+# failure it caught is the semantic conflict: two PRs each green alone, broken
+# together. Nothing else here catches that, because this repository has no
+# required status checks (#647) and therefore no up-to-date-before-merge
+# requirement.
+#
+# SO IT WAS NOT DROPPED BARE. `reliability-nightly.yml`'s `integrated-tree` job
+# is the compensating control: it runs every package suite against main's tip
+# at 03:00 UTC, unconditionally and with no path filter in reach of it. The
+# exposure bought is up to ~24h between a bad integration landing and the
+# nightly catching it. DO NOT re-add `push: main` here without removing that
+# job — two mechanisms proving the same tree is the cost this change removed.
+
 on:
   pull_request:
-    branches: [main]
-  push:
     branches: [main]
 
 permissions:
@@ -17,22 +38,29 @@ permissions:
 # self-hosted runner that run is not merely wasted — it sits in front of live
 # work, so the most actively-revised PR waits longest.
 #
-# DO NOT COPY THE KEY FROM lane-check.yml. That one is a bare
-# `pull_request.number` with an unconditional `cancel-in-progress`, and it is
-# correct THERE because lane-check is PR-only. This workflow also runs on
-# `push: main`, where `pull_request.number` is EMPTY — so that key would drop
-# every main push into one shared group and have them cancel each other,
-# destroying precisely the runs that are load-bearing. Each `push: main` run
-# proves a DISTINCT integrated tree: the PR squashed onto whatever main had
-# become by merge time, which is a tree no pre-merge run ever saw. Cancelling
-# the older one loses the only proof that exists for that SHA.
+# EVERY RUN REACHING THIS BLOCK IS A PR RUN, since the trigger above is now
+# `pull_request` alone. The `github.run_id` fallback is therefore unexercised
+# in THIS file today — and it stays, for two reasons that are not style.
 #
-# `github.run_id` is unique per run, so every non-PR run becomes a group of
-# one and can never be cancelled by anything. That covers `push` today, and
-# would cover `schedule`, `release` and `workflow_dispatch` unchanged if a
-# trigger is added later — WITHOUT enumerating event names. An enumeration
-# would need updating the next time a trigger is added, and would fail
-# silently when it wasn't.
+# First, supply-chain.yml:20 points HERE for the reasoning behind a key it
+# declares identically, and that workflow still runs on `push` and on
+# `release: published`. Deleting the explanation would leave the copy that
+# needs it pointing at nothing.
+#
+# Second, it is what makes adding a trigger back safe. `github.run_id` is
+# unique per run, so every non-PR run becomes a group of one and can never be
+# cancelled by anything — covering `schedule`, `push`, `release` and
+# `workflow_dispatch` WITHOUT enumerating event names. An enumeration would
+# need updating the next time a trigger is added, and would fail silently when
+# it wasn't.
+#
+# DO NOT COPY THE KEY FROM lane-check.yml. That one is a bare
+# `pull_request.number` with an unconditional `cancel-in-progress`. It is
+# correct THERE because lane-check is PR-only — as this workflow now is too,
+# which is exactly what makes the shortcut tempting here. It would stop being
+# correct the moment a non-PR trigger returns: `pull_request.number` is EMPTY
+# for one, so every such run would drop into a single shared group and cancel
+# the others.
 #
 # `cancel-in-progress` accepts `${{ }}` and evaluates per run. It is redundant
 # with the group key by design — belt-and-braces, and cheap.
@@ -633,6 +661,24 @@ jobs:
       - name: Every workflow job runs on the self-hosted pool
         run: node .github/scripts/check-runners.mjs
 
+      # #687: dropping `push: main` above made reliability-nightly.yml's
+      # `integrated-tree` job the SOLE proof for the tree main actually has. A
+      # runner that reported success for suites it never executed would reopen
+      # that gap and look green doing it — and unlike a PR check, nothing else
+      # is watching a nightly.
+      #
+      # Self-tested first, like every guard here. The self-test is what shows
+      # all three verdicts are reachable — pass, real failure, and cannot-run —
+      # and it asserts STRUCTURALLY, against the runner's own source, that the
+      # runner never reaches the path filters. That is the ADR-024 trap the
+      # design turns on: a nightly reusing the `changes` job computes a diff
+      # against nothing and reports green having run zero suites.
+      #
+      # Its production run is in reliability-nightly.yml, on the schedule; only
+      # the self-test belongs on the pull-request path.
+      - name: Self-test the nightly integrated-tree runner
+        run: node .github/scripts/nightly-integrated-tree.test.mjs
+
       # #128: merge=union protects the MERGE. Nothing protects a hand-edit, a
       # whole-file restore, or a conflict resolved by taking one side — and an
       # append-only log has no append-only assertion, so a dropped row is
@@ -1014,7 +1060,8 @@ jobs:
       #
       # COMMIT-TIME ONLY (#233). This comment used to end "A tag matching v1.0.*
       # is refused if any row is red" — which was never true here: this workflow
-      # triggers on pull_request and push to main, so it cannot see a tag at all.
+      # triggers on pull_request only (it also ran on push to main until #687
+      # change 3), so it cannot see a tag at all.
       # docs/readiness.md carried the same false claim and was corrected in the
       # same change. The tag-time gate is #269.
       #

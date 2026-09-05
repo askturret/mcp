@@ -39,9 +39,16 @@ commit-time and release-time answers from drifting apart.
 **Commit-time gate** (the `test-integrity` job in `.github/workflows/test.yml`):
 
 1. Runs all 12 test suites referenced above.
-2. On every pull request and every push to `main`, verifies all rows are `✅ met`.
-   It counts only numbered matrix rows and requires exact equality, so a
-   restructured table fails rather than silently passing.
+2. On every pull request, verifies all rows are `✅ met`. It counts only
+   numbered matrix rows and requires exact equality, so a restructured table
+   fails rather than silently passing.
+
+It also ran on every push to `main` until #687 change 3 dropped that trigger
+from `test.yml`. What replaced the post-merge run is the `integrated-tree` job
+in `.github/workflows/reliability-nightly.yml`, which runs the 12 package suites
+against main's tip nightly — it does **not** re-evaluate this matrix. So a
+readiness row that turns red only once two separately-green changes are
+integrated is caught at the next pull request, not on the merge that caused it.
 
 **Release-time gate** (the `readiness` job in `.github/workflows/supply-chain.yml`):
 

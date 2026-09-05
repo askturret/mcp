@@ -10,6 +10,36 @@ permissions:
   contents: read
   pull-requests: read
 
+# SUPERSEDED PR RUNS ARE CANCELLED. NOTHING ELSE EVER IS. (#687)
+#
+# A force-push during review used to leave the previous run executing to
+# completion against a commit nobody would ever merge. On one serial
+# self-hosted runner that run is not merely wasted — it sits in front of live
+# work, so the most actively-revised PR waits longest.
+#
+# DO NOT COPY THE KEY FROM lane-check.yml. That one is a bare
+# `pull_request.number` with an unconditional `cancel-in-progress`, and it is
+# correct THERE because lane-check is PR-only. This workflow also runs on
+# `push: main`, where `pull_request.number` is EMPTY — so that key would drop
+# every main push into one shared group and have them cancel each other,
+# destroying precisely the runs that are load-bearing. Each `push: main` run
+# proves a DISTINCT integrated tree: the PR squashed onto whatever main had
+# become by merge time, which is a tree no pre-merge run ever saw. Cancelling
+# the older one loses the only proof that exists for that SHA.
+#
+# `github.run_id` is unique per run, so every non-PR run becomes a group of
+# one and can never be cancelled by anything. That covers `push` today, and
+# would cover `schedule`, `release` and `workflow_dispatch` unchanged if a
+# trigger is added later — WITHOUT enumerating event names. An enumeration
+# would need updating the next time a trigger is added, and would fail
+# silently when it wasn't.
+#
+# `cancel-in-progress` accepts `${{ }}` and evaluates per run. It is redundant
+# with the group key by design — belt-and-braces, and cheap.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Path filter job - detects which packages changed
   changes:

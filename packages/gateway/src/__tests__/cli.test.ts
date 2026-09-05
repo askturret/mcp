@@ -20,18 +20,47 @@
 
 import { describe, it, expect, afterEach } from '@jest/globals';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { runFromArgv, main } from '../cli.js';
-import { GATEWAY_VERSION } from '../version.js';
 import type { RunningGateway } from '../server.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PETSTORE = join(__dirname, '../../../sources-openapi/src/__tests__/fixtures/petstore.json');
+
+/**
+ * The version `--version` is expected to print, read from the MANIFEST (#621).
+ *
+ * NOT from `../version.js`, and that import is deliberately gone. That is the
+ * constant the CLI itself reads, so asserting the output against it compared
+ * one source against itself and was green for every possible value. It was live
+ * through the 0.1.1 release with `GATEWAY_VERSION` sitting at '0.1.0' — wrong,
+ * published, and in the built public surface — and stayed green throughout.
+ *
+ * The import is removed rather than left unused because leaving it in place is
+ * what lets the tautology grow back: the next assertion written in this file
+ * reaches for the name already in scope.
+ *
+ * WHAT THIS ADDS AND WHAT IT DOES NOT, stated precisely because the overlap is
+ * easy to overclaim. `check-version-literals.mjs` (#601, which landed AFTER
+ * this issue was filed) already pins `GATEWAY_VERSION` against
+ * `packages/gateway/package.json#version`, so the STATIC drift is covered
+ * there. But that guard reads source TEXT and never runs anything. What it
+ * cannot see — and what only this file can — is the RUNTIME observable: that
+ * `--version` actually prints the manifest version. A `cli.ts` printing a
+ * hardcoded string, a stale import, or the wrong field leaves that guard green.
+ *
+ * The two are complementary, not redundant: the guard asserts the CONSTANT
+ * agrees with the manifest, this asserts the OUTPUT does, and neither implies
+ * the other.
+ */
+const MANIFEST_VERSION: string = (
+  JSON.parse(readFileSync(join(__dirname, '../../package.json'), 'utf-8')) as { version?: string }
+).version as string;
 
 const running: RunningGateway[] = [];
 const dirs: string[] = [];
@@ -121,7 +150,15 @@ describe('main', () => {
     expect(written.join('')).toContain('--spec');
   });
 
-  it('prints the version and exits 0', async () => {
+  // Guards the guard, and it is not ceremony here: if the manifest read ever
+  // yields undefined, every version assertion below would be comparing against
+  // it — and the whole point of #621 is that a version assertion which cannot
+  // fail on the value looks identical, in a green log, to one that works.
+  it('read a real version from the manifest to compare against', () => {
+    expect(MANIFEST_VERSION).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
+  it('prints the version from the manifest and exits 0', async () => {
     const written: string[] = [];
     const original = process.stdout.write.bind(process.stdout);
     (process.stdout as { write: unknown }).write = (chunk: string) => {
@@ -133,7 +170,11 @@ describe('main', () => {
 
     (process.stdout as { write: unknown }).write = original;
     expect(code).toBe(0);
-    expect(written.join('')).toContain(GATEWAY_VERSION);
+    // EQUALITY against the manifest, not `toContain` against the constant the
+    // CLI just read (#621). `main` writes exactly `${GATEWAY_VERSION}\n`, so
+    // equality is available — and it is strictly stronger than containment,
+    // which would also pass on '0.1.20' or on the version buried in a banner.
+    expect(written.join('').trim()).toBe(MANIFEST_VERSION);
   });
 
   it('exits 2 — not 1 — on a bad flag', async () => {
@@ -234,9 +275,22 @@ describe('the built binary, invoked as a process', () => {
     const result = runBuilt(['packages/gateway/dist/cli.js', '--version'], repoRoot);
 
     expect(result.status).toBe(0);
-    // The assertion that matters: it produced OUTPUT. A dead entrypoint also
-    // exits 0, so a status check alone would have passed on the broken build.
-    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+$/);
+    // It produced OUTPUT — a dead entrypoint also exits 0, so a status check
+    // alone would have passed on the broken build (#57). That is why this
+    // assertion exists and it is unchanged in purpose.
+    //
+    // STRENGTHENED FROM A SHAPE MATCH TO THE MANIFEST VALUE (#621). This was
+    // `toMatch(/^\d+\.\d+\.\d+$/)`, which is not circular the way line 136 was
+    // — it never mentioned the constant — but it lands in the same place: it
+    // passes for ANY semver-shaped string, so it could not fail on the version
+    // being wrong either. Under-specified rather than tautological; same blind
+    // spot.
+    //
+    // This is the assertion that matters most of the three, because it runs the
+    // BUILT dist/ as a real process — the artifact `npx` and the Dockerfile
+    // ENTRYPOINT actually execute. The in-process test above cannot see a stale
+    // or mis-built dist/ at all.
+    expect(result.stdout.trim()).toBe(MANIFEST_VERSION);
   });
 
   it('prints help when invoked by ABSOLUTE path', () => {

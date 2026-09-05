@@ -447,6 +447,18 @@ Instead:
 
 **Read the bot's analysis before you close it.** Dependabot reports which packages it had to move together and what a lockfile will not resolve, and that reasoning is often the most useful part of the pull request. The licence, NOTICE and SBOM checks a dependency change needs are run on the branch that actually merges, so closing the bot's pull request discards no evidence.
 
+##### Why CI does not run on these pull requests
+
+**Most jobs are skipped on a dependabot pull request, deliberately (#635).** If you are looking at one and wondering where the checks went, this is the answer rather than a bug to file.
+
+The pull request is never a merge candidate, so running the package suites, the licence/SBOM job and the integrity guards on it spends the **single serial runner** — the scarcest resource in this project — on a verdict nobody will act on. The compute is dropped and **the pull request is kept**: the pull request is the notification this whole conversion depends on, and nothing in the mechanism suppresses it.
+
+**The DCO check is a deliberate exception, and it still runs.** Its red is precisely what the section above calls the signal that the pull request needs converting, which makes it the one result here that somebody acts on. The DCO *self-test* is skipped: it exercises `dco-check.sh` against its own fixtures and returns the same answer whatever pull request it is looking at.
+
+The condition is on **authorship** — `github.event.pull_request.user.login`, the forge's own statement of who opened the pull request. Deliberately not the `dependabot/**` branch name, which is forgeable by anyone with push access and drifts with the bot's conventions; and deliberately not `github.actor`, which changes the moment a human pushes a fixup to a bot branch while the convert-and-close disposition does not.
+
+**Nothing is lost, only deferred.** The dependency reaches `main` on the hand-carried branch, where every one of these jobs runs against the same dependency set — so a GPL transitive or a stale NOTICE surfaces there instead. #585, the express upgrade carried by hand after PR #584 was stood down, is the live example.
+
 ## Dependency Licences
 
 Every pull request runs a licence review

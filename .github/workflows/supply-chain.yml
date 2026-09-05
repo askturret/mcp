@@ -23,6 +23,21 @@ jobs:
   # capacity. Two runner slots for one install is a cost worth not paying.
   supply-chain:
     name: Licence review and SBOM
+    # DEPENDABOT: keep the pull request, drop the compute (#635). See the
+    # `changes` job in test.yml for the full reasoning.
+    #
+    # This is the job the "but a dependency PR is exactly where the licence
+    # gate matters" objection is about, so it is worth answering here rather
+    # than only there: the evidence is DEFERRED, NOT LOST. A dependabot PR is
+    # never merged (CONTRIBUTING.md § "Dependabot pull requests: convert and
+    # close"), so the dependency reaches main only on the hand-carried branch
+    # — where this same job runs against the same dependency set. #585 is the
+    # live example.
+    #
+    # The `github.event_name` guard is doing real work here: this workflow
+    # also fires on `push` and on `release`, and neither must ever be skipped
+    # by this condition.
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: [self-hosted, Linux, X64, askturret]
     permissions:
       # `gh release upload` below needs contents: write. The workflow-level

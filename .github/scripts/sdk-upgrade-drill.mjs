@@ -41,8 +41,8 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 const SDK = '@modelcontextprotocol/sdk';
 const BOUNDARY_FILE = 'packages/transports/src/http/index.ts';
@@ -262,17 +262,8 @@ export function runDrill(repoDir = '.') {
   }
 }
 
-function isProcessEntryPoint() {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  try {
-    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
-  } catch {
-    return false;
-  }
-}
 
-if (isProcessEntryPoint()) {
+if (isProcessEntryPoint(import.meta.url)) {
   const result = runDrill(process.argv[2] ?? '.');
   if (result.code === 0) {
     console.log(result.message);

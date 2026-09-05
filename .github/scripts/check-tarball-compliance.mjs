@@ -116,6 +116,47 @@ import { isProcessEntryPoint } from './lib/entry-point.mjs';
 /** Entries every public tarball must carry. */
 export const REQUIRED_TARBALL_ENTRIES = ['README.md', 'LICENSE', 'NOTICE'];
 
+/**
+ * Entries that must be BYTE-IDENTICAL to the repository root's copy (#587).
+ *
+ * PRESENT IS NOT CURRENT, and presence is all this guard used to assert. The
+ * nine per-package copies are snapshots taken when #583 landed;
+ * `generate-notice.mjs` writes only the ROOT `NOTICE`. So the moment a
+ * dependency changes, the root regenerates, the nine keep the old content, and
+ * this guard finds a file named NOTICE in each tarball and exits 0 — nine
+ * tarballs shipping a stale attribution list with every gate agreeing they are
+ * compliant. A presence check passes forever on a file whose content drifted.
+ *
+ * WHY BYTE EQUALITY rather than a hash or a normalised comparison. Measured on
+ * this tree before choosing: all nine NOTICE copies and all nine LICENSE copies
+ * are byte-identical to the root today. So byte equality is the STATUS QUO
+ * being asserted, not a new constraint imposed on the tree — nothing has to
+ * change to satisfy it.
+ *   - A hash is byte equality with an extra step: same verdict, worse failure
+ *     message. It can say "differs" but not what differs.
+ *   - A normalised comparison (trim, collapse whitespace, ignore line endings)
+ *     would accept a copy that RENDERS differently from the root, and the
+ *     normalisation rule is itself a hand-maintained thing that can drift —
+ *     a tuning surface on a compliance check, which is what this repository
+ *     keeps finding it does not want. Byte equality has no tuning surface.
+ *
+ * WHY LICENSE IS HERE TOO, and it is a different risk rather than the same one.
+ * NOTICE regenerates, so its drift is EXPECTED to happen eventually. LICENSE is
+ * static Apache-2.0 text and does not regenerate, so it drifts only by hand
+ * edit or by a licence change that updates the root and misses the copies —
+ * lower probability, higher consequence. Same one-line comparison, same
+ * canonical source, so it is asserted here rather than left inferred.
+ *
+ * WHY README.md IS DELIBERATELY ABSENT. It is NOT a mirror of the root: the
+ * nine READMEs are per-package by design and all nine legitimately differ from
+ * the root README — measured, not assumed. Byte equality would be WRONG for it.
+ * README already has its own content-level assertion from #596 (no
+ * repository-relative links), which is the right property for a file whose
+ * whole point is to be different. Presence-versus-content does not apply to it
+ * in this form.
+ */
+export const MIRRORED_ROOT_ENTRIES = ['NOTICE', 'LICENSE'];
+
 export const EXIT_OK = 0;
 export const EXIT_DIVERGENCE = 1;
 export const EXIT_CANNOT_CHECK = 2;
@@ -381,6 +422,26 @@ export function main(argv, runner = defaultPackRunner) {
     cannotCheck.push('no public packages were discovered under packages/ — nothing was verified');
   }
 
+  // #587: the CANONICAL copies, read ONCE. Reading them inside the per-package
+  // loop would emit the same unreadable-root message nine times for one cause,
+  // which buries the finding in its own repetition.
+  //
+  // A root file that cannot be read is cannot-check, never a pass: the currency
+  // claim has no canonical side to compare against, and "I could not check" is
+  // not "it matched". It is deliberately NOT a divergence either — nothing is
+  // known to have drifted; the question simply went unanswered.
+  const rootMirrors = new Map();
+  for (const entry of MIRRORED_ROOT_ENTRIES) {
+    try {
+      rootMirrors.set(entry, readFileSync(join(repoRoot, entry)));
+    } catch (err) {
+      cannotCheck.push(
+        `the root ${entry} could not be read (${err && err.message}) — no package's ${entry} was ` +
+          'checked for currency against it',
+      );
+    }
+  }
+
   for (const pkg of packages) {
     if (pkg.unreadable) {
       cannotCheck.push(`${pkg.dir}: package.json could not be parsed (${pkg.unreadable})`);
@@ -397,6 +458,38 @@ export function main(argv, runner = defaultPackRunner) {
     for (const required of REQUIRED_TARBALL_ENTRIES) {
       if (!files.has(required)) {
         divergences.push(`${pkg.name}: ${required} is NOT in the published tarball`);
+      }
+    }
+
+    // #587: CURRENCY, not presence — and only once the pack list has
+    // established that this copy is the one that ships. Same ordering the
+    // README content check below uses, for the same reason: when the entry is
+    // absent the presence divergence above has already fired, and reading the
+    // directory copy would be answering a question about a file the tarball
+    // does not contain.
+    for (const entry of MIRRORED_ROOT_ENTRIES) {
+      if (!files.has(entry)) continue;
+      const rootBytes = rootMirrors.get(entry);
+      if (rootBytes === undefined) continue; // root unreadable — already reported once, above
+
+      let pkgBytes;
+      try {
+        pkgBytes = readFileSync(join(repoRoot, pkg.dir, entry));
+      } catch (err) {
+        cannotCheck.push(
+          `${pkg.name}: ${entry} is in the tarball but could not be read from ${pkg.dir} ` +
+            `(${err && err.message}) — it was NOT checked against the root ${entry}`,
+        );
+        continue;
+      }
+
+      if (!rootBytes.equals(pkgBytes)) {
+        divergences.push(
+          `${pkg.name}: ${entry} ships but has DRIFTED from the root ${entry} — the tarball is ` +
+            `compliant in FORM and its contents are stale. Copy the root ${entry} over ` +
+            `${pkg.dir}/${entry}; note that generate-notice.mjs rewrites only the root, so the ` +
+            'per-package copies do not follow it automatically.',
+        );
       }
     }
 
@@ -532,6 +625,7 @@ export function main(argv, runner = defaultPackRunner) {
 
   console.log(
     'check-tarball-compliance: OK — every public tarball carries README.md, LICENSE and NOTICE, ' +
+      'every shipped NOTICE and LICENSE is byte-identical to the repository root copy, ' +
       'every manifest carries repository/homepage/bugs, and no shipped README links to a relative path.',
   );
   return EXIT_OK;

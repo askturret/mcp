@@ -42,6 +42,7 @@ import {
   findRootPublishGuardIssues,
   expectedEntryPoints,
   REQUIRED_TARBALL_ENTRIES,
+  MIRRORED_ROOT_ENTRIES,
   EXIT_OK,
   EXIT_DIVERGENCE,
   EXIT_CANNOT_CHECK,
@@ -68,14 +69,29 @@ function check(desc, actual, expected) {
 /** A README carrying no repository-relative link — the compliant default (#596). */
 const CLEAN_README = '# pkg\n\nSee the [main README](https://github.com/askturret/mcp#readme).\n';
 
+/** The canonical root NOTICE / LICENSE a compliant fixture mirrors (#587). */
+const ROOT_NOTICE = 'AskTurret MCP\nCopyright 2026\n\nThird-party notices follow.\n';
+const ROOT_LICENSE = 'Apache License\nVersion 2.0, January 2004\n';
+
 /**
  * A throwaway workspace tree.
  *
  * Every package also gets a README on disk: since #596 the guard reads the
  * content of the README the pack list says ships, so a fixture without one is
  * a cannot-check rather than the case under test.
+ *
+ * Since #587 the same holds for NOTICE and LICENSE — the guard now asserts each
+ * shipped copy is byte-identical to the ROOT copy, so a fixture missing either
+ * side is a cannot-check rather than the case under test. That is the third
+ * time this helper has grown for exactly that reason (#591's root manifest,
+ * #596's README, now these), which is worth naming: it is what a guard looks
+ * like as it moves from "is it there" to "is it right", and every such step
+ * needs the fixture to carry real content rather than a placeholder.
+ *
+ * `mirrors` writes DIFFERENT content into one package's copy — which is how the
+ * drift arm is driven — or `null` to omit the file entirely.
  */
-function fixture(packages, readmes = {}) {
+function fixture(packages, readmes = {}, mirrors = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'tarball-compliance-'));
   tmpDirs.push(dir);
   // Since #591 the guard also reads the ROOT manifest, so a fixture without one
@@ -86,11 +102,16 @@ function fixture(packages, readmes = {}) {
     join(dir, 'package.json'),
     JSON.stringify({ name: '@fixture/root', private: true, scripts: { prepublishOnly: 'node -e "process.exit(1)"' } }, null, 2),
   );
+  writeFileSync(join(dir, 'NOTICE'), ROOT_NOTICE);
+  writeFileSync(join(dir, 'LICENSE'), ROOT_LICENSE);
   for (const [name, manifest] of Object.entries(packages)) {
     const pkgDir = join(dir, 'packages', name);
     mkdirSync(pkgDir, { recursive: true });
     writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(manifest, null, 2));
     writeFileSync(join(pkgDir, 'README.md'), readmes[name] ?? CLEAN_README);
+    const m = mirrors[name] ?? {};
+    if (m.NOTICE !== null) writeFileSync(join(pkgDir, 'NOTICE'), m.NOTICE ?? ROOT_NOTICE);
+    if (m.LICENSE !== null) writeFileSync(join(pkgDir, 'LICENSE'), m.LICENSE ?? ROOT_LICENSE);
   }
   return dir;
 }
@@ -562,6 +583,117 @@ function runGuard(repoRoot, binDir) {
   check('root guard: the real repository root refuses to publish', findRootPublishGuardIssues(REPO_ROOT).errors.join(' | '), '');
 }
 
+
+// ---------------------------------------------------------------------------
+// #587 — CURRENCY, not presence.
+//
+// The guard used to assert a file NAMED NOTICE was in the tarball, which passes
+// forever on a copy whose content drifted from the root. These arms are the
+// witness that it can now fail on the condition it exists to detect — the thing
+// the presence check never had, and the reason this issue exists at all.
+//
+// Every arm below was confirmed to redden when the currency block is removed;
+// nothing here passes for the reason the OLD guard would have passed.
+// ---------------------------------------------------------------------------
+{
+  check('#587: NOTICE and LICENSE are the mirrored entries', MIRRORED_ROOT_ENTRIES.join(','), 'NOTICE,LICENSE');
+  check(
+    '#587: README is NOT mirrored — it is per-package by design',
+    MIRRORED_ROOT_ENTRIES.includes('README.md'),
+    false,
+  );
+
+  // The compliant case: copies identical to the root.
+  {
+    const dir = fixture({ pkg: PUBLIC_MANIFEST });
+    const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+    check('#587: copies byte-identical to the root exit 0', r.code, EXIT_OK);
+  }
+
+  // THE DRIFT ARM — the whole point. A NOTICE that ships, is named correctly,
+  // and whose content is stale. The old guard exits 0 here.
+  {
+    const dir = fixture({ pkg: PUBLIC_MANIFEST }, {}, { pkg: { NOTICE: 'STALE ATTRIBUTION LIST\n' } });
+    const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+    check('#587: a NOTICE that ships but has DRIFTED is a divergence', r.code, EXIT_DIVERGENCE);
+    check('#587: ...and the message says DRIFTED, not missing', /NOTICE ships but has DRIFTED/.test(r.out), true);
+    check('#587: ...and names the package', /@scope\/pkg/.test(r.out), true);
+  }
+
+  // LICENSE gets the same treatment — different risk profile, same comparison.
+  {
+    const dir = fixture({ pkg: PUBLIC_MANIFEST }, {}, { pkg: { LICENSE: 'MIT License\n' } });
+    const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+    check('#587: a LICENSE that ships but has DRIFTED is a divergence', r.code, EXIT_DIVERGENCE);
+    check('#587: ...and the message says LICENSE, not NOTICE', /LICENSE ships but has DRIFTED/.test(r.out), true);
+  }
+
+  // A ONE-BYTE difference. Byte equality is the claim, so a trailing newline is
+  // drift — asserted explicitly, because it is exactly what a normalised
+  // comparison would have let through and this arm is what stops someone
+  // "helpfully" adding normalisation later.
+  {
+    const dir = fixture({ pkg: PUBLIC_MANIFEST }, {}, { pkg: { NOTICE: `${ROOT_NOTICE}\n` } });
+    const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+    check('#587: a one-byte difference is drift — byte equality means byte equality', r.code, EXIT_DIVERGENCE);
+  }
+
+  // CANNOT-CHECK, not a pass: the copy ships per the pack list but is not on
+  // disk to compare. "I could not check" is never "it matched".
+  {
+    const dir = fixture({ pkg: PUBLIC_MANIFEST }, {}, { pkg: { NOTICE: null } });
+    const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+    check('#587: a shipped NOTICE missing from disk is CANNOT CHECK, not a pass', r.code, EXIT_CANNOT_CHECK);
+    check('#587: ...and says it was NOT checked', /was NOT checked against the root/.test(r.out), true);
+  }
+
+  // An unreadable ROOT is reported ONCE, for the cause, rather than once per
+  // package — and it is cannot-check rather than a divergence, because nothing
+  // is known to have drifted; the question simply went unanswered.
+  {
+    const dir = fixture({ a: publicManifest('a', '@scope/a'), b: publicManifest('b', '@scope/b') });
+    rmSync(join(dir, 'NOTICE'));
+    const runner = (_root, pkgName) => ({
+      status: 0,
+      stdout: JSON.stringify([{ name: pkgName, files: COMPLIANT.map((p) => ({ path: p })) }]),
+      stderr: '',
+    });
+    const r = silently(() => main(['node', GUARD, dir], runner));
+    check('#587: an unreadable root NOTICE is CANNOT CHECK', r.code, EXIT_CANNOT_CHECK);
+    check(
+      '#587: ...reported once for the cause, not once per package',
+      (r.out.match(/the root NOTICE could not be read/g) || []).length,
+      1,
+    );
+  }
+
+  // The ordering rule, shared with the #596 README check: when the entry is
+  // ABSENT from the tarball the presence divergence has already fired, so the
+  // currency check must not add a second finding about the same file.
+  {
+    const dir = fixture({ pkg: PUBLIC_MANIFEST }, {}, { pkg: { NOTICE: 'STALE\n' } });
+    const withoutNotice = COMPLIANT.filter((f) => f !== 'NOTICE');
+    const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(withoutNotice)));
+    check('#587: an ABSENT NOTICE reports presence only, not drift too', /NOTICE ships but has DRIFTED/.test(r.out), false);
+    check('#587: ...and still reports it as not in the tarball', /NOTICE is NOT in the published tarball/.test(r.out), true);
+  }
+
+  // THE REAL REPOSITORY. The fixtures prove the arms exist; this proves the
+  // property actually holds on the tree that ships.
+  {
+    const rootNotice = readFileSync(join(REPO_ROOT, 'NOTICE'));
+    const rootLicense = readFileSync(join(REPO_ROOT, 'LICENSE'));
+    const drifted = discoverPublicPackages(REPO_ROOT)
+      .filter((p) => !p.unreadable)
+      .filter((p) => {
+        const n = readFileSync(join(REPO_ROOT, p.dir, 'NOTICE'));
+        const l = readFileSync(join(REPO_ROOT, p.dir, 'LICENSE'));
+        return !rootNotice.equals(n) || !rootLicense.equals(l);
+      })
+      .map((p) => p.name);
+    check('#587: every real packaged NOTICE and LICENSE matches the root', drifted.join(', ') || 'none', 'none');
+  }
+}
 
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
 

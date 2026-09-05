@@ -452,7 +452,56 @@ export function main(argv) {
   // --- E: MD AGREES ---------------------------------------------------------
   // Value presence, not semantics. See the header: this would have been GREEN
   // on the SDK bug, because that row drifted identically in both copies.
-  for (const value of [contract.matrixVersion, contract.appliesToRelease, ...comparable]) {
+  //
+  // THE TWO HEADER FIELDS ARE ASSERTED IN THEIR AUTHORITATIVE POSITION (#629).
+  //
+  // Bare presence could not see the divergence this check exists for. QA set the
+  // .md's authoritative line back to `2.1.0` while the JSON said `2.2.0` — a
+  // plain one-copy-updated-the-other-not drift — and E stayed GREEN, because
+  // `2.2.0` also occurs four times in the version-history prose and any one
+  // occurrence satisfied `md.includes(value)`.
+  //
+  // AND IT WEAKENS MONOTONICALLY, which is why this is worth changing rather
+  // than noting. The version-history prose grows with every release, so every
+  // version string ever published becomes permanently present in the file. Each
+  // release therefore adds another string that will satisfy this assertion
+  // forever, for the one field whose drift it is meant to catch. It held today
+  // only because both copies happened to be right — luck, not the check.
+  //
+  // NO PARSER, AND NO LOOSER REGEX. The needle is the literal text of the line
+  // that OWNS the value, so what is compared changes while the mechanism —
+  // `md.includes` on a fixed string — does not. Extracting the value with a
+  // pattern matcher instead is the #593 shape this repository has rejected, and
+  // #593 is open about exactly that failure; adopting it here would be a bad
+  // trade for no gain.
+  for (const { field, value, position } of [
+    { field: 'matrixVersion', value: contract.matrixVersion, position: (v) => `Matrix version \`${v}\`` },
+    { field: 'appliesToRelease', value: contract.appliesToRelease, position: (v) => `Applies to release \`${v}\`` },
+  ]) {
+    if (typeof value !== 'string' || value === '') continue;
+
+    const needle = position(value);
+    if (!md.includes(needle)) {
+      // Distinguish the two failures a reader can hit, because the remedy
+      // differs: a value that appears elsewhere is a STALE HEADER LINE, while a
+      // value absent entirely is the ordinary both-copies-must-move case.
+      const elsewhere = md.includes(value);
+      divergences.push(
+        elsewhere
+          ? `docs/compatibility.md does not carry '${needle}', though '${value}' appears elsewhere in the ` +
+            `file — docs/compatibility.json states ${field} '${value}', so the AUTHORITATIVE line is stale ` +
+            `while a version-history mention makes the value look present. Update the header line.`
+          : `docs/compatibility.md does not carry '${needle}', which docs/compatibility.json states as ` +
+            `${field} — the two copies are hand-maintained and must be edited together`,
+      );
+    }
+  }
+
+  // The remaining values stay a PRESENCE test, deliberately. Declared and tested
+  // ranges and entry points live in table cells with no fixed owning phrase, so
+  // there is no authoritative position to pin them to — inventing one would mean
+  // parsing the table, which is the thing ruled out above.
+  for (const value of comparable) {
     if (typeof value !== 'string' || value === '') continue;
     if (!md.includes(value)) {
       divergences.push(

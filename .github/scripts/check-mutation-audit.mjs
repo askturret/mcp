@@ -295,6 +295,45 @@ export const MUTATION_EXEMPT = Object.freeze([
       'Measured with a 25s cap: the mutant does not terminate, while the unmutated self-test finishes in ' +
       'under a second. Non-termination is observable from outside, unlike a suppressed exit code.',
   },
+  // WRITTEN FOR #574 AND DELIBERATELY WITHHELD FROM IT (#577). Landing it there
+  // would have reddened CI knowingly and put a second copy of #573's ledger fix
+  // in flight, racing the original. This entry is that obligation surviving the
+  // merge which closed its parent, and it completes D3's disposition (#560).
+  {
+    script: 'sdk-upgrade-drill.mjs',
+    kind: 'process-exit',
+    // Uniquely identifying: the drill's OTHER process-exit site is
+    // `process.exit(result.code);` at 274, so this text addresses exactly one
+    // site and the ledger's ambiguity refusal is not engaged.
+    source: 'process.exit(130);',
+    reason:
+      'NOT REACHABLE FROM THE SELF-TEST, and the invariant is the SIGNAL DELIVERY MODEL rather than a ' +
+      'neighbouring guard sitting in front of a different path — the distinction #543 turned on. This line ' +
+      "is the body of a `process.once('SIGINT')` handler, and the drill's only long-running work is " +
+      '`build()`, which is `spawnSync`: a BLOCKING call that holds the main thread, so a SIGINT arriving ' +
+      'while the drill works cannot dispatch a JS handler at all. Measured rather than reasoned about — with ' +
+      'a handler installed and SIGINT delivered mid-`spawnSync`, the handler had NOT run when the call ' +
+      'returned after ~358ms, and ran only on the following tick. The residual window after `spawnSync` ' +
+      'returns is not addressable either, because the self-test calls `runDrill()` IN-PROCESS: a SIGINT that ' +
+      'did dispatch would run `process.exit(130)` inside the TEST RUNNER and kill the suite rather than be ' +
+      'observed by it.',
+    unblockedBy:
+      'Running the drill as a SUBPROCESS and signalling it in the window between `spawnSync` returning and ' +
+      'the process exiting would witness this line, because exit code 130 would then be observable from ' +
+      'outside instead of terminating the observer. That is a real test rather than a fabricated witness — ' +
+      "it exercises the handler through the same path an operator's Ctrl-C takes. It is not written here " +
+      'because that window is timing-dependent and a flaky witness is worse than a declared exemption; a ' +
+      'deterministic seam — an injectable signal hook, or the drill exposing its handler — is what should ' +
+      're-open this entry.',
+    maskingExcluded:
+      'ATTEMPTED, not concluded. Neutralised this site — deleted `process.exit(130);` from the handler, ' +
+      'leaving `restore()` — and ran the drill self-test: 40 passed, 0 failed, IDENTICAL to the unmutated ' +
+      'baseline, so no red was produced and none was swallowed. The control that makes that zero a ' +
+      'measurement rather than a blind probe: mutating a DIFFERENT site in the SAME file (`didNotStart` ' +
+      'returning a constant `false`) reddens the same suite to 38 passed, 2 failed. So the suite does load ' +
+      'this module, does execute against it, and does report its failures — the three routes by which a red ' +
+      'could have been masked are excluded by demonstration rather than by assertion.',
+  },
 ]);
 
 /** Fields every entry must carry, non-empty. */

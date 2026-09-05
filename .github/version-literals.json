@@ -1,0 +1,115 @@
+{
+  "$schema-note": [
+    "THE MEMBER LIST #601 ASKED FOR, as a committed artifact rather than a search.",
+    "",
+    "A version-bearing literal is a hardcoded version string in PUBLISHED source.",
+    "The v0.1.2 release hand-corrected five of them and FOUR OF THE FIVE were",
+    "found by searching, not by enumeration. The failure mode is not carelessness:",
+    "a hand-maintained set has no member list anyone can check against.",
+    "",
+    "`check-version-literals.mjs` compares this file against the tree in two",
+    "directions, and THE TWO ARE NOT THE SAME STRENGTH — the same asymmetry the",
+    "label-dependence registry states, for the same reason.",
+    "",
+    "REGISTRY -> TREE is EXHAUSTIVE. Every entry here is checked: its file must",
+    "exist, the declared source line must still be present, and where the entry",
+    "names a canonical source the literal must equal it. This is the direction",
+    "that decays, because an entry nobody compares still READS as guarded.",
+    "",
+    "TREE -> REGISTRY IS BEST-EFFORT. It fails on the undeclared literals it",
+    "finds and is SILENT on the ones it does not. Its reach is a regex for a",
+    "quoted `N.N.N` in non-test `.ts` files under `packages/*/src` — READ",
+    "`discoverLiterals` rather than trusting this sentence. Its known misses are",
+    "pinned as executable assertions in the self-test, so widening the pattern",
+    "reddens the assertion that says a shape is missed and forces this note to be",
+    "corrected in the same change.",
+    "",
+    "IDENTITY IS THE SOURCE LINE, NEVER A LINE NUMBER. A number goes stale on the",
+    "next edit above it and nothing notices; the text is what the guard matches.",
+    "The mutation-audit ledger made the same choice for the same reason.",
+    "",
+    "`mirrors` NAMES THE CANONICAL SOURCE, AND THE GUARD ONLY EVER COMPARES A",
+    "LITERAL TO THE SOURCE ITS OWN ENTRY NAMES. That is what makes the plugin/kit",
+    "exclusion structural rather than an omission: those entries name no manifest,",
+    "so there is NO PATH by which the guard could compare them to a package",
+    "version. Do not 'simplify' this by deriving every literal from package.json —",
+    "that was proposed, refuted from source, and withdrawn, because",
+    "docs/compatibility-policy.md states the plugin API carries its own",
+    "`apiVersion` which moves INDEPENDENTLY of the package version. Deriving them",
+    "would break a published compatibility guarantee."
+  ],
+  "literals": [
+    {
+      "id": "core:VERSION",
+      "path": "packages/core/src/index.ts",
+      "source": "export const VERSION = '0.1.2';",
+      "mirrors": "packages/core/package.json#version",
+      "reason": "The core package's own version, exported for consumers. Mirrors the manifest and must move with it."
+    },
+    {
+      "id": "gateway:GATEWAY_VERSION",
+      "path": "packages/gateway/src/version.ts",
+      "source": "export const GATEWAY_VERSION = '0.1.2';",
+      "mirrors": "packages/gateway/package.json#version",
+      "reason": "A LITERAL BY DELIBERATE DECISION, and that decision survives: the built `dist/` is what `npx` runs, and resolving the manifest from there needs a path that differs between the source tree and the published tarball, so a constant the release bump touches alongside package.json cannot resolve to the wrong file. This guard is what makes 'the release bump touches both' checkable instead of remembered."
+    },
+    {
+      "id": "cli:inspect-server-version",
+      "path": "packages/cli/src/commands/inspect.ts",
+      "source": "version: '0.1.2',",
+      "mirrors": "packages/cli/package.json#version",
+      "reason": "The server version the inspect command reports. Mirrors the cli package version."
+    },
+    {
+      "id": "transports:http-server-version",
+      "path": "packages/transports/src/http/index.ts",
+      "source": "version: '0.1.2',",
+      "mirrors": "packages/transports/package.json#version",
+      "reason": "The server version the HTTP transport advertises. THIS ONE WAS ON NOBODY'S LIST — it is absent from the enumeration #601 was scoped from, and it reads 0.1.2 today by luck rather than by anything checking. It is now a published surface: v0.1.2 shipped to npm with SLSA provenance attached."
+    },
+
+    {
+      "id": "core:PLUGIN_API_VERSION",
+      "path": "packages/core/src/plugin/types.ts",
+      "source": "export const PLUGIN_API_VERSION = '1.0.0';",
+      "mirrors": "none",
+      "reason": "THE PLUGIN API VERSION, NOT A PACKAGE VERSION. docs/compatibility-policy.md states the plugin API carries its own `apiVersion`, which moves INDEPENDENTLY of the package version. Comparing it to packages/core/package.json#version would break that published guarantee — and because `mirrors` is `none`, the guard has no path by which it could."
+    },
+    {
+      "id": "core:plugin-doc-example-version",
+      "path": "packages/core/src/plugin/index.ts",
+      "source": "*     version: '1.0.0',",
+      "mirrors": "none",
+      "reason": "Inside a DOC COMMENT — an illustrative plugin manifest in the module's usage example, not executable code. Declared rather than skipped so the discovery pass has something to match; a literal that is merely ignored is indistinguishable from one nobody looked at."
+    },
+    {
+      "id": "observability:OTEL_EXPORTER_PLUGIN_VERSION",
+      "path": "packages/observability/src/plugin.ts",
+      "source": "export const OTEL_EXPORTER_PLUGIN_VERSION = '1.0.0';",
+      "mirrors": "none",
+      "reason": "A PLUGIN's own version, declared against the plugin API contract rather than the observability package version. Same independence as PLUGIN_API_VERSION."
+    },
+    {
+      "id": "adapter-test:KIT_VERSION",
+      "path": "packages/adapter-test/src/kit.ts",
+      "source": "export const KIT_VERSION = '1.0.0';",
+      "mirrors": "none",
+      "reason": "The conformance kit's API version. NOTE THE COINCIDENCE, because it is a trap: packages/adapter-test/package.json is ALSO 1.0.0 today, so this reads like a manifest mirror and is not one. If the package version moves, this must NOT follow it — the kit version is a contract with consumers of the kit, not a restatement of the release number."
+    },
+    {
+      "id": "adapter-conformance:client-info-version",
+      "path": "packages/adapter-conformance/src/bank.ts",
+      "source": "clientInfo: { name: 'conformance', version: '1.0.0' },",
+      "mirrors": "none",
+      "reason": "The MCP `clientInfo.version` the conformance bank presents to a server under test. It identifies the test client to the protocol, and is not this package's version — packages/adapter-conformance/package.json is 0.1.0, which is what makes that plain."
+    },
+
+    {
+      "id": "cli:openapi-format-default",
+      "path": "packages/cli/src/commands/doctor.ts",
+      "source": "const openApiVersion = (spec as any).openapi || '3.0.0';",
+      "mirrors": "none",
+      "reason": "NOT A VERSION LITERAL AT ALL — an OpenAPI FORMAT default for a document that omits its `openapi` field. Declared rather than excluded by a hardcoded skip in the guard: an exclusion nobody can read is how a real literal eventually hides behind a pattern exception."
+    }
+  ]
+}

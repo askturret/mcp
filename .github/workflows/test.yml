@@ -521,6 +521,22 @@ jobs:
       - name: Label-dependent checks are declared, and the declarations hold
         run: node .github/scripts/check-label-dependence.mjs .
 
+      # #601: version-bearing literals in published source. `VERSION = '0.1.0'`
+      # shipped from a 0.1.1 package, and the v0.1.2 release hand-corrected five
+      # of them where FOUR were found by searching rather than by enumeration —
+      # a hand-maintained set with no member list anyone can check against.
+      #
+      # Self-tested first, like every guard here, and for the same reason as the
+      # one above: its discovery pattern DECIDES which literals are candidates,
+      # so a false negative quietly shrinks the registry's meaning instead of
+      # failing loudly. The self-test pins that pattern's known blind spots as
+      # executable assertions, so widening it reddens there first.
+      - name: Self-test the version-literal registry guard
+        run: node .github/scripts/check-version-literals.test.mjs
+
+      - name: Version literals match the canonical source each declares
+        run: node .github/scripts/check-version-literals.mjs .
+
       # PART A ONLY (#535). Declaration integrity: every registered site carries
       # a well-formed block, drawn from a closed vocabulary, with each property
       # tagged as the vocabulary classifies it. Bidirectional — a registered

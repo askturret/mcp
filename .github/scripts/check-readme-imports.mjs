@@ -484,6 +484,28 @@ export function classifyLeakProbe(result) {
 }
 
 /**
+ * The sentinel's verdict for one room: probe, then classify.
+ *
+ * A NAMED UNIT SO THE COMPOSITION ITSELF IS WITNESSED (#615). The two halves
+ * were already asserted apart, and that was NOT enough — measured: swapping the
+ * call in `main` back to the execute-based `probeImport` left the entire suite
+ * GREEN at 90/0, because every assertion drove `probeRootResolves` directly and
+ * nothing said which probe the SENTINEL actually used.
+ *
+ * That is the #573 Part 3 shape — a repair shipped with only its pieces
+ * witnessed, so the mechanism could be deleted with the suite passing — and it
+ * is worth more attention here than elsewhere, because the thing being reverted
+ * would restore a SILENT PASS rather than a loud failure.
+ *
+ * `main` calls this and nothing else for the sentinel, so a revert has to happen
+ * HERE, where the tests are looking.
+ */
+export function sentinelVerdict(cleanRoom, rootName, run = spawnSync) {
+  const result = probeRootResolves(cleanRoom, rootName, run);
+  return { verdict: classifyLeakProbe(result), detail: result.detail };
+}
+
+/**
  * Whether the leak sentinel applies to this repository at all.
  *
  * Separated so the SKIP branch is executable rather than only readable: reaching
@@ -595,12 +617,13 @@ export function main(argv, run = spawnSync) {
       // ERR_MODULE_NOT_FOUND as "this name does not exist" — so a root pointing
       // at a module with a missing INNER import read as proof of isolation.
       // Resolution has no reachable set, so the question has one meaning.
-      const leak = probeRootResolves(room.dir, rootName, run);
-
-      // Branch on the CLASSIFICATION. Only "genuinely not found" proves
-      // isolation; anything else is a leak or an unanswered question, and
-      // neither of those is a pass.
-      const verdict = classifyLeakProbe(leak);
+      // Only "genuinely not found" proves isolation; anything else is a leak or
+      // an unanswered question, and neither of those is a pass.
+      //
+      // Routed through `sentinelVerdict` rather than composed inline, so the
+      // COMPOSITION is what the tests hold: composing it here left a revert to
+      // the execute-based probe invisible at 90/0.
+      const { verdict, detail } = sentinelVerdict(room.dir, rootName, run);
 
       if (verdict === 'leak') {
         console.error(`\n⚠️  CANNOT CHECK — '${rootName}' resolved inside the clean room.`);
@@ -617,7 +640,7 @@ export function main(argv, run = spawnSync) {
       }
 
       if (verdict === 'indeterminate') {
-        console.error(`\n⚠️  CANNOT CHECK — the leak sentinel could not run: ${leak.detail}`);
+        console.error(`\n⚠️  CANNOT CHECK — the leak sentinel could not run: ${detail}`);
         console.error('   Isolation was therefore never established, and an unproven room is not a clean one.');
         console.error('   This is NOT a pass. No documented import was verified.');
         return EXIT_CANNOT_CHECK;

@@ -36,6 +36,7 @@ import {
   markdownFiles,
   probeImport,
   probeRootResolves,
+  sentinelVerdict,
   EXIT_OK,
   EXIT_CANNOT_CHECK,
 } from './check-readme-imports.mjs';
@@ -487,6 +488,53 @@ const okNpm = () => ({ status: 0, stdout: '', stderr: '' });
     const r = probeRootResolves('/nonexistent', '@askturret/mcp', brokenSpawn);
     check('a probe that could not spawn is indeterminate', r.reason, 'indeterminate');
     check('...never clean', classifyLeakProbe(r) === 'clean', false);
+  }
+
+  // -------------------------------------------------------------------------
+  // THE COMPOSITION, NOT JUST ITS HALVES.
+  //
+  // Everything above drives `probeRootResolves` directly, and that left the
+  // actual repair unwitnessed: swapping `main`'s sentinel back to the
+  // execute-based `probeImport` kept the whole suite GREEN at 90/0. Measured,
+  // not supposed — which is why `sentinelVerdict` exists as a named unit and
+  // why these assert THROUGH it.
+  //
+  // A revert now has to happen inside `sentinelVerdict`, which these cover, and
+  // `main` calls nothing else for the sentinel.
+  // -------------------------------------------------------------------------
+  {
+    const dir = mkdtempSync(join(tmpdir(), 'sentinel-verdict-'));
+    tmpDirs.push(dir);
+    const pkgDir = join(dir, 'node_modules', 'innerbroken');
+    mkdirSync(pkgDir, { recursive: true });
+    writeFileSync(
+      join(pkgDir, 'package.json'),
+      JSON.stringify({ name: 'innerbroken', type: 'module', exports: { '.': './index.js' } }),
+    );
+    writeFileSync(join(pkgDir, 'index.js'), "import 'nothing-of-the-sort';\nexport const x = 1;\n");
+
+    // QA's reproduction, through the composition the guard actually uses.
+    // Under the execute-based probe this whole path returned 'clean'.
+    check(
+      'sentinelVerdict: a name that resolves through a broken module is a LEAK',
+      sentinelVerdict(dir, 'innerbroken').verdict,
+      'leak',
+    );
+
+    // The positive control. Without it the assertion above is satisfied by a
+    // composition that returns 'leak' for everything.
+    check(
+      'sentinelVerdict: a genuinely absent name is still CLEAN',
+      sentinelVerdict(dir, 'no-such-package-anywhere').verdict,
+      'clean',
+    );
+
+    // And the detail is carried through, so the operator message is not blank.
+    check(
+      'sentinelVerdict: carries the probe detail for the message',
+      typeof sentinelVerdict(dir, 'innerbroken').detail === 'string',
+      true,
+    );
   }
 
   // probeImport must actually EMIT these codes — a predicate keyed on codes

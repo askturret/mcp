@@ -61,11 +61,19 @@ import {
   existsSync,
   linkSync,
   copyFileSync,
+  chmodSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+
+// #581: the same helpers check-mutation-audit uses for this exact distinction.
+// Imported rather than reimplemented — an inlined copy of `didNotStart` that
+// dropped `spawnFailureDetail`'s undefined-`error` defence is #443 finding 2,
+// and this module is import-safe (its entry point is behind
+// `isProcessEntryPoint`), so importing it executes nothing.
+import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
 
 // `fileURLToPath`, NOT `new URL(...).pathname` — the latter percent-encodes, so a
 // checkout path containing a space resolves to a file that does not exist. That is
@@ -144,13 +152,68 @@ function fixture({ workspaces = ['packages/*'], packages = {} }) {
   return dir;
 }
 
-/** Run the guard against a fixture root, through its real entry point. */
+/**
+ * Run the guard against a fixture root, through its real entry point.
+ *
+ * THREE OUTCOMES, NOT TWO (#581). `spawnSync` reports `status: null` for two
+ * entirely different events, and this harness used to return only `status`:
+ *
+ *   - the process NEVER STARTED       -> `error` is set (ENOENT, EACCES, ...)
+ *   - the process ran and was KILLED  -> `error` is undefined, `signal` is set
+ *
+ * Returning `code: null` for both made a could-not-check present as a result —
+ * in the file whose own site exists to draw exactly that distinction (#429). It
+ * surfaced as an intermittent `expected 2, got null` whose real cause was a
+ * relocated interpreter killed by SIGABRT (`dyld: Library not loaded:
+ * @rpath/libnode.141.dylib`), with the empty output making the NEXT assertion
+ * fail as a consequence — one failure wearing the signature of two.
+ *
+ * `didNotStart` and `spawnFailureDetail` are IMPORTED rather than reimplemented.
+ * `didNotStart` is `status === null`, so it is true for BOTH rows above, and
+ * `spawnFailureDetail` is the reason it exists: a caller that tests the
+ * condition and then reads `result.error.message` dereferences `undefined` on a
+ * signalled run — #443 finding 2, an inlined copy that kept the condition and
+ * dropped its defence. `outcome` is what separates the two rows, which
+ * `didNotStart` alone deliberately does not.
+ */
 function run(dir, { execPath = process.execPath, env = {} } = {}) {
   const r = spawnSync(execPath, [GUARD, dir], {
     encoding: 'utf-8',
     env: { ...process.env, ...env },
   });
-  return { code: r.status, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+
+  const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
+
+  // `error` is tested FIRST because it is the only field that identifies a
+  // spawn that never happened. Testing `signal` first would misreport an
+  // ENOENT as a signal death on any platform that sets both.
+  if (r.error) {
+    return { code: null, outcome: 'spawn-failed', signal: r.signal ?? null, detail: spawnFailureDetail(r), out };
+  }
+  if (didNotStart(r)) {
+    // No status and no error: the child ran and something killed it. Report the
+    // signal by name — an OOM kill is a different operator action from a
+    // missing shared library, and collapsing them throws that away.
+    return { code: null, outcome: 'killed-by-signal', signal: r.signal ?? null, detail: spawnFailureDetail(r), out };
+  }
+  return { code: r.status, outcome: 'exited', signal: null, detail: null, out };
+}
+
+/**
+ * The cannot-check message for a child that produced no exit status.
+ *
+ * Shared by its callers so the wording cannot drift between sites, and it
+ * always carries the head of the child's output: a dyld failure prints its
+ * reason there and nowhere else, so a message without it sends the next reader
+ * off to reproduce what this run had already observed.
+ */
+function noStatusDetail(label, r) {
+  const head = r.out.trim().split('\n').slice(0, 3).join(' | ') || '(no output)';
+  return (
+    `${label} — the child produced NO EXIT STATUS (${r.outcome}: ${r.detail}). That is an ` +
+    `ENVIRONMENT limitation, not a verdict about the guard, so it is declared rather than ` +
+    `asserted against. First output: ${head}`
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +227,98 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
   const r = run(dir);
   check('CONTROL: a declared-exempt package with no test files passes', r.code, 0);
   check('CONTROL: ...and the run says what it examined', /1 package\(s\)/.test(r.out), true);
+}
+
+// ---------------------------------------------------------------------------
+// THESE RUN BEFORE THE RELOCATION SITE, AND THAT ORDER IS LOAD-BEARING (#581).
+//
+// Measured while writing them: spawning the RELOCATED interpreter poisons the
+// NEXT spawn of the REAL one in this process. Isolated by varying one factor at
+// a time — with only PATH changed the following control passes; with only the
+// interpreter changed it dies with SIGABRT and a dyld error naming the TEMP
+// path, from a child launched at the interpreter's real location:
+//
+//   only PATH varied:        control / relocated / control  ->  0 / 0 / 0
+//   only interpreter varied: control / relocated / control  ->  0 / 0 / SIGABRT
+//
+// The relocation is a HARDLINK, so the temp name and the real binary are the
+// SAME INODE. The shape is consistent with dyld caching loader state per inode
+// and retaining the temp directory as the `@rpath` base — which is INFERRED,
+// not read. What is MEASURED is the ordering effect, and that is all this
+// comment relies on: a spawn placed after the site cannot be trusted on macOS.
+//
+// So do not move these below the site, and think twice before adding any new
+// spawning case there — it would fail for a reason unrelated to what it
+// asserts. Repairing the relocation so the child can resolve its libraries is
+// deliberately NOT in this change (#581 acceptance 4): making the failure
+// legible is a different piece of work from making it stop.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// run()'s THREE OUTCOMES, WITNESSED DIRECTLY (#581).
+//
+// The failure that motivated this is a ~5% intermittent driven by dyld state,
+// which is no basis for a regression test: a suite that can only observe the
+// distinction when a flake happens to fire is a suite that does not observe it.
+// These drive the two no-status branches DELIBERATELY instead, and they are
+// platform-independent in a way the dyld mechanism is not.
+//
+// Note what is asserted: that `run()` REPORTS the difference. Whether a
+// relocated interpreter can resolve its libraries is a separate question, and
+// deliberately not this diff's (#581 acceptance 4).
+// ---------------------------------------------------------------------------
+{
+  // EXITED — the ordinary path. Without it the two below are satisfied by a
+  // `run()` that reports every outcome as a failure.
+  const dir = fixture({
+    packages: { clean: { pkg: { name: 'clean', askturret: { testsNotRequired: 'a fixture' } } } },
+  });
+  const r = run(dir);
+  check('run(): a child that exits normally reports outcome "exited"', r.outcome, 'exited');
+  check('run(): ...and carries its status rather than null', r.code, 0);
+  check('run(): ...and reports no failure detail', r.detail, null);
+}
+
+{
+  // SPAWN-FAILED — an interpreter that does not exist. `error` is set, so this
+  // must NOT be reported as a signal death.
+  const dir = fixture({ packages: {} });
+  const r = run(dir, { execPath: join(dir, 'no-such-interpreter') });
+  check('run(): a spawn that never happens reports outcome "spawn-failed"', r.outcome, 'spawn-failed');
+  check('run(): ...and still yields code null', r.code, null);
+  check('run(): ...and names the spawn error rather than "(none reported)"', /ENOENT|EACCES|ENOTDIR/.test(r.detail), true);
+}
+
+{
+  // KILLED-BY-SIGNAL — the row the old harness could not express, and the one
+  // the reported intermittent actually was. A tiny executable that signals
+  // itself gives a deterministic signal death with no `error` set.
+  //
+  // POSIX-only: `kill` and the shebang are both unavailable on Windows, so this
+  // DECLARES rather than failing there — the same discipline the ladder below
+  // uses, applied to this witness.
+  if (process.platform === 'win32') {
+    cannotCheck('run(): the killed-by-signal witness needs a POSIX shell and `kill`; not available on win32');
+  } else {
+    const dir = fixture({ packages: {} });
+    const suicide = join(dir, 'self-terminate');
+    writeFileSync(suicide, '#!/bin/sh\nkill -TERM $$\n');
+    chmodSync(suicide, 0o755);
+
+    const r = run(dir, { execPath: suicide });
+    check('run(): a child killed by a signal reports outcome "killed-by-signal"', r.outcome, 'killed-by-signal');
+    check('run(): ...and names the signal', r.signal, 'SIGTERM');
+    check('run(): ...and says so in the detail rather than "(none reported)"', r.detail, 'killed by signal SIGTERM');
+    // THE DISTINCTION ITSELF. Both rows yield `code: null`, so a harness that
+    // returned only `status` reported them identically — the whole defect. This
+    // pins that they are now separable.
+    check('run(): ...and is NOT reported as a failed spawn', r.outcome === 'spawn-failed', false);
+    check(
+      'run(): the cannot-check message carries the outcome and the signal',
+      /killed-by-signal: killed by signal SIGTERM/.test(noStatusDetail('x', r)),
+      true,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,6 +362,8 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
   const relocated = join(binDir, 'node');
 
   let rung = null;
+  // null while the site has not run; the run()'s outcome once it has (#581).
+  let siteOutcome = null;
   try {
     linkSync(process.execPath, relocated);
     rung = 'hardlink';
@@ -278,15 +435,42 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
       0,
     );
     const r = run(dir, { execPath: relocated, env: { PATH: binDir } });
-    check('site: npm that cannot start exits 2', r.code, 2);
-    check('site: ...and says it COULD NOT BE CHECKED', /COULD NOT BE CHECKED/.test(r.out), true);
-    // THE DISTINCTION THIS SITE EXISTS FOR (#429): a measurement that could not
-    // be taken must not be reported as a defect in the thing being measured.
-    check(
-      'site: ...and does NOT report it as a package that runs no tests',
-      /do not execute any tests/.test(r.out),
-      false,
-    );
+    siteOutcome = r.outcome;
+
+    if (r.outcome !== 'exited') {
+      // THE LADDER'S FOURTH RUNG (#581). The interpreter relocated, so the two
+      // rungs above did not fire — but the child then produced no exit status.
+      // On this host the observed cause is dyld killing it with SIGABRT:
+      // Homebrew's node reaches libnode through `@rpath`, which resolves
+      // relative to the binary and so finds nothing from a temp directory.
+      //
+      // Declared rather than asserted, for the reason this site exists at all:
+      // the guard was never consulted, so "expected 2, got null" would report a
+      // defect in the thing being measured when the measurement never happened.
+      // That is the #429 misattribution, committed by the file built to prevent
+      // it — and the empty output made the NEXT assertion fail too, so one
+      // environmental event wore the signature of two guard defects.
+      //
+      // It does NOT pass silently: the count is reconciled below, so a host
+      // that takes this rung says so in the summary.
+      cannotCheck(
+        noStatusDetail(
+          `site: npm-cannot-start is unwitnessed here — the interpreter relocated via ${rung}, ` +
+            'but the relocated child could not run',
+          r,
+        ),
+      );
+    } else {
+      check('site: npm that cannot start exits 2', r.code, 2);
+      check('site: ...and says it COULD NOT BE CHECKED', /COULD NOT BE CHECKED/.test(r.out), true);
+      // THE DISTINCTION THIS SITE EXISTS FOR (#429): a measurement that could not
+      // be taken must not be reported as a defect in the thing being measured.
+      check(
+        'site: ...and does NOT report it as a package that runs no tests',
+        /do not execute any tests/.test(r.out),
+        false,
+      );
+    }
   }
 
   // THE COUNTER IS RECONCILED AGAINST THE BRANCH ACTUALLY TAKEN (#561).
@@ -300,7 +484,20 @@ function run(dir, { execPath = process.execPath, env = {} } = {}) {
   //
   // It reconciles the COUNT against the BRANCH; it does not re-implement the
   // counting. That distinction is what keeps it off the Transcribed-Oracle list.
-  const expectedCannotChecks = rung === null || !existsSync(relocated) || npmFoundIn.length > 0 ? 1 : 0;
+  //
+  // #581 ADDS A FOURTH CONDITION, and it differs in kind from the other three:
+  // they are all knowable BEFORE the site runs, whereas "the child produced no
+  // exit status" is only knowable AFTER. Hence `siteOutcome` — null when the
+  // site never ran, and the outcome when it did. This still recomputes from the
+  // branch actually taken rather than counting the announcements, so it remains
+  // a reconciliation and not a transcription.
+  const expectedCannotChecks =
+    rung === null ||
+    !existsSync(relocated) ||
+    npmFoundIn.length > 0 ||
+    (siteOutcome !== null && siteOutcome !== 'exited')
+      ? 1
+      : 0;
   check(
     'summary: the cannot-check figure matches the branch this host actually took',
     cannotChecked,

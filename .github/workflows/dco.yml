@@ -30,6 +30,21 @@ jobs:
   # commits fails here rather than silently passing every PR.
   dco-self-test:
     name: DCO checker self-test
+    # DEPENDABOT: dropped, unlike the `dco` job above (#635).
+    #
+    # The distinction is which job produces a result anybody acts on. `dco`
+    # stays because its RED is the documented conversion signal:
+    # CONTRIBUTING.md § "Dependabot pull requests: convert and close" says a
+    # bot commit carries no sign-off, so the check "fails by construction" and
+    # that failure "is the signal that the pull request needs converting".
+    # Skipping it would delete a documented signal to save one checkout.
+    #
+    # This job asserts nothing about the pull request in front of it — it
+    # tests dco-check.sh against its own fixtures, and the answer is identical
+    # on every PR. On a dependabot PR that is pure serial-runner time, so it
+    # goes. It still runs on every human PR, which is where a change to the
+    # checker actually arrives.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4

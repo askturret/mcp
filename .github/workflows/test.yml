@@ -13,6 +13,39 @@ permissions:
 jobs:
   # Path filter job - detects which packages changed
   changes:
+    # DEPENDABOT: KEEP THE PULL REQUEST, DROP THE COMPUTE (#635).
+    #
+    # A dependabot pull request is never a merge candidate — CONTRIBUTING.md
+    # § "Dependabot pull requests: convert and close" retires it as a
+    # hand-carried issue. Running the package suites on the single serial
+    # runner therefore spends the scarcest resource in this project on a
+    # verdict nobody will act on.
+    #
+    # This skips the COMPUTE only. Nothing here suppresses the pull request
+    # itself, which is the notification the conversion depends on, and no
+    # `.github/dependabot.yml` exists to change that.
+    #
+    # KEYED ON AUTHORSHIP, NOT BRANCH NAME. `dependabot/**` branch names are
+    # forgeable by anyone with push access and they drift with dependabot's
+    # own conventions; `pull_request.user.login` is the forge's own statement
+    # of who opened it. Note this reads the PR AUTHOR rather than
+    # `github.actor` deliberately: a human pushing a fixup to a dependabot
+    # branch changes the actor while the authorship — and so the
+    # convert-and-close disposition — is unchanged.
+    #
+    # The `github.event_name` guard keeps `push` to main unaffected, so the
+    # post-merge run is never skipped by this.
+    #
+    # THE EVIDENCE IS DEFERRED, NOT LOST: the hand-carried branch runs the
+    # same suites, so a GPL transitive or a stale NOTICE surfaces there
+    # instead (#585 is the live example).
+    #
+    # The 12 package jobs below need this one and gate on its outputs, so
+    # they skip with it and carry no condition of their own — one gate, not
+    # thirteen. `coverage-status` and `test-integrity` DO carry it: the first
+    # is `if: always()` and the second needs nothing, so neither inherits the
+    # skip.
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: [self-hosted, Linux, X64, askturret]
     outputs:
       core: ${{ steps.filter.outputs.core }}
@@ -384,7 +417,11 @@ jobs:
       - test-gateway
       - test-cli
       - test-reliability
-    if: always()
+    # `always()` means this does NOT inherit the skip when `changes` is
+    # skipped, so the dependabot condition is repeated here (#635). Both
+    # clauses are load-bearing: drop `always()` and a failing suite stops the
+    # coverage signal being reported at all.
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -400,6 +437,8 @@ jobs:
   # runs on every PR regardless of which paths changed, because test integrity
   # is not scoped to a package.
   test-integrity:
+    # Needs nothing, so it does not inherit `changes`'s skip (#635).
+    if: github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4

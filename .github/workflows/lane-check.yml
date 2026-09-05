@@ -85,7 +85,14 @@ jobs:
     # `GITHUB_EVENT_PATH`, so gate and script now agree BY CONSTRUCTION rather
     # than by coincidence. Non-`ci:cheap` PRs still skip, so `priority:*` /
     # `team:*` / `status:*` churn on them costs nothing.
-    if: contains(github.event.pull_request.labels.*.name, 'ci:cheap')
+    #
+    # The second clause is #635: a dependabot PR is converted and closed
+    # rather than merged, so its lane claim is never acted on. See the
+    # `changes` job in test.yml for the reasoning and for why this keys on
+    # authorship rather than on the branch name.
+    if: >-
+      contains(github.event.pull_request.labels.*.name, 'ci:cheap')
+      && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4

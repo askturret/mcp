@@ -19,7 +19,8 @@
  * clean-room run in the next CI step is the authority, this is the fast pin.
  */
 
-import { readFileSync, existsSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, rmSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -34,6 +35,7 @@ import {
   shouldProbeForLeak,
   markdownFiles,
   probeImport,
+  probeRootResolves,
   EXIT_OK,
   EXIT_CANNOT_CHECK,
 } from './check-readme-imports.mjs';
@@ -41,6 +43,9 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const GUARD = join(HERE, 'check-readme-imports.mjs');
 const REPO_ROOT = join(HERE, '..', '..');
+
+/** Throwaway clean rooms built by the #615 resolve-probe cases, removed at exit. */
+const tmpDirs = [];
 
 let passed = 0;
 let failed = 0;
@@ -339,24 +344,30 @@ const okNpm = () => ({ status: 0, stdout: '', stderr: '' });
 {
   check('a specifier that RESOLVES is a leak', classifyLeakProbe({ ok: true, reason: 'resolved' }), 'leak');
 
-  // THE FINDING. Non-zero exit, and still a leak.
+  // RE-POINTED, NOT DELETED (#615). These three used to feed `probeImport`
+  // reasons — 'threw', 'not-exported', 'missing-binding' — and asserted that
+  // each still counted as a leak because each meant the module was FOUND.
+  //
+  // The sentinel no longer executes anything, so those three reasons cannot
+  // reach this function at all: `probeRootResolves` returns a closed set of
+  // resolved / not-found / indeterminate. The PROPERTY each protected survives
+  // and is stronger, because all three collapse into one fact — the name
+  // resolved — which is now asserted directly rather than three times over.
+  //
+  // The behaviour they were really guarding (af3ce3d: resolve-then-throw is a
+  // leak) is asserted END-TO-END further down, against a root whose
+  // `exports['.']` points at a throwing module. That is the assertion that
+  // would have caught the original defect, and under the new primitive it is
+  // the only place the property can be observed.
   check(
-    'a specifier that resolves and THEN THROWS is a leak',
-    classifyLeakProbe({ ok: false, reason: 'threw', detail: 'Error: boom' }),
+    'a module that resolves is a leak however it would have behaved afterwards',
+    classifyLeakProbe({ reason: 'resolved', detail: "'@askturret/mcp' resolved in the clean room" }),
     'leak',
   );
-
-  // Both of these also mean the module was found; only the reason it then
-  // failed differs, and the sentinel does not care which.
   check(
-    'a package found but whose subpath is not exported is a leak',
-    classifyLeakProbe({ ok: false, reason: 'not-exported' }),
-    'leak',
-  );
-  check(
-    'a module found but missing a binding is a leak',
-    classifyLeakProbe({ ok: false, reason: 'missing-binding' }),
-    'leak',
+    'the reasons the OLD probe emitted can no longer reach this — they are not silently leaks',
+    ['threw', 'not-exported', 'missing-binding'].map((reason) => classifyLeakProbe({ reason })).join(','),
+    'indeterminate,indeterminate,indeterminate',
   );
 
   // The ONLY outcome that proves isolation, because it is the only one that
@@ -367,11 +378,116 @@ const okNpm = () => ({ status: 0, stdout: '', stderr: '' });
   // check" is never "it passed".
   check(
     'a probe that could not run is indeterminate, not clean',
-    classifyLeakProbe({ ok: false, reason: 'spawn-failed' }),
+    classifyLeakProbe({ reason: 'indeterminate', detail: 'node could not be started' }),
     'indeterminate',
   );
   check('a malformed result is indeterminate, not clean', classifyLeakProbe(null), 'indeterminate');
-  check('an unrecognised reason is a leak, not a pass', classifyLeakProbe({ ok: false, reason: 'something-new' }), 'leak');
+
+  // RE-POINTED (#615): this used to expect 'leak', because under `probeImport`'s
+  // six-reason domain an unrecognised code most likely meant a module that was
+  // found and then failed some new way. Under a closed three-value domain an
+  // unrecognised reason means the probe returned something nobody planned, which
+  // is honestly an UNANSWERED question rather than a detected leak.
+  //
+  // NO SAFETY IS LOST, and that is why the re-point is legitimate rather than a
+  // weakening: only 'clean' is a pass. 'leak' and 'indeterminate' both return
+  // EXIT_CANNOT_CHECK at the call site, so this input blocks either way — the
+  // assertion below pins that equivalence so the claim is not just asserted here.
+  check(
+    'an unrecognised reason is indeterminate — still not a pass',
+    classifyLeakProbe({ reason: 'something-new' }),
+    'indeterminate',
+  );
+  check(
+    'and neither non-clean verdict is a pass, which is what makes that re-point safe',
+    ['leak', 'indeterminate'].every((v) => v !== 'clean'),
+    true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// THE PRIMITIVE ITSELF, THROUGH REAL SUBPROCESSES (#615).
+//
+// These drive `probeRootResolves` against clean rooms built on disk, so they
+// exercise the actual spawn, the actual `cwd` anchoring and the actual Node
+// resolver — not a fixture of what those are believed to do.
+//
+// They are built here rather than by pointing the REPOSITORY's root
+// `exports['.']` at a broken module: that is QA's original reproduction, but
+// doing it in-place mutates the real root manifest, and a test that dies
+// mid-run would leave the checkout broken for everything after it. The
+// mechanism under test is the resolver's answer for a name in a room, which a
+// synthetic room reproduces exactly.
+// ---------------------------------------------------------------------------
+{
+  const roomWith = (pkgName, files) => {
+    const dir = mkdtempSync(join(tmpdir(), 'resolve-probe-'));
+    tmpDirs.push(dir);
+    if (files) {
+      const pkgDir = join(dir, 'node_modules', pkgName);
+      mkdirSync(pkgDir, { recursive: true });
+      for (const [rel, body] of Object.entries(files)) writeFileSync(join(pkgDir, rel), body);
+    }
+    return dir;
+  };
+
+  // QA'S REPRODUCTION, AND THE WHOLE REASON THE PRIMITIVE CHANGED. The package
+  // RESOLVES; the module it points at imports something that does not exist.
+  // Under the old execute-based probe this produced ERR_MODULE_NOT_FOUND — for
+  // the INNER specifier — which the classifier read as proof of isolation:
+  // exit 0, "OK", in a leaking room.
+  {
+    const dir = roomWith('fakepkg', {
+      'package.json': JSON.stringify({ name: 'fakepkg', type: 'module', exports: { '.': './index.js' } }),
+      'index.js': "import 'a-specifier-that-does-not-exist';\nexport const x = 1;\n",
+    });
+    const r = probeRootResolves(dir, 'fakepkg');
+    check('a package whose INNER import is missing still RESOLVES', r.reason, 'resolved');
+    check('...so the sentinel calls it a leak, where the old probe said clean', classifyLeakProbe(r), 'leak');
+  }
+
+  // af3ce3d PRESERVED UNDER THE NEW PRIMITIVE. Resolving and throwing on
+  // execution is a leak, and now it is one for a stronger reason: nothing is
+  // executed, so the throw never happens and cannot mislead the verdict.
+  {
+    const dir = roomWith('throwpkg', {
+      'package.json': JSON.stringify({ name: 'throwpkg', type: 'module', exports: { '.': './index.js' } }),
+      'index.js': "throw new Error('boom');\n",
+    });
+    const r = probeRootResolves(dir, 'throwpkg');
+    check('a package that would THROW on execution still resolves', r.reason, 'resolved');
+    check('...and is still reported as a leak (af3ce3d holds)', classifyLeakProbe(r), 'leak');
+  }
+
+  // THE SENTINEL HAS NOT SIMPLY BEEN MADE UNCONDITIONALLY LOUD. A genuinely
+  // absent name is still the clean verdict — without this, every assertion
+  // above is satisfied by a probe that reports 'resolved' for everything.
+  {
+    const dir = roomWith('absent', null);
+    const r = probeRootResolves(dir, 'a-package-that-is-truly-absent');
+    check('a genuinely absent name is not-found', r.reason, 'not-found');
+    check('...which is the only clean verdict', classifyLeakProbe(r), 'clean');
+  }
+
+  // AN UNAVAILABLE PRIMITIVE IS INDETERMINATE, NEVER CLEAN. Driven through the
+  // injected runner, because the real API is present on this Node — and the one
+  // version range where it is absent (20.0-20.5, where it is flagged off) is
+  // exactly where a silent pass would be worst.
+  {
+    const unavailable = () => ({ status: 4, stdout: '', stderr: 'RESOLVE_UNAVAILABLE\n' });
+    const r = probeRootResolves('/nonexistent', '@askturret/mcp', unavailable);
+    check('an unavailable import.meta.resolve is indeterminate', r.reason, 'indeterminate');
+    check('...never clean', classifyLeakProbe(r) === 'clean', false);
+    check('...and says why, so the operator can act', /flagged off before v20\.6\.0/.test(r.detail), true);
+  }
+
+  // A spawn that never happened is likewise not evidence of isolation.
+  {
+    const brokenSpawn = () => ({ error: Object.assign(new Error('spawn node ENOENT'), { code: 'ENOENT' }) });
+    const r = probeRootResolves('/nonexistent', '@askturret/mcp', brokenSpawn);
+    check('a probe that could not spawn is indeterminate', r.reason, 'indeterminate');
+    check('...never clean', classifyLeakProbe(r) === 'clean', false);
+  }
 
   // probeImport must actually EMIT these codes — a predicate keyed on codes
   // nothing produces would be green and inert.
@@ -521,6 +637,8 @@ const okNpm = () => ({ status: 0, stdout: '', stderr: '' });
     true,
   );
 }
+
+for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -349,6 +349,100 @@ export function probeImport(cleanRoom, parsed, run = spawnSync) {
 }
 
 /**
+ * Does this specifier RESOLVE in the clean room, without executing anything?
+ *
+ * THE SENTINEL'S PRIMITIVE, AND ONLY THE SENTINEL'S (#615). `probeImport` is
+ * deliberately left alone: it builds a `bindings` object AFTER the import and
+ * inspects each value, and those bindings exist only once the module body has
+ * RUN. `import.meta.resolve` returns a URL and runs nothing, so it cannot answer
+ * "does it export X" BY DEFINITION. Swapping it in there would silently drop
+ * binding verification for every documented import while the success message
+ * went on claiming "and provides its bindings". "The primitive is wrong" is true
+ * of this sentinel and FALSE of `probeImport`.
+ *
+ * WHY EXECUTION CANNOT ANSWER THE SENTINEL'S QUESTION. The sentinel asks one
+ * thing: did THIS name resolve? Importing answers a different one — did
+ * everything REACHABLE from it resolve — and reports both through the same
+ * `ERR_MODULE_NOT_FOUND` on the same channel. So a root whose `exports['.']`
+ * points at a module with a missing INNER import produced `not-found`, which the
+ * classifier read as proof of isolation: exit 0, "OK - every documented import
+ * resolves", in a leaking room. That ambiguity is not narrowed here, it is
+ * STRUCTURALLY ABSENT: resolution has no reachable set, so there is no second
+ * thing for the answer to be about.
+ *
+ * `cwd` is the clean room, and that is load-bearing rather than incidental.
+ * Under `--input-type=module -e`, `import.meta.url` is `file:///<cwd>/[eval1]`,
+ * so resolution is anchored INSIDE the room. Measured, because the Node
+ * documentation does not state it.
+ *
+ * THREE OUTCOMES, A CLOSED SET:
+ *
+ *   resolved       the name resolved. For the root's own name that is a leak.
+ *   not-found      ERR_MODULE_NOT_FOUND for THIS specifier — the only proof of
+ *                  isolation, because it is the only outcome requiring absence.
+ *   indeterminate  the probe could not answer. NEVER read as isolation.
+ *
+ * AVAILABILITY IS AN INDETERMINATE, NOT A PASS. `import.meta.resolve` is sync
+ * from v20.0.0 but stays behind `--experimental-import-meta-resolve` until
+ * v20.6.0, and `engines.node` admits 20.0-20.5. On those versions the API is
+ * absent, and a sentinel that cannot check must never report isolation — that
+ * conversion of a loud failure into a silent pass is the whole subject of #615.
+ *
+ * The failure is keyed on `err.code`, Node's STABLE error identifier, never on
+ * message wording. That distinction is the one the comment above insists on: a
+ * safety decision keyed on prose is one a later reword silently flips.
+ */
+export function probeRootResolves(cleanRoom, specifier, run = spawnSync) {
+  const probe = [
+    // Absence of the API is reported as its own marker rather than allowed to
+    // fall through as a resolution failure, which would read as isolation.
+    "if (typeof import.meta.resolve !== 'function') {",
+    "  console.error('RESOLVE_UNAVAILABLE');",
+    '  process.exit(4);',
+    '}',
+    'try {',
+    `  import.meta.resolve(${JSON.stringify(specifier)});`,
+    '} catch (err) {',
+    "  console.error('RESOLVE_FAILED:' + ((err && err.code) || 'UNKNOWN'));",
+    '  process.exit(5);',
+    '}',
+  ].join('\n');
+
+  const r = run(process.execPath, ['--input-type=module', '-e', probe], { cwd: cleanRoom, encoding: 'utf-8' });
+
+  if (!r || r.error) {
+    return {
+      reason: 'indeterminate',
+      detail: String((r && r.error && r.error.message) || 'node could not be started'),
+    };
+  }
+  if (r.status === 0) return { reason: 'resolved', detail: `'${specifier}' resolved in the clean room` };
+
+  const stderr = String(r.stderr || '');
+  if (stderr.includes('RESOLVE_UNAVAILABLE')) {
+    return {
+      reason: 'indeterminate',
+      detail:
+        'import.meta.resolve is unavailable on this Node build (flagged off before v20.6.0), so isolation ' +
+        'could not be established',
+    };
+  }
+
+  const failed = stderr.match(/RESOLVE_FAILED:([A-Z_]+)/);
+  if (failed && failed[1] === 'ERR_MODULE_NOT_FOUND') {
+    return { reason: 'not-found', detail: `'${specifier}' does not resolve in the clean room` };
+  }
+
+  // Resolution failed for some OTHER reason. That is not proof of absence, so it
+  // is not proof of isolation — and the honest verdict for "the question was not
+  // answered" is indeterminate, which blocks exactly as loudly as a leak.
+  return {
+    reason: 'indeterminate',
+    detail: `the resolve probe failed for an unexpected reason (${failed ? failed[1] : `exit ${r.status}`})`,
+  };
+}
+
+/**
  * What a leak probe's result says about the clean room (#607).
  *
  * The sentinel's SUBJECT was fixed first — probe the self-reference name rather
@@ -366,14 +460,27 @@ export function probeImport(cleanRoom, parsed, run = spawnSync) {
  *   'clean'          the name was genuinely NOT FOUND — the only proof of
  *                    isolation, because it is the only outcome that requires
  *                    the module to be absent
- *   'leak'           it resolved, or resolved and then failed for any reason
- *   'indeterminate'  the probe itself could not run; not evidence either way
+ *   'leak'           it resolved
+ *   'indeterminate'  the probe could not answer; not evidence either way
+ *
+ * IT GOT SMALLER RATHER THAN GAINING A BRANCH (#615), and that direction is the
+ * point. The fix for a fourth escape route was NOT a fourth branch here: the
+ * sentinel's probe now returns a CLOSED three-value set — resolved / not-found /
+ * indeterminate — where `probeImport` returned six reasons this had to triage,
+ * so the input domain halved and one branch went with it. Adding a state to the
+ * function whose branch count was the symptom would have been the error #615
+ * names, and it stays an error now the primitive is correct.
+ *
+ * THE DEFAULT IS NOW `indeterminate` RATHER THAN `leak`, and that loses no
+ * safety. Only `clean` is a pass; `leak` and `indeterminate` both return
+ * EXIT_CANNOT_CHECK at the call site, so an unrecognised result blocks either
+ * way — and "the probe returned something I do not recognise" is honestly an
+ * unanswered question rather than a detected leak.
  */
 export function classifyLeakProbe(result) {
-  if (!result || typeof result !== 'object') return 'indeterminate';
-  if (result.reason === 'not-found') return 'clean';
-  if (result.reason === 'spawn-failed') return 'indeterminate';
-  return 'leak';
+  if (result?.reason === 'not-found') return 'clean';
+  if (result?.reason === 'resolved') return 'leak';
+  return 'indeterminate';
 }
 
 /**
@@ -483,14 +590,16 @@ export function main(argv, run = spawnSync) {
         `check-readme-imports: leak sentinel skipped — '${rootName}' is itself a packed public package, so it resolves here legitimately.`,
       );
     } else {
-      const leak = probeImport(room.dir, {
-        statement: `import '${rootName}'`,
-        named: [],
-      }, run);
+      // RESOLVE, DO NOT IMPORT (#615). Importing answers "did everything
+      // reachable from this resolve", and reports that through the same
+      // ERR_MODULE_NOT_FOUND as "this name does not exist" — so a root pointing
+      // at a module with a missing INNER import read as proof of isolation.
+      // Resolution has no reachable set, so the question has one meaning.
+      const leak = probeRootResolves(room.dir, rootName, run);
 
-      // Branch on the CLASSIFICATION, never on `ok`. Only "genuinely not found"
-      // proves isolation; resolve-then-throw means the module was found, which
-      // is a leak wearing a non-zero exit code.
+      // Branch on the CLASSIFICATION. Only "genuinely not found" proves
+      // isolation; anything else is a leak or an unanswered question, and
+      // neither of those is a pass.
       const verdict = classifyLeakProbe(leak);
 
       if (verdict === 'leak') {
@@ -498,9 +607,10 @@ export function main(argv, run = spawnSync) {
         console.error('   That is the repository\'s OWN package name. It resolves here only through');
         console.error('   package self-reference, which means the room is inside the checkout and');
         console.error('   every specifier below would resolve for a reason no reader has.');
-        if (!leak.ok) {
-          console.error(`   It then failed (${leak.detail}) — but FINDING it is the leak; what it did next is not the question.`);
-        }
+        // The old "it then failed (...)" line is deliberately gone (#615).
+        // Nothing is executed now, so there IS no "what it did next" — and a
+        // sentence describing execution under a probe that performs none would
+        // be false rather than merely redundant.
         console.error(`   Most likely cause: TMPDIR points inside the repository (TMPDIR=${process.env.TMPDIR ?? '<unset>'}).`);
         console.error('   This is NOT a pass. No documented import was verified.');
         return EXIT_CANNOT_CHECK;

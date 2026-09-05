@@ -2,8 +2,14 @@
 
 What AskTurret MCP supports, and — just as importantly — what it does not.
 
-**Applies to release `0.1.2`. Matrix version `2.2.0`.**
+**Applies to release `0.1.2`. Matrix version `2.3.0`.**
 
+> **`2.3.0` makes the enforcement claim itself checkable** — check **I** compares
+> this document's check table, and the same list in the JSON, against the checks
+> the guard actually defines. Additive on the same grounds as the two below, and
+> no supported range moved. Until it existed, the passage describing what is
+> enforced was the one part of this contract nothing re-derived (#630).
+>
 > **`2.2.0` widens enforcement** — see [What this matrix is not](#what-this-matrix-is-not).
 > A minor bump on the same grounds `2.1.0` was one: adapter-level `declared` /
 > `source`, row-level `verifiedBy`, and the three checks around them are
@@ -185,6 +191,16 @@ the split matters:
   | **F** | a row carrying a `version` declares neither a `source` on its parent nor its own `verifiedBy` |
   | **G** | no ✅ row covers the major the lockfile actually installs |
   | **H** | a `verifiedBy` names a file that does not exist |
+  | **I** | this table, or the same list in the JSON, disagrees with the checks the guard defines |
+
+  **I arrived in `2.3.0` (#630), and it is why this table can now be trusted.** Until
+  it existed, `contract.enforcement` and this table were prose that no check compared
+  against anything — and this section had already gone stale once, claiming a
+  versioned row naming no `source` fails the build after **F** stopped making that
+  true. **I** compares the LETTER SET and the COUNT in both copies against the checks
+  the guard actually defines. It does **not** read the descriptions: reword what **C**
+  means and nothing fires. That is the bound, and it is stated because the way this
+  passage went stale before was a description rather than a letter.
 
   **F, G and H arrived in `2.2.0`.** F also changed what *enrolment* means: a row is
   enrolled by carrying a `version`, not by carrying a `declared`. So a version-bearing

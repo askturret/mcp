@@ -1311,8 +1311,11 @@ const DELTA_FIGURES = Object.freeze([
  *      instrument has yet recorded and the one that most changes #431's
  *      precondition. Decreases are reported with the same prominence.
  *
- *   2. RECLASSIFICATION IS NOT REGRESSION. `witnessed + unwitnessed +
- *      cannot-check sites = failure sites`. When the total holds and the parts
+ *   2. RECLASSIFICATION IS NOT REGRESSION. The identity is the one
+ *      `partitionIdentity()` renders from PARTITION_VERDICTS, and is
+ *      deliberately NOT restated here: this comment carried a stale three-term
+ *      copy of it for the whole of #651, asserting it in the present tense as
+ *      the premise of this very argument. When the total holds and the parts
  *      move, sites changed CATEGORY rather than appearing or vanishing — which
  *      is exactly what a non-green baseline produces (#429), and what a naive
  *      delta between a local and a CI run would report as a phantom loss of
@@ -1712,10 +1715,12 @@ async function auditIn(rootDir, { onProgress, exempt, mutate, selfTestTimeoutMs 
     unreachableSites: unreachable.reduce((n, r) => n + r.sites, 0),
     cannotCheck: measured.filter((g) => g.status === 'cannot-check').length,
     // SITES, not scripts (#438). The scripts figure cannot close the partition:
-    // witnessed + unwitnessed + cannotCheckSites = sites is what makes a drop in
-    // `witnessed` legible as a RECLASSIFICATION rather than a regression, and
-    // that distinction is the whole difference between a real movement and the
-    // #429 environment artifact.
+    // the identity `partitionIdentity()` renders needs cannot-check counted AS
+    // SITES, and that is what makes a drop in `witnessed` legible as a
+    // RECLASSIFICATION rather than a regression — the whole difference between a
+    // real movement and the #429 environment artifact. The term list is NOT
+    // repeated here; this comment held a stale three-term copy of it, which is
+    // how the same defect survived inside the change that fixed it.
     cannotCheckSites: measured
       .filter((g) => g.status === 'cannot-check')
       .reduce((n, g) => n + g.sites.length, 0),

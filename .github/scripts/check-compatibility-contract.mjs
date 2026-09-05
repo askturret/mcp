@@ -46,6 +46,9 @@
  *   G  SUPPORTED = INSTALLED  an adapter row marked `supported` must cover the
  *                        major the lockfile actually installs. (#618)
  *   H  THE TEST EXISTS  a `verifiedBy` must name a file that is there. (#618)
+ *   I  ENFORCEMENT = CHECKS  `contract.enforcement` must enumerate the same
+ *                        check letters this guard defines — set equality and
+ *                        the count, not a reading of the prose. (#630)
  *
  * CHECK A IS THE ONE THAT KEEPS THE REST HONEST. Without it the guard silently
  * covers only the entries somebody remembered to annotate — which is the opt-in

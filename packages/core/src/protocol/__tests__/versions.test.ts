@@ -7,11 +7,15 @@
  * `2025-06-18` onto `mcp.protocol.version` on every span — so the attribute
  * named after the protocol version reported one the server had never spoken.
  *
- * The last describe block is what stops that recurring: it asserts the
- * agreement itself, not just each value.
+ * The last TWO describe blocks are what stop that recurring, and they cover
+ * different pairings: the constant against the supported SET, and the constant
+ * against the published CONTRACT. Neither implies the other.
  */
 
 import { describe, it, expect } from '@jest/globals';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
 
 import {
   MCP_PROTOCOL_VERSION,
@@ -19,6 +23,48 @@ import {
   isSupportedProtocolVersion,
   negotiateProtocolVersion,
 } from '../versions.js';
+
+/**
+ * The published contract, READ rather than restated (#640).
+ *
+ * This test was named `is the version docs/compatibility.md publishes as
+ * supported` and asserted `toBe('2024-11-05')` — a hardcoded literal. It pinned
+ * the constant honestly, but it never opened the document, so it could not
+ * observe the pairing its own name claimed. Not a check that fails to run: a
+ * check that runs, passes, and is MISLABELLED — which is more durable, because
+ * nothing ever fails to draw attention to it.
+ *
+ * WHY THE TEST NOW READS THE DOCUMENT rather than the name being corrected to
+ * match the weaker assertion. Both were legitimate options; this one was chosen
+ * because the pairing turns out to be covered by NOTHING ELSE.
+ * `check-compatibility-contract.mjs` walks only entries carrying a `declared`
+ * key, and `protocol.mcp.protocolVersion` carries none — verified by running
+ * its own `declaredEntries` export over the real contract, which returns five
+ * entries, the only protocol-adjacent one being `protocol.mcp.sdk`. So this is
+ * not duplicating a guard; without it the constant and the document can diverge
+ * with nothing anywhere noticing. Renaming would have made the file honest and
+ * left the gap open.
+ *
+ * BOTH COPIES ARE READ, deliberately. `compatibility.md` and
+ * `compatibility.json` are hand-maintained in parallel and neither derives from
+ * the other — they have drifted before (#625 found the OpenAPI rows saying
+ * different things). Asserting only one would leave the other free to rot, so
+ * the pairing is checked against each.
+ *
+ * Reading a repository document from a package test is established practice
+ * here, not a new coupling: `sources-openapi`'s `from-openapi.test.ts` reads
+ * this same file the same way.
+ */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..');
+
+const CONTRACT_JSON = JSON.parse(
+  readFileSync(join(REPO_ROOT, 'docs', 'compatibility.json'), 'utf-8'),
+) as { protocol?: { mcp?: { protocolVersion?: string } } };
+
+const CONTRACT_MD = readFileSync(join(REPO_ROOT, 'docs', 'compatibility.md'), 'utf-8');
+
+/** The `| MCP protocol version | \`…\` | ✅ Supported |` row's published value. */
+const MD_PROTOCOL_VERSION = /^\|\s*MCP protocol version\s*\|\s*`([^`]+)`\s*\|/m.exec(CONTRACT_MD)?.[1];
 
 describe('negotiateProtocolVersion', () => {
   it('accepts a client that asks for the version we speak', () => {
@@ -97,10 +143,36 @@ describe('the announced version and the supported set agree', () => {
     expect(SUPPORTED_MCP_PROTOCOL_VERSIONS).toContain(MCP_PROTOCOL_VERSION);
   });
 
-  it('is the version docs/compatibility.md publishes as supported', () => {
-    // compatibility.md is a VERSIONED CONTRACT. If this constant changes
+});
+
+describe('the announced version and the published contract agree', () => {
+  // Its own describe block, not folded into the one above (#640). That one is
+  // about the constant versus the supported SET — both of which live in
+  // versions.ts. This is the constant versus a DOCUMENT, which is a different
+  // pairing with a different failure mode, and nesting it under the other made
+  // the parent block's subject wrong too.
+
+  // Guards the guard, and it is load-bearing rather than ceremony: if either
+  // read yields undefined, the assertions below would compare against undefined
+  // and could no longer fail on the thing they exist to detect. That is exactly
+  // the defect this issue is about, so it must not be reintroduced through the
+  // fixture.
+  it('read a version out of both contract copies to compare against', () => {
+    expect(CONTRACT_JSON.protocol?.mcp?.protocolVersion).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(MD_PROTOCOL_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('matches the version docs/compatibility.json publishes', () => {
+    // compatibility.json is a VERSIONED CONTRACT. If this constant changes
     // without that document changing, one of the two is lying to adopters —
     // and the document is the one they read.
-    expect(MCP_PROTOCOL_VERSION).toBe('2024-11-05');
+    expect(MCP_PROTOCOL_VERSION).toBe(CONTRACT_JSON.protocol?.mcp?.protocolVersion);
+  });
+
+  it('matches the version docs/compatibility.md publishes', () => {
+    // The prose copy is read separately because it is maintained by hand
+    // alongside the JSON rather than generated from it, so the two can drift
+    // apart independently of the code.
+    expect(MCP_PROTOCOL_VERSION).toBe(MD_PROTOCOL_VERSION);
   });
 });

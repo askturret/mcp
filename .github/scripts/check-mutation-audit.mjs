@@ -848,6 +848,69 @@ export function createReplica(rootDir) {
 }
 
 /**
+ * Every verdict a site can carry, and therefore every bucket the partition sums.
+ *
+ * DERIVED FROM `auditGuard`, not from the totals block — the two disagreeing is
+ * exactly the defect this list exists to prevent (#651). `auditGuard` emits
+ * five: `witnessed` and `unwitnessed` from the self-test result, plus
+ * `not-mutatable`, `unparseable` and `did-not-terminate` from the three paths
+ * that reach no verdict by running the test.
+ *
+ * The partition summed the FIRST TWO and cannot-check sites, so the other three
+ * fell through it. Only `not-mutatable` occurs today — one ledger-gated site —
+ * which is why the gap read as an off-by-one rather than as a missing class.
+ */
+export const PARTITION_VERDICTS = new Set([
+  'witnessed',
+  'unwitnessed',
+  'not-mutatable',
+  'unparseable',
+  'did-not-terminate',
+]);
+
+/**
+ * Sites the partition cannot account for, NAMED.
+ *
+ * Two ways a site escapes, and they are reported apart because the remedies
+ * differ: a site with no result at all means a path through `auditGuard`'s loop
+ * emitted nothing, while a result whose verdict is not in `PARTITION_VERDICTS`
+ * means a SIXTH verdict was added without being given a bucket. The second is
+ * the one that will happen again, and it is why this checks membership rather
+ * than counting five known names.
+ *
+ * Guards with status `cannot-check` are skipped: their sites are counted
+ * wholesale by `cannotCheckSites`, since the run reached no per-site verdict
+ * for any of them.
+ */
+/** Sites carrying a given verdict, across measured guards. */
+function countVerdict(measured, verdict) {
+  return measured.reduce((n, g) => n + g.results.filter((r) => r.verdict === verdict).length, 0);
+}
+
+export function unaccountedSites(guards) {
+  const orphans = [];
+  for (const g of guards) {
+    if (g.status === 'cannot-check') continue;
+    const verdictAt = new Map();
+    for (const r of g.results) verdictAt.set(`${r.line}\u0000${r.kind}`, r.verdict);
+    for (const s of g.sites) {
+      const verdict = verdictAt.get(`${s.line}\u0000${s.kind}`);
+      if (verdict === undefined) {
+        orphans.push({ name: g.name, line: s.line, kind: s.kind, reason: 'no verdict was recorded for it' });
+      } else if (!PARTITION_VERDICTS.has(verdict)) {
+        orphans.push({
+          name: g.name,
+          line: s.line,
+          kind: s.kind,
+          reason: `verdict \`${verdict}\` belongs to no bucket — add it to PARTITION_VERDICTS and to the totals`,
+        });
+      }
+    }
+  }
+  return orphans;
+}
+
+/**
  * Audit one guard.
  *
  * The guard is mutated in place WITHIN THE REPLICA and restored from the
@@ -1239,13 +1302,80 @@ const DELTA_FIGURES = Object.freeze([
  *      indistinguishable from "nothing moved", which is the failure this whole
  *      instrument exists to catch.
  */
-export function inventoryDelta(previousMarkdown, totals) {
+/**
+ * @param {string|null} previousMarkdown
+ * @param {object} totals
+ * @param {object[]} [guards] - measured guards, so the partition check can NAME
+ *   the sites it cannot account for (#651). Optional: a caller with only totals
+ *   still gets the arithmetic, and reports that it could not localise rather
+ *   than reporting that there is nothing to localise.
+ */
+/**
+ * Does every failure site land in exactly one bucket, and if not, WHICH?
+ *
+ * Separated from `inventoryDelta` because it is a property of a SINGLE run.
+ * Folding it into the delta is what let it be skipped whenever there was no
+ * previous inventory to compare against.
+ *
+ * @returns {{ok: boolean, lines: string[]}}
+ */
+function partitionFindings(totals, guards) {
+  const lines = [];
+  const partitionNow =
+    totals.witnessed +
+    totals.unwitnessed +
+    (totals.notMutatable ?? 0) +
+    (totals.unparseable ?? 0) +
+    (totals.didNotTerminate ?? 0) +
+    totals.cannotCheckSites;
+  const orphans = guards === null ? null : unaccountedSites(guards);
+
+  if (partitionNow === totals.sites && (orphans === null || orphans.length === 0)) return { ok: true, lines };
+
+  lines.push('');
+  lines.push(
+    `**Partition does not close:** witnessed + unwitnessed + not-mutatable + unparseable + ` +
+      `did-not-terminate + cannot-check sites = ${partitionNow}, against ${totals.sites} failure sites. ` +
+      `Treat every figure above as unexplained until that is understood.`,
+  );
+
+  if (orphans === null) {
+    // "I could not localise" is not "there is nothing to localise" — the
+    // distinction this repository keeps paying for. Said rather than implied.
+    lines.push('');
+    lines.push('The offending sites were NOT localised: this caller passed no guards.');
+  } else if (orphans.length > 0) {
+    lines.push('');
+    lines.push(`${orphans.length} site(s) in no bucket:`);
+    for (const o of orphans) lines.push(`  - ${o.name} line ${o.line} (${o.kind}) — ${o.reason}`);
+  } else {
+    // The sum is wrong but every site carries a counted verdict, so the fault is
+    // in the arithmetic rather than in the measurement. Distinguished, because
+    // "cannot localise" and "localised to nothing" are different reports.
+    lines.push('');
+    lines.push(
+      'Every site carries a counted verdict, so the discrepancy is in this sum rather than in the ' +
+        'measurement. Check the totals block against the verdicts `auditGuard` can emit.',
+    );
+  }
+  return { ok: false, lines };
+}
+
+export function inventoryDelta(previousMarkdown, totals, guards = null) {
   const lines = [];
   const previous = parseInventoryTotals(previousMarkdown);
+
+  // COMPUTED BEFORE THE EARLY RETURN, because it is a property of THIS run
+  // alone and has nothing to do with having a predecessor (#651). It used to
+  // sit after this branch, so a run with no readable previous inventory — the
+  // first run on any fresh checkout — never checked its own accounting, and
+  // reported "could not compare" as though that were the whole story.
+  const partition = partitionFindings(totals, guards);
 
   if (previous === null) {
     lines.push('**Could not compare.** No previous inventory was readable, so this revision has');
     lines.push('no measured predecessor. That is not the same as "nothing moved".');
+    lines.push(...partition.lines);
     return lines;
   }
 
@@ -1275,13 +1405,14 @@ export function inventoryDelta(previousMarkdown, totals) {
   // The partition check. Stated whichever way it comes out: a conserved total
   // with moving parts is a reclassification, and a moving total is a real
   // change in the measured population.
-  const partitionNow = totals.witnessed + totals.unwitnessed + totals.cannotCheckSites;
-  if (partitionNow !== totals.sites) {
-    lines.push('');
-    lines.push(
-      `**Partition does not close:** witnessed + unwitnessed + cannot-check sites = ${partitionNow}, ` +
-        `against ${totals.sites} failure sites. Treat every figure above as unexplained until that is understood.`,
-    );
+  //
+  // IT NAMES THE SITES (#651). Reporting only that a sum is wrong hands the
+  // next reader the entire search — which is what happened: the gap stood at
+  // one site across two hosts and three days, and localising it took reading
+  // every verdict the audit can produce. A discrepancy you cannot localise is
+  // barely better than no discrepancy at all.
+  if (!partition.ok) {
+    lines.push(...partition.lines);
   } else if (moved.some((m) => m.label === 'witnessed' || m.label === 'unwitnessed')) {
     const sitesMoved = moved.some((m) => m.label === 'failure sites');
     lines.push('');
@@ -1353,6 +1484,15 @@ export function renderInventory(report, previousMarkdown = null) {
   lines.push(`- unreachable (no self-test, #431): **${report.totals.unreachableSites}** sites across ${report.totals.unreachable} scripts`);
   lines.push(`- cannot check (non-green baseline): **${report.totals.cannotCheck}** scripts`);
   lines.push(`- cannot check, as sites: **${report.totals.cannotCheckSites}**`);
+  // Printed even at zero, because these are the buckets the partition used to
+  // omit (#651) and a bucket that appears only when non-empty is one nobody
+  // knows to look for. `not-mutatable` is the ledger-gated state — a site
+  // deliberately never mutated because its mutation does not terminate (#558),
+  // so it has no verdict to compare and legitimately belongs to none of the
+  // other three. It is a FOURTH STATE, not an off-by-one.
+  lines.push(`- not mutatable (ledger-gated, #558): **${report.totals.notMutatable}**`);
+  lines.push(`- unparseable mutation: **${report.totals.unparseable}**`);
+  lines.push(`- mutation did not terminate: **${report.totals.didNotTerminate}**`);
   lines.push(
     `- exemptions on the ledger (#532): **${report.exemptions?.entries ?? 0}** — ` +
       `${report.exemptions?.undispositioned ?? report.totals.unwitnessed} unwitnessed site(s) carry no entry`,
@@ -1369,7 +1509,7 @@ export function renderInventory(report, previousMarkdown = null) {
   lines.push('differ — see caveat 2 — so a delta between a local run and a CI one would report');
   lines.push('movement that is an artifact of where it ran. This says which it compared.');
   lines.push('');
-  lines.push(...inventoryDelta(previousMarkdown, report.totals));
+  lines.push(...inventoryDelta(previousMarkdown, report.totals, report.guards));
   lines.push('');
   lines.push(...SEED_PROVENANCE);
   lines.push('');
@@ -1558,6 +1698,16 @@ async function auditIn(rootDir, { onProgress, exempt, mutate, selfTestTimeoutMs 
     cannotCheckSites: measured
       .filter((g) => g.status === 'cannot-check')
       .reduce((n, g) => n + g.sites.length, 0),
+    // THE THREE VERDICTS THE PARTITION USED TO OMIT (#651).
+    //
+    // A site reaching one of these has a verdict — it is measured, and the
+    // ledger reads `not-mutatable` to honour a gated entry — but none of them
+    // was in the sum, so each was silently outside the accounting. Only
+    // `not-mutatable` occurs today, at exactly one site, which is why the gap
+    // presented as an off-by-one rather than as a missing class of three.
+    notMutatable: countVerdict(measured, 'not-mutatable'),
+    unparseable: countVerdict(measured, 'unparseable'),
+    didNotTerminate: countVerdict(measured, 'did-not-terminate'),
     noSites,
   };
 

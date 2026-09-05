@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # ADR-024: A check's output must vary with the fact it reports
 
-**Status:** Accepted (#652)
+**Status:** Accepted (#654)
 
 ## Context
 

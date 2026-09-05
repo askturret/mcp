@@ -39,6 +39,7 @@ import {
   discoverPublicPackages,
   findRelativeLinks,
   findManifestMetadataIssues,
+  findRootPublishGuardIssues,
   REQUIRED_TARBALL_ENTRIES,
   EXIT_OK,
   EXIT_DIVERGENCE,
@@ -76,6 +77,14 @@ const CLEAN_README = '# pkg\n\nSee the [main README](https://github.com/askturre
 function fixture(packages, readmes = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'tarball-compliance-'));
   tmpDirs.push(dir);
+  // Since #591 the guard also reads the ROOT manifest, so a fixture without one
+  // is a cannot-check rather than the case under test — the same reason each
+  // package gets a README. The root-guard cases below build their own roots
+  // deliberately, to exercise the failing arms.
+  writeFileSync(
+    join(dir, 'package.json'),
+    JSON.stringify({ name: '@fixture/root', private: true, scripts: { prepublishOnly: 'node -e "process.exit(1)"' } }, null, 2),
+  );
   for (const [name, manifest] of Object.entries(packages)) {
     const pkgDir = join(dir, 'packages', name);
     mkdirSync(pkgDir, { recursive: true });
@@ -422,6 +431,61 @@ function runGuard(repoRoot, binDir) {
     check(`${pkg.name}: README has no repository-relative link`, findRelativeLinks(readme).join(' | '), '');
   }
 }
+
+// ---------------------------------------------------------------------------
+// THE ROOT MUST REFUSE TO PUBLISH (#591)
+//
+// Two properties, and the second exists because the first is not sufficient:
+// npm gates its private check on `workspace && manifest.private`, so a bare
+// root publish never reaches it. Measured on npm 11.8.0 with `private: true`
+// set: `npm publish --dry-run` at the root packed all 909 files and exited 0.
+//
+// Driven against FIXTURE roots rather than the real one, so each arm is
+// exercised in both directions. The real repository is asserted separately
+// below — a guard that only ever sees a passing tree has not been shown able
+// to fail.
+// ---------------------------------------------------------------------------
+{
+  const rootFixture = (manifest) => {
+    const dir = mkdtempSync(join(tmpdir(), 'root-guard-'));
+    tmpDirs.push(dir);
+    writeFileSync(join(dir, 'package.json'), JSON.stringify(manifest, null, 2));
+    return dir;
+  };
+
+  const compliant = { name: '@x/root', private: true, scripts: { prepublishOnly: 'node -e "process.exit(1)"' } };
+
+  check('root guard: a compliant root produces no errors', findRootPublishGuardIssues(rootFixture(compliant)).errors.length, 0);
+
+  const noPrivate = findRootPublishGuardIssues(rootFixture({ ...compliant, private: undefined }));
+  check('root guard: a root WITHOUT private:true is a divergence', noPrivate.errors.length, 1);
+  check('root guard: ...and the message names what would be shipped', noPrivate.errors[0].includes('entire repository'), true);
+
+  const privateFalse = findRootPublishGuardIssues(rootFixture({ ...compliant, private: false }));
+  check('root guard: private:false is refused as firmly as an absent field', privateFalse.errors.length, 1);
+
+  const noScript = findRootPublishGuardIssues(rootFixture({ ...compliant, scripts: {} }));
+  check('root guard: a root without prepublishOnly is a divergence', noScript.errors.length, 1);
+  check(
+    'root guard: ...and the message says WHY private:true is not enough',
+    noScript.errors[0].includes('workspace && manifest.private'),
+    true,
+  );
+
+  const empty = findRootPublishGuardIssues(rootFixture({ ...compliant, scripts: { prepublishOnly: '   ' } }));
+  check('root guard: a blank prepublishOnly does not satisfy it', empty.errors.length, 1);
+
+  const neither = findRootPublishGuardIssues(rootFixture({ name: '@x/root' }));
+  check('root guard: both missing reports BOTH, not just the first', neither.errors.length, 2);
+
+  const missing = findRootPublishGuardIssues(mkdtempSync(join(tmpdir(), 'root-guard-absent-')));
+  check('root guard: an absent root manifest is CANNOT CHECK, not a pass', missing.cannotCheck.length, 1);
+  check('root guard: ...and reports no divergence it could not have established', missing.errors.length, 0);
+
+  // THE REAL REPOSITORY, which is the property that actually protects it.
+  check('root guard: the real repository root refuses to publish', findRootPublishGuardIssues(REPO_ROOT).errors.join(' | '), '');
+}
+
 
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
 

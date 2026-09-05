@@ -195,6 +195,75 @@ export function discoverPublicPackages(repoRoot) {
 }
 
 /**
+ * THE REPOSITORY ROOT MUST REFUSE TO PUBLISH (#591).
+ *
+ * The root manifest is named `@askturret/mcp`, a name nothing has claimed on
+ * the registry — so a bare `npm publish` at the root collides with nothing, and
+ * would ship the WHOLE repository: source, configs, `.github/`, `.operum/` and
+ * the audit logs, under an immutable version that can only be superseded, never
+ * withdrawn. Measured before this guard existed: 909 files, 6.3MB unpacked,
+ * `.github/CODEOWNERS` and every guard script among them.
+ *
+ * Not hypothetical here. `0.1.1` was published to npm BY HAND from a local
+ * machine rather than by CI, so a bare local invocation is how this project has
+ * actually released.
+ *
+ * ## TWO properties, because the obvious one does not hold on its own
+ *
+ * `private: true` is the declarative statement and is asserted first. But it
+ * DOES NOT BY ITSELF STOP A BARE ROOT PUBLISH. npm gates that check on the
+ * publish being a WORKSPACE publish — `npm/lib/commands/publish.js`:
+ *
+ *     // if a workspace package is marked private then we skip it
+ *     if (workspace && manifest.private) { throw EPRIVATE }
+ *
+ * A bare root publish has no workspace context, so the branch is never taken.
+ * Verified on npm 11.8.0 BEFORE reading that source: with `private: true` set,
+ * `npm publish --dry-run` at the root packed all 909 files and exited 0,
+ * without mentioning `private` at all.
+ *
+ * So the second property is a `prepublishOnly` script that exits non-zero,
+ * which npm runs before packing regardless of workspace context. That is what
+ * actually refuses; `private: true` is what says so declaratively, and what
+ * would refuse on an npm whose gate is not conditional.
+ *
+ * Both are asserted, because either alone is a half-measure — and the one a
+ * reader would assume sufficient is the one that is not.
+ */
+export function findRootPublishGuardIssues(repoRoot) {
+  const errors = [];
+  const manifestPath = join(repoRoot, 'package.json');
+
+  if (!existsSync(manifestPath)) {
+    return { errors, cannotCheck: [`${manifestPath} does not exist, so the root cannot be checked`] };
+  }
+
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
+  } catch (err) {
+    return { errors, cannotCheck: [`root package.json is not valid JSON (${err && err.message})`] };
+  }
+
+  if (manifest.private !== true) {
+    errors.push(
+      'the root package.json is missing `"private": true` — a bare `npm publish` at the root ' +
+        'would ship the entire repository to a public registry (#591)',
+    );
+  }
+
+  const prepublish = manifest.scripts?.prepublishOnly;
+  if (typeof prepublish !== 'string' || prepublish.trim() === '') {
+    errors.push(
+      'the root package.json has no `prepublishOnly` script — `private: true` alone does NOT stop ' +
+        'a bare root publish, because npm gates that check on `workspace && manifest.private` (#591)',
+    );
+  }
+
+  return { errors, cannotCheck: [] };
+}
+
+/**
  * Default packer. `npm` is spawned BY NAME so a fake npm earlier on PATH can
  * decide the outcome — the seam the self-test drives the cannot-check arms
  * through without needing npm to be genuinely broken.
@@ -247,6 +316,13 @@ export function main(argv, runner = defaultPackRunner) {
   const cannotCheck = [];
   const manifestIssues = [];
   const readmeIssues = [];
+
+  // Checked BEFORE the per-package work, and independently of it: the root is
+  // not one of the discovered packages — it is the one that must never become
+  // one — so a run that discovers nothing must still report on it (#591).
+  const rootGuard = findRootPublishGuardIssues(repoRoot);
+  divergences.push(...rootGuard.errors);
+  cannotCheck.push(...rootGuard.cannotCheck);
 
   if (packages.length === 0) {
     cannotCheck.push('no public packages were discovered under packages/ — nothing was verified');

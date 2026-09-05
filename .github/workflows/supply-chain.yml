@@ -15,6 +15,27 @@ on:
 permissions:
   contents: read
 
+# SUPERSEDED PR RUNS ARE CANCELLED. NOTHING ELSE EVER IS. (#687)
+#
+# See test.yml for the full reasoning; the key is identical and deliberately
+# so. The stakes are higher here, because this workflow has four triggers
+# rather than two and one of them PUBLISHES.
+#
+# DO NOT COPY THE KEY FROM lane-check.yml. A bare `pull_request.number` is
+# empty on `push`, `release` and `workflow_dispatch` alike, so all three would
+# collapse into one shared group and cancel one another. Concretely that would
+# mean a `release: published` run being cancelled by an unrelated main push —
+# and a cancelled publish is worse than a slow one. It would also cancel the
+# `push: main` runs, each of which proves a distinct integrated tree.
+#
+# `github.run_id` is unique per run, so every non-PR run is a group of one and
+# is structurally uncancellable. That covers all three non-PR triggers here
+# without naming any of them — which matters precisely because naming them is
+# the version that rots silently when a fifth trigger is added.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Licence review and SBOM share a checkout and an `npm ci`, so they run
   # as one job rather than two. That is not only faster: this repository's Test

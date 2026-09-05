@@ -40,6 +40,7 @@ import {
   findRelativeLinks,
   findManifestMetadataIssues,
   findRootPublishGuardIssues,
+  expectedEntryPoints,
   REQUIRED_TARBALL_ENTRIES,
   EXIT_OK,
   EXIT_DIVERGENCE,
@@ -196,6 +197,81 @@ for (const missing of REQUIRED_TARBALL_ENTRIES) {
   check('an unbuilt package (no dist/ entries) exits 2, not 0', r.code, EXIT_CANNOT_CHECK);
   check('...and says the package looks UNBUILT', r.out.includes('UNBUILT'), true);
 }
+
+// ---------------------------------------------------------------------------
+// #592 — THE ENTRY POINT, NOT A COUNT OF dist/ ENTRIES.
+//
+// The dist/ check above is satisfied by ANY single dist/ path. These cases pin
+// the difference, and the first one exited 0 before this fix: a tarball can
+// carry the three legal files, satisfy the dist/ count with a type
+// declaration, and still ship no code.
+// ---------------------------------------------------------------------------
+{
+  // Built on disk, entry point NOT packed => divergence. Nothing is unknown
+  // here: the build ran, so the tarball's emptiness is a fact.
+  const dir = fixture({ pkg: { ...publicManifest('pkg'), main: 'dist/index.js' } });
+  mkdirSync(join(dir, 'packages', 'pkg', 'dist'), { recursive: true });
+  writeFileSync(join(dir, 'packages', 'pkg', 'dist', 'index.js'), 'export const a = 1;\n');
+
+  const r = silently(() =>
+    main(
+      ['node', GUARD, dir],
+      runnerWithFiles(['package.json', 'README.md', 'LICENSE', 'NOTICE', 'dist/index.d.ts']),
+    ),
+  );
+  check('a tarball with a dist/ entry but no `main` file exits 1, not 0', r.code, EXIT_DIVERGENCE);
+  check('...and names the missing entry point', r.out.includes('dist/index.js'), true);
+  check('...and says it exists on disk', r.out.includes('EXISTS on disk'), true);
+}
+
+{
+  // The same missing entry point, but NOT built on disk. Indistinguishable
+  // from a misconfigured `files` using pack output alone, so it stays
+  // cannot-check — exit 2 already blocks, and claiming a divergence here would
+  // assert more than the evidence carries.
+  const dir = fixture({ pkg: { ...publicManifest('pkg'), main: 'dist/index.js' } });
+  const r = silently(() =>
+    main(
+      ['node', GUARD, dir],
+      runnerWithFiles(['package.json', 'README.md', 'LICENSE', 'NOTICE', 'dist/index.d.ts']),
+    ),
+  );
+  check('an unbuilt package whose entry point is absent both places exits 2', r.code, EXIT_CANNOT_CHECK);
+}
+
+{
+  // A `bin` target is asserted too — the #592 observation was literally
+  // "No bin file found at dist/cli.js".
+  const dir = fixture({ pkg: { ...publicManifest('pkg'), bin: { thing: './dist/cli.js' } } });
+  mkdirSync(join(dir, 'packages', 'pkg', 'dist'), { recursive: true });
+  writeFileSync(join(dir, 'packages', 'pkg', 'dist', 'cli.js'), '#!/usr/bin/env node\n');
+
+  const r = silently(() =>
+    main(['node', GUARD, dir], runnerWithFiles(['package.json', 'README.md', 'LICENSE', 'NOTICE', 'dist/index.js'])),
+  );
+  check('a built `bin` target missing from the tarball exits 1', r.code, EXIT_DIVERGENCE);
+  check('...and normalises the ./ prefix when comparing', r.out.includes('dist/cli.js'), true);
+}
+
+{
+  // The positive control. Without it, every assertion above is satisfied by a
+  // guard that simply always reports a divergence.
+  const dir = fixture({ pkg: { ...publicManifest('pkg'), main: 'dist/index.js', bin: { thing: './dist/cli.js' } } });
+  const r = silently(() =>
+    main(
+      ['node', GUARD, dir],
+      runnerWithFiles(['package.json', 'README.md', 'LICENSE', 'NOTICE', 'dist/index.js', 'dist/cli.js']),
+    ),
+  );
+  check('a tarball carrying both named entry points exits 0', r.code, EXIT_OK);
+}
+
+// The normaliser, driven directly — `./dist/x` and `dist/x` must compare equal,
+// and a manifest naming neither must yield nothing to assert.
+check('expectedEntryPoints strips a leading ./', expectedEntryPoints({ main: './dist/i.js' })[0], 'dist/i.js');
+check('expectedEntryPoints reads a string bin', expectedEntryPoints({ bin: 'dist/c.js' })[0], 'dist/c.js');
+check('expectedEntryPoints dedupes main and bin naming one file', expectedEntryPoints({ main: 'dist/i.js', bin: { a: './dist/i.js' } }).length, 1);
+check('expectedEntryPoints yields nothing for a manifest naming no entry point', expectedEntryPoints({}).length, 0);
 
 // A tree with no public packages must not be a silent success — "nothing to
 // check" and "everything checked out" are different facts.

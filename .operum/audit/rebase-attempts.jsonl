@@ -6,3 +6,5 @@
 {"branch":"fix/issue-456-cannot-check-self-tests","pre_sha":"c8bd827246a3be0f700f46011d66e33c7376f02b","pre_count":1,"post_sha":"95cd3bf14400dafb5f71580e5fdf1d1a4c6aaba4","post_count":1,"completed_at":"2026-08-28T19:07:05Z","result":"success"}
 {"branch":"feat/issue-596-npm-package-metadata","pre_sha":"1cec78e82f9e8ecda5aa561a8bfd005f068dc949","pre_count":1,"started_at":"2026-09-04T12:36:00Z"}
 {"branch":"feat/issue-596-npm-package-metadata","post_sha":"1dad9f2a4221","post_count":2,"completed_at":"2026-09-04T12:37:00Z","result":"success"}
+{"branch":"fix/issue-592-tarball-requires-dist","pre_sha":"fb2a279620528512b11e4abb1b6d9e30acbb3c53","pre_count":2,"started_at":"2026-09-05T11:03:36Z"}
+{"branch":"fix/issue-592-tarball-requires-dist","post_sha":"cecad41617ff0a6f47f45c7b66ee2f0ef52bb649","post_count":3,"completed_at":"2026-09-05T11:05:54Z","result":"success"}

@@ -119,10 +119,10 @@
           "version": "2.0 (Swagger)",
           "status": "unsupported",
           "verifiedBy": "packages/sources-openapi/src/__tests__/from-openapi.test.ts",
-          "note": "Rejected. Convert to OpenAPI 3.x first."
+          "note": "Rejected. Convert to OpenAPI 3.x first. Refusal surfaces as zero operations and a logged error, not a thrown exception."
         }
       ],
-      "note": "Version detection matches the dotted prefixes '3.0.' and '3.1.' against the document's openapi field. A document declaring exactly \"3.0\" or \"3.1\" with no patch segment is rejected; write \"3.0.0\" or \"3.1.0\"."
+      "note": "Version detection matches the dotted prefixes '3.0.' and '3.1.' against the document's openapi field. A document declaring exactly \"3.0\" or \"3.1\" with no patch segment is rejected; write \"3.0.0\" or \"3.1.0\". Refusal surfaces as zero operations and a logged error, not a thrown exception — the same code path as the 2.0 row above, since one version check refuses both."
     }
   ],
   "protocol": {

@@ -129,8 +129,17 @@ jobs:
       # FIRST, and unconditional. Everything below can fail, and a nightly read
       # the next morning by someone who merged none of the day's commits needs
       # to know WHICH tree was under test before it reads why it broke.
+      #
+      # BLOCK SCALAR, and it is load-bearing rather than style. As a plain
+      # scalar this line contained `: ` (colon-space), which YAML reads as the
+      # start of a nested mapping — so the file did not parse, and GitHub does
+      # not load a workflow it cannot parse AT ALL. That would have taken this
+      # job AND the pre-existing `reliability` job in this same file down
+      # silently, while test.yml had already lost `push: main`: the integrated
+      # tree left with no assertion over it and nothing saying so.
       - name: Name the tree under test
-        run: echo "Integrated tree under test: $GITHUB_SHA"
+        run: |
+          echo "Integrated tree under test: $GITHUB_SHA"
 
       - uses: actions/setup-node@v4
         with:

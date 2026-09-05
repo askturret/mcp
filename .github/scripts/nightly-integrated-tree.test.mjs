@@ -347,6 +347,49 @@ try {
   }
 
   // -------------------------------------------------------------------------
+  // THE TWO EMPTY-SET REFUSALS, WITNESSED DIRECTLY — QA finding on PR #697.
+  //
+  // Both are defence in depth and both were UNWITNESSED, which is the #573
+  // Part 3 standard and the one this repository applies to every other guard:
+  // neutralising `discoverSuites`'s empty-set refusal left this suite green at
+  // 38/0, because the cross-check caught the same fixture one step later as
+  // `scheduledButNotTested`.
+  //
+  // Neutralising `declaredSuiteJobs`'s refusal is the same shape mirrored —
+  // it falls through to `testedButNotScheduled`. So the CLI arms above cannot
+  // witness EITHER: they observe exit 2, and exit 2 is what both the refusal
+  // and its backstop produce. Only calling each derivation directly can tell
+  // which one answered.
+  //
+  // Kept rather than deleted as redundant. Each is the refusal at its own
+  // derivation, and the cross-check that currently backstops them is one
+  // change away from being narrowed — at which point an empty set would sail
+  // through the layer that no longer refuses it. A guard nothing can redden is
+  // the defect one level up, so it gets a witness instead of a comment.
+  // -------------------------------------------------------------------------
+  {
+    const dir = fixture({ packages: { noTests: null }, jobs: ['alpha'] });
+    let kind = 'returned without refusing';
+    try {
+      discoverSuites(dir);
+    } catch (err) {
+      kind = err instanceof CannotCheck ? 'cannot-check' : 'other';
+    }
+    check('discoverSuites REFUSES an empty suite set at its own derivation', kind, 'cannot-check');
+  }
+
+  {
+    const dir = fixture({ packages: { alpha: 0 }, jobs: [] });
+    let kind = 'returned without refusing';
+    try {
+      declaredSuiteJobs(dir);
+    } catch (err) {
+      kind = err instanceof CannotCheck ? 'cannot-check' : 'other';
+    }
+    check('declaredSuiteJobs REFUSES an empty job set at its own derivation', kind, 'cannot-check');
+  }
+
+  // -------------------------------------------------------------------------
   // THE TRAP, asserted structurally against the runner's source.
   //
   // Comments are stripped first, so the prose ABOUT the trap — which names

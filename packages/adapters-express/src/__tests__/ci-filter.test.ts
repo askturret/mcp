@@ -92,8 +92,16 @@ describe('CI path filters for the adapters (#153)', () => {
   it('parsed the filter block it is meant to be checking', () => {
     // Guards the guard. A parser that silently matched nothing would make every
     // assertion below vacuous — `expect([]).not.toContain(x)` passes happily.
+    //
+    // The `workspace` canary was `.github/workflows/**` until #687 change 2
+    // narrowed that glob to `.github/workflows/test.yml`, which left this
+    // assertion pinning a value the file no longer had. It is now `package.json`
+    // instead: the canary's job is to prove the parser found REAL entries, and
+    // for that any stable member does. `package.json` is the one entry in this
+    // filter whose presence is not a tuning decision — the workflow-path glob
+    // has now been re-scoped once and may be again.
     expect(Object.keys(filters).length).toBeGreaterThanOrEqual(12);
-    expect(filters['workspace']).toContain('.github/workflows/**');
+    expect(filters['workspace']).toContain('package.json');
     expect(filters['adapters-express']).toContain('packages/adapters-express/**');
   });
 

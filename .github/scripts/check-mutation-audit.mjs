@@ -697,20 +697,6 @@ function runSelfTest(testPath, cwd, timeoutMs = SELF_TEST_TIMEOUT_MS) {
 }
 
 /**
- * A throwaway, faithful copy of the tree, for mutating.
- *
- * FAITHFUL is the whole requirement — see the note in `audit`. A partial copy
- * silently changes what the self-tests measure, in the direction that makes the
- * audit over-report its own coverage.
- *
- * `node_modules` is symlinked, not copied: self-tests read it and none writes to
- * it, and copying it would dominate the cost. `.git` is skipped entirely — no
- * self-test needs it, and a shared `.git` would give a read-only tool a path to
- * the real index.
- *
- * @returns {{root: string, cleanup: () => void}}
- */
-/**
  * Repoint every symlink that escapes back into the real tree.
  *
  * `cpSync` with `dereference: false` does NOT preserve a relative symlink
@@ -792,6 +778,37 @@ function repointEscapingLinks(realRoot, replicaRoot) {
   walk(replicaRoot);
 }
 
+/**
+ * A throwaway, faithful copy of the tree, for mutating.
+ *
+ * FAITHFUL is the whole requirement — see the note in `audit`. A partial copy
+ * silently changes what the self-tests measure, in the direction that makes the
+ * audit over-report its own coverage.
+ *
+ * ## `node_modules` IS COPIED FOR REAL. DO NOT SYMLINK IT.
+ *
+ * That is the expensive part — measured at 109MB of a 124MB replica, 88% of it,
+ * and most of the ~3.9s build — so it is exactly what a later reader will want
+ * to optimise. It was tried, and it is the defect this file already had once
+ * (#652, second round):
+ *
+ * npm links each workspace as a RELATIVE symlink, `../../packages/x`. Reach
+ * `node_modules` through one link and those resolve against the REAL tree, so
+ * npm sees no workspace installed where the manifest says one should be and
+ * reports every other package `extraneous`. `npm ls --omit=dev` went from
+ * exit 0 / 57KB to exit 1 / 510KB, `generate-notice` regenerated NOTICE with
+ * ~470 runtime entries against ~180, its self-test failed its own control, and
+ * the audit reported CANNOT CHECK and failed on its own integrity in CI.
+ *
+ * So the cost is deliberate and the cheaper design is known-broken. If the 4s
+ * has to go, the thing to attack is the COPY MECHANISM — a reflink or hardlink
+ * clone preserves real directory semantics — never the link-vs-copy decision.
+ *
+ * `.git` is skipped entirely: no self-test needs it, and a shared `.git` would
+ * give a read-only tool a path to the real index.
+ *
+ * @returns {{root: string, cleanup: () => void}}
+ */
 export function createReplica(rootDir) {
   const root = mkdtempSync(join(tmpdir(), 'mutation-audit-'));
   cpSync(rootDir, root, {
@@ -819,6 +836,12 @@ export function createReplica(rootDir) {
         // The replica lives under the OS temp directory, outside the
         // repository. Failing to remove it leaves litter, never residue in the
         // tracked tree — so it must not fail the audit.
+        //
+        // "Litter" is ~124MB a time, and a KILLED run never reaches this line
+        // at all, so it accumulates: QA measured 150MB across six strays in a
+        // single session. Outside the repository and reaped by the OS, so it is
+        // still the right side of the trade — but it is not the trivial cost
+        // the word suggests, and an earlier note put it at ~15MB.
       }
     },
   };
@@ -958,8 +981,12 @@ export async function auditGuard({
       //
       //   this yield, 151 sites   ~3 ms      (measured directly: 113 setImmediate
       //                                       round-trips took 2.51 ms)
-      //   the audit's own self-test   ~113 s (11.3 s x 10 runs — see below)
-      //   whole audit                 322 s
+      //   the audit's own self-test  ~300 s  (~15.2 s x 20 runs — see the
+      //                                       self-test header, and re-measure:
+      //                                       this pair was ~113 s when written
+      //                                       and both factors have since moved)
+      //   whole audit                 322 s  (also pre-#652; the replica adds
+      //                                       ~3.9 s once per run)
       //
       // Roughly one part in a hundred thousand. QA reached the same conclusion
       // from the other direction, differencing two ~99 s runs at 99.0 vs 98.8;
@@ -1451,11 +1478,13 @@ export async function audit(rootDir, {
   // check-audit-append-only 40/0, check-concealment-captures 133/0 — identical
   // to the tracked tree in every case.
   //
-  // Cost is one tree copy per RUN, not per guard: ~1s and ~15MB against a
-  // ~322s audit. `node_modules` is symlinked rather than copied (self-tests
-  // read it, none writes to it) and `.git` is skipped — no self-test needs it,
-  // and sharing it with the real repository is how a read-only tool acquires
-  // the ability to corrupt an index.
+  // Cost is one tree copy per RUN, not per guard: ~3.9s and ~124MB against a
+  // ~322s audit. `node_modules` is COPIED FOR REAL and is 109MB of that 124MB
+  // — symlinking it is the known-broken design that made this audit report
+  // CANNOT CHECK, and `createReplica`'s docblock says why before anyone
+  // optimises it back. `.git` is skipped — no self-test needs it, and sharing
+  // it with the real repository is how a read-only tool acquires the ability
+  // to corrupt an index.
   const replica = createReplica(rootDir);
   onReplica(replica.root);
   try {

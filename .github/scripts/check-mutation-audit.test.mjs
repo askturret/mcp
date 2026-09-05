@@ -22,22 +22,36 @@
  * executes THIS file once per mutation site in `check-mutation-audit.mjs`,
  * plus once for the baseline, plus once for the completeness probe:
  *
- *   8 sites + 1 baseline + 1 probe = 10 runs
+ *   (sites in check-mutation-audit.mjs) + 1 baseline + 1 probe = runs
  *
  * The three call sites are `baseline`, the per-site run inside the loop, and
  * the `all`-neutralised probe — all in `auditGuard`. The site count comes from
  * the inventory and moves as the audit's own source changes; the shape does
  * not.
  *
- * Measured on this machine: this file takes 11.3 s, so it accounts for about
- * 113 s of a 322 s audit — roughly a THIRD of the whole run, spent auditing
- * the auditor.
+ * DO NOT TRUST THE FIGURES BELOW — RE-MEASURE. Both halves of this estimate
+ * have gone stale already, and the paragraph arguing to spend the time
+ * KNOWINGLY was itself the thing that stopped knowing:
+ *
+ *   time node .github/scripts/check-mutation-audit.test.mjs        # per run
+ *   node -e "import('./.github/scripts/check-mutation-audit.mjs')  # multiplier
+ *     .then(m=>console.log(m.enumerateSites(
+ *       require('fs').readFileSync(
+ *         '.github/scripts/check-mutation-audit.mjs','utf-8')).length))"
+ *
+ * As of #652 round two: 18 sites, so 20 runs, at ~15.2 s each — about 300 s.
+ * It previously read "8 sites ... 11.3 s ... about 113 s of a 322 s audit",
+ * which was low on BOTH factors at once: the per-run time by 26%, and the
+ * multiplier by more than double. The product was understated nearly threefold,
+ * and nothing went red, because an estimate in a comment cannot fail.
  *
  * That is not an argument for spending less. The fixtures that cost the time
  * spawn real child processes and send real SIGINTs, and they are what gave the
  * #435 signal-handler fix a witness — the right way to test a signal handler,
  * and worth every second. It is an argument for spending it KNOWINGLY: a
- * fixture that sleeps 700 ms here adds 7 s to the audit, not 700 ms.
+ * fixture that sleeps 700 ms here adds 14 s to the audit at the current
+ * multiplier, not 700 ms. Which is the same reason to re-derive the multiplier
+ * rather than read it here.
  *
  * The cost was misattributed once already, to the per-site `yield` in
  * `check-mutation-audit.mjs`, which measures ~3 ms across all 151 sites. If
@@ -64,6 +78,7 @@ import {
   symlinkSync,
   readlinkSync,
   realpathSync,
+  lstatSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -782,10 +797,13 @@ process.exit(0);
 // ---------------------------------------------------------------------------
 // SELF-APPLICATION — the audit is in its own target list (#428 Q4)
 //
-// This property is also what makes THIS FILE cost about ten times its own
-// runtime on every full audit — 8 sites + baseline + probe. See the header
-// section "EVERY SECOND YOU ADD HERE IS CHARGED ABOUT TEN TIMES" (#437) before
-// adding a fixture that sleeps.
+// This property is also what makes THIS FILE cost a multiple of its own runtime
+// on every full audit — one run per site in check-mutation-audit.mjs, plus
+// baseline, plus probe. That multiple is currently about TWENTY, not the ten
+// this note and the header used to say. See the header section "EVERY SECOND
+// YOU ADD HERE IS CHARGED ABOUT TEN TIMES" (#437) — which keeps its title as
+// written, and tells you how to re-derive the real figure — before adding a
+// fixture that sleeps.
 // ---------------------------------------------------------------------------
 {
   const names = discoverGuards(join(process.cwd())).map((g) => g.name);
@@ -1543,6 +1561,17 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
     const linked = join(r.root, 'node_modules', '@x', 'core');
 
     check('the replica carries node_modules at all', existsSync(join(r.root, 'node_modules')), true);
+
+    // A COMMENT IS THE WRONG DEFENCE AGAINST THE READER WHO IGNORES COMMENTS.
+    // Symlinking node_modules is the cheaper design, it is what a reader
+    // reclaiming ~124MB and ~4s will reach for first, and it is precisely what
+    // made this audit report CANNOT CHECK. The prose above `createReplica` says
+    // so; this assertion is what goes red if someone does it anyway.
+    check(
+      'and it is a REAL directory, not a symlink — symlinking it is the known-broken design',
+      lstatSync(join(r.root, 'node_modules')).isSymbolicLink(),
+      false,
+    );
     check(
       'a workspace link in the replica resolves INSIDE the replica, not into the source tree',
       realpathSync(linked).startsWith(realpathSync(r.root)),
@@ -1643,8 +1672,9 @@ process.exit(0);
 
     // A KILLED run never reaches its own cleanup, so the replica outlives it.
     // That is the accepted trade — litter in the OS temp directory instead of
-    // residue in the tracked tree — but a test that kills a child on every run
-    // should not be the thing generating it, so it clears up after itself.
+    // residue in the tracked tree — but at ~124MB per strand it accumulates
+    // fast, and a test that kills a child on every run would be the largest
+    // single source of it. So it clears up after itself.
     const replicaRoot = /REPLICA (.+)/.exec(stdout)?.[1]?.trim();
     if (replicaRoot !== undefined) rmSync(replicaRoot, { recursive: true, force: true });
   } finally {

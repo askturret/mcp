@@ -214,10 +214,31 @@ jobs:
             cli:
               - 'packages/cli/**'
               - 'packages/core/**'
+            # A CHANGE TO THE FILE THAT DEFINES THE SUITES RE-RUNS THEM.
+            # A CHANGE TO ANY OTHER WORKFLOW FILE DOES NOT. (#687)
+            #
+            # This was '.github/workflows/**', which meant a one-line edit to
+            # dco.yml scheduled all twelve package suites on the single serial
+            # runner. Observed on PR #672: four workflow files, changing only
+            # which jobs run on dependabot PRs — nothing that could alter any
+            # package's behaviour — and twelve suites ran.
+            #
+            # test.yml is kept because everything that CAN change package-suite
+            # behaviour lives in it: the suites themselves, their `if:` gates,
+            # this `changes` job, the Node version and the build commands. A
+            # guard newly wired into test.yml still trips this and still gets
+            # its full-matrix run, which is correct (PR #685 was legitimate).
+            #
+            # DELIBERATELY NOT SPLIT INTO A SECOND FILTER. A `ci-wiring` filter
+            # for the remaining workflow files would fail check A in
+            # check-path-filters.mjs, which rejects any filter name that is not
+            # a `packages/<dir>` and exempts `workspace` BY LITERAL NAME
+            # (:535-536). Adding one means widening that exemption in the same
+            # change. Narrowing alone gets the win, so narrowing is all this is.
             workspace:
               - 'package.json'
               - 'tsconfig.json'
-              - '.github/workflows/**'
+              - '.github/workflows/test.yml'
 
   # Test core package
   test-core:

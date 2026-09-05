@@ -50,6 +50,46 @@
  *
  * MUST RUN AFTER `npm ci` AND `npm run build`: packing an unbuilt package
  * yields a tarball with no dist/, which is reported as cannot-check.
+ *
+ * ## THE BOUND: THIS CHECKS IMPORTS. IT DOES NOT CHECK USE-WITHOUT-IMPORT (#608)
+ *
+ * The unit of work is an import statement. `parseImports` finds them, and every
+ * one it finds is probed in the clean room — that half is exhaustive. But a
+ * document that names a symbol WITHOUT importing it contributes nothing to
+ * parse, so it is never probed. THAT IS NOT A FAILURE MODE, IT IS AN INPUT
+ * SHAPE THIS GUARD DOES NOT REACH, and the difference matters: a file with no
+ * imports is not "checked and found clean", it is NOT CHECKED.
+ *
+ * Measured rather than supposed: `docs/why-not-generate.md` carried three
+ * symbols no package exports — `rolesBased`, `authorizationPolicy` and
+ * `fromExpress` — live on main, in a file this guard walks. `parseImports`
+ * returns 0 for it, because it contains no import statements at all. They were
+ * found by a human READING it, the same sub-shape as the `allOf` defect #606
+ * fixed.
+ *
+ * ## WHY THAT IS NOT CLOSED HERE, AND THE MEASUREMENT THAT DECIDED IT
+ *
+ * Closing it means detecting a symbol USED but never imported, which in markdown
+ * means "a bare identifier called inside a code fence that is not one of our
+ * exports". That detector was BUILT AND MEASURED against this tree before this
+ * note was written — 41 docs, 749 real exported bindings:
+ *
+ *   - it WOULD have caught all three phantoms above .......... 3 true positives
+ *   - across the other docs it flags 11 identifiers of which .. 0 are real
+ *
+ * The false positives are not tuning noise, they are the shape of the problem.
+ * `startYourFramework()` is deliberate placeholder prose; `evaluate(` and
+ * `execute(` are interface METHOD declarations rather than calls. A document is
+ * allowed to contain illustrative code, and no static rule separates
+ * illustrative from wrong. Shipping it would mean a guard wrong 11 times in 14
+ * on today's tree, blocking pull requests on pseudo-code — a third guard whose
+ * stated reach exceeds its actual reach, which is #593's whole subject.
+ *
+ * So the bound is STATED rather than half-closed, AND ASSERTED — in
+ * `check-readme-imports.test.mjs` — because a merely described bound is what
+ * went stale in #593. The assertion pins that a fence-only document yields zero
+ * imports; widen `parseImports` to reach these and the test REDDENS, forcing
+ * this paragraph to be corrected in the same change.
  */
 
 import { readFileSync, mkdtempSync, mkdirSync, rmSync, existsSync, symlinkSync, readdirSync } from 'node:fs';

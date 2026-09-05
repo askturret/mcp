@@ -474,5 +474,53 @@ const okNpm = () => ({ status: 0, stdout: '', stderr: '' });
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE BOUND, MADE EXECUTABLE (#608).
+//
+// This guard checks IMPORTS. A document that names a symbol without importing
+// it yields nothing to parse and is therefore never probed — not "checked and
+// found clean", NOT CHECKED. The header explains why that is stated rather than
+// closed, and carries the measurement that decided it.
+//
+// These assertions exist so the statement cannot quietly become false. If
+// anyone widens `parseImports` to reach fence-only usage, the first case
+// REDDENS and the header paragraph must be corrected in the same change —
+// which is precisely the failure #593 was filed about: a described bound going
+// stale while still reading as current.
+// ---------------------------------------------------------------------------
+{
+  // The exact shape that let three phantom symbols live on main: symbols used
+  // inside a fence, with no import statement anywhere in the file.
+  const fenceOnly = [
+    '# Doc',
+    '',
+    '```ts',
+    "const policy = allOf([authenticated(), rolesBased({ user: ['listPets'] })]);",
+    '```',
+    '',
+  ].join('\n');
+  check('bound: a document that USES symbols without importing them yields no imports', parseImports(fenceOnly).length, 0);
+
+  // The control. Without it the assertion above is satisfied by a parser that
+  // returns nothing for everything — which would make the bound look tighter
+  // than it is while the guard checked nothing at all.
+  const withImport = [
+    '```ts',
+    "import { allOf } from '@askturret/mcp-core';",
+    'const policy = allOf([]);',
+    '```',
+    '',
+  ].join('\n');
+  check('bound: ...while a real import statement IS parsed', parseImports(withImport).length, 1);
+
+  // And the file IS walked, which is what makes the gap surprising rather than
+  // obvious: it is discovered and then contributes nothing, not skipped.
+  check(
+    'bound: the doc is reached by the walk, then yields nothing to probe',
+    markdownFiles(join(REPO_ROOT, 'docs')).some((f) => f.endsWith('why-not-generate.md')),
+    true,
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);

@@ -54,21 +54,29 @@ In a code-generated world, policies are baked into the generated code. Changing 
 // Old policy
 const policy = allOf([
   authenticated(),
-  rolesBased({ user: ['listPets'], admin: ['*'] }),
+  permissionPolicy({
+    listPets: ['pets:read'],
+    createPet: ['pets:admin'],
+  }),
 ]);
 
 // New policy (just update and reload)
 const policy = allOf([
   authenticated(),
-  rolesBased({ 
-    user: ['listPets', 'createPet'],  // Alice can now create
-    admin: ['*'] 
+  permissionPolicy({
+    listPets: ['pets:read'],
+    createPet: ['pets:write'],  // Alice holds `pets:write`, so she can now create
   }),
   confirmationForEffects(['financial']),  // Bob must confirm
 ]);
 
 server.reload(newPolicy); // Atomic, zero-downtime
 ```
+
+Note the direction: the map is keyed by **operation ID**, and each value is the
+set of permissions a caller must hold to invoke it. It does not map a role to
+the operations it may call. Changing what `createPet` requires is what changes
+who can reach it — the caller's own permissions live on the principal.
 
 ### 3. Authorization Happens at Discovery Time
 
@@ -87,14 +95,20 @@ Static code can't express this. You'd need to generate per-user variants, or gen
 // Broad: Alice sees all tools
 const discoveryPolicy = authenticated();
 
-// Granular: Alice can only delete test accounts
+// Granular: deleting a production user needs a permission Alice does not hold
 const callTimePolicy = allOf([
   authenticated(),
-  authorizationPolicy({
-    'alice': ['delete_user_test'],
-    'bob': ['*'],
+  permissionPolicy({
+    delete_user_test: ['users:delete:test'],
+    delete_user_production: ['users:delete:prod'],
   }),
 ]);
+
+// The transport takes both: discovery filtering and call-time authorization
+const transport = createHttpTransport({
+  visibilityPolicy: discoveryPolicy,
+  authorizationPolicy: callTimePolicy,
+});
 
 // Tools/list shows what's broadly accessible
 // tools/call reevaluates with actual identity and input
@@ -142,13 +156,16 @@ A generator can't easily combine them. You end up with:
 
 Multiple source paths → multiple code artifacts → version mismatch risk → operator burden.
 
-**AskTurret solution:** All sources feed one compilation pipeline.
+**AskTurret solution:** All sources feed one compilation pipeline. Today that
+means an OpenAPI document and hand-written definitions; there is no "read the
+routes out of a running Express app" source, and routes you want as tools are
+declared with `fromDefinitions`. (The Express adapter goes the other way — it
+mounts an MCP endpoint *into* your app with `expressMcp`.)
 
 ```ts
 const server = createMcpServer({
   sources: [
     fromOpenApi('./spec.yaml'),
-    fromExpress(app),
     fromDefinitions(customOps),
   ],
   // Conflicts are resolved deterministically

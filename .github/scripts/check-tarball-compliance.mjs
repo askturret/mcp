@@ -57,6 +57,28 @@
  * pack output alone, and an indistinguishable state must not resolve as
  * success.
  *
+ * THE ENTRY POINT, NOT A COUNT OF dist/ ENTRIES (#592)
+ * ---------------------------------------------------------------------------
+ * "Carries at least one dist/ path" is the property this guard could see, not
+ * the property that matters. A tarball carrying `dist/index.d.ts` and not
+ * `dist/index.js` satisfies it completely: the types ship, the code does not,
+ * and requiring the published package throws. So the files the manifest NAMES
+ * — `main` and every `bin` target — are asserted individually.
+ *
+ * That also settles which exit code a codeless tarball earns, on evidence
+ * rather than preference. Absence from the pack list always fires; the disk is
+ * then consulted ONLY to separate two states that pack output renders
+ * identically:
+ *
+ *   built on disk but absent from the tarball -> DIVERGENCE (exit 1). The build
+ *     ran and the code still did not ship, so this is a fact, not an unknown.
+ *   absent from both -> UNBUILT -> CANNOT CHECK (exit 2), as before.
+ *
+ * Note this does NOT reintroduce the directory inference the header above
+ * rejects. That mistake was reading the DIRECTORY to conclude something about
+ * the TARBALL. Here the tarball is always the thing asserted, and the
+ * directory only explains a failure that has already been established.
+ *
  * PAGE METADATA AND README LINKS (#596)
  * ---------------------------------------------------------------------------
  * #583 asked whether README.md is PRESENT. It shipped nine packages whose
@@ -133,6 +155,37 @@ export function findRelativeLinks(markdown) {
  * the classic copy-paste site, and a wrong `directory` points npm's "Repository"
  * link at another package's source while looking entirely correct in review.
  */
+/**
+ * The files a manifest NAMES as its entry points: `main`, and every `bin`
+ * target. Paths are normalised to the form `npm pack --json` reports (no
+ * leading `./`), so a manifest writing `./dist/cli.js` compares equal to a
+ * pack list carrying `dist/cli.js`.
+ *
+ * WHY THESE AND NOT A COUNT. The pre-existing check asks whether the tarball
+ * carries ANY `dist/` entry, which is the property it can see rather than the
+ * property that matters (#592). A tarball carrying `dist/index.d.ts` and not
+ * `dist/index.js` satisfies a count completely: types ship, the code does not,
+ * and `require()` of the published package throws. Naming the entry point
+ * turns "something was built" into "the thing this package IS was packed".
+ *
+ * `main` and `bin` are on npm's always-included list, so npm tries to pack
+ * them whether or not `files` names them. Their absence therefore means the
+ * file was not there to pack, or was actively excluded — never that npm merely
+ * did not think to include it.
+ */
+export function expectedEntryPoints(manifest) {
+  const out = [];
+  const add = (v) => {
+    if (typeof v === 'string' && v !== '') out.push(v.replace(/^\.\//, ''));
+  };
+
+  add(manifest.main);
+  if (typeof manifest.bin === 'string') add(manifest.bin);
+  else if (manifest.bin && typeof manifest.bin === 'object') for (const v of Object.values(manifest.bin)) add(v);
+
+  return [...new Set(out)];
+}
+
 export function findManifestMetadataIssues(manifest, dir) {
   const issues = [];
   const repo = manifest.repository;
@@ -347,11 +400,56 @@ export function main(argv, runner = defaultPackRunner) {
       }
     }
 
-    if (packed.files.filter((f) => f.startsWith('dist/')).length === 0) {
+    const hasDistEntries = packed.files.filter((f) => f.startsWith('dist/')).length > 0;
+    if (!hasDistEntries) {
       cannotCheck.push(
         `${pkg.name}: packed with no dist/ entries — the package looks UNBUILT, so this tarball is not ` +
           'representative. Run `npm run build` before this guard. Compliance NOT asserted.',
       );
+    }
+
+    // #592: the ENTRY POINT, not a count of dist/ entries.
+    //
+    // The check above is satisfied by any single dist/ path, so a tarball
+    // carrying dist/index.d.ts and not dist/index.js passes it while shipping
+    // no code. This asserts the file the manifest actually names.
+    //
+    // THE DISK READ IS A DISAMBIGUATOR, NOT AN INFERENCE — and the distinction
+    // is the one this guard's header exists to protect. Directory presence is
+    // never taken as tarball presence: absence from the PACK LIST is what
+    // fires, always. Disk is consulted only afterwards, to decide which of two
+    // indistinguishable-from-pack-output states produced it:
+    //
+    //   built on disk, absent from tarball -> DIVERGENCE. The build ran and the
+    //     tarball still lacks the code, so `files` (or .npmignore) excluded it.
+    //     Nothing is unknown here, so reporting cannot-check would understate a
+    //     fact we hold.
+    //   absent both places -> UNBUILT, already reported cannot-check above.
+    //     Exit 2 is kept for this deliberately: from pack output alone unbuilt
+    //     and misconfigured are the same observation, and a guard must not
+    //     assert a divergence the evidence cannot distinguish. Exit 2 already
+    //     blocks, so nothing is let through by classifying it honestly.
+    for (const entry of expectedEntryPoints(pkg.manifest || {})) {
+      if (files.has(entry)) continue;
+      if (existsSync(join(repoRoot, pkg.dir, entry))) {
+        divergences.push(
+          `${pkg.name}: ${entry} is named by the manifest and EXISTS on disk, but is NOT in the published ` +
+            'tarball — the build ran and the tarball still carries no code. A consumer installing this ' +
+            'version gets a package whose entry point is missing.',
+        );
+      } else if (hasDistEntries) {
+        // Not on disk, so unbuilt — but the coarse dist/ check did NOT fire,
+        // because the tarball carries some OTHER dist/ path. This is the exact
+        // state that made a count insufficient: `dist/index.d.ts` ships, the
+        // entry point does not, and without this branch the package exits 0.
+        cannotCheck.push(
+          `${pkg.name}: ${entry} is named by the manifest but is in neither the tarball nor ${pkg.dir} — ` +
+            'the tarball carries other dist/ entries, so a count of them says "built" while the entry ' +
+            'point is absent. Run `npm run build` before this guard. Compliance NOT asserted.',
+        );
+      }
+      // else: absent from both AND no dist/ at all — already reported UNBUILT
+      // by the check above. Reporting it twice would not add a fact.
     }
 
     // Manifest-level, and reported apart on purpose: package.json always ships,

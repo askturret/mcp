@@ -13,7 +13,7 @@
     "@askturret/mcp-observability": "*"
   },
   "askturret": {
-    "coreDependencyIsWildcard": "\"*\" is deliberate on both dependencies, for the reason recorded in examples/plugin-source/package.json: npm links a workspace package only while its version SATISFIES the declared range, so a pin expires silently at the next version bump and sends npm to a registry where nothing is published. IF YOU COPY THIS EXAMPLE into a real project, replace \"*\" with a real range.",
+    "coreDependencyIsWildcard": "\"*\" is deliberate on both dependencies, for the reason recorded in examples/plugin-source/package.json: npm links a workspace package only while its version SATISFIES the declared range, so a pin expires silently at the next version bump and sends npm to the registry instead of the workspace. Both packages ARE published (see `npm view @askturret/mcp-core versions` and `npm view @askturret/mcp-observability versions`), so the result is not a loud 404 but a quiet build against the last release rather than the source beside it. IF YOU COPY THIS EXAMPLE into a real project, replace \"*\" with a real range.",
     "testsNotRequired": "Runnable demo, not a library. The plugin it loads lives in packages/observability (otelExporterPlugin) and is covered by that package's tests, including the full load->setup->register lifecycle and the capability refusal this demo prints. Deliberately NOT the home of the reference implementation: an example nothing builds or tests rots, and a rotted reference is worse than none because authors copy it."
   }
 }

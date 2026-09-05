@@ -1573,6 +1573,13 @@ process.exit(0);
     check(`${signal}: a mutation was live in the replica when the signal landed (precondition)`, replicaMutated, true);
     check(`${signal}: the tracked guard is never written at any point in the run`, trackedEverDirty, false);
     check(`${signal}: ...and is byte-identical afterwards`, readFileSync(guardPath, 'utf-8'), original);
+
+    // A KILLED run never reaches its own cleanup, so the replica outlives it.
+    // That is the accepted trade — litter in the OS temp directory instead of
+    // residue in the tracked tree — but a test that kills a child on every run
+    // should not be the thing generating it, so it clears up after itself.
+    const replicaRoot = /REPLICA (.+)/.exec(stdout)?.[1]?.trim();
+    if (replicaRoot !== undefined) rmSync(replicaRoot, { recursive: true, force: true });
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

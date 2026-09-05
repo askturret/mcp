@@ -50,9 +50,10 @@
  * Usage: node .github/scripts/check-doc-types.mjs [repoDir]
  */
 
-import { readFileSync, existsSync, readdirSync, statSync, realpathSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, relative, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', 'coverage', 'build']);
 
@@ -413,17 +414,8 @@ export function check(repoDir = '.') {
   };
 }
 
-function isProcessEntryPoint() {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  try {
-    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
-  } catch {
-    return false;
-  }
-}
 
-if (isProcessEntryPoint()) {
+if (isProcessEntryPoint(import.meta.url)) {
   const result = check(process.argv[2] ?? '.');
   if (result.code === 0) {
     console.log(result.message);

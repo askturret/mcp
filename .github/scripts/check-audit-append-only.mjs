@@ -43,8 +43,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { realpathSync } from 'node:fs';
-import { pathToFileURL } from 'node:url';
+
+import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
 import { didNotStart, spawnFailureDetail } from './sdk-upgrade-drill.mjs';
 
@@ -233,17 +233,8 @@ export function check(baseRef, repoDir = '.') {
  * this one. A guard that quietly no-ops is strictly worse than no guard,
  * because the green check says it ran.
  */
-function isProcessEntryPoint() {
-  const entry = process.argv[1];
-  if (entry === undefined) return false;
-  try {
-    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
-  } catch {
-    return false;
-  }
-}
 
-const invokedDirectly = isProcessEntryPoint();
+const invokedDirectly = isProcessEntryPoint(import.meta.url);
 
 if (invokedDirectly) {
   const result = check(resolveBase(process.argv[2]), process.argv[3] ?? '.');

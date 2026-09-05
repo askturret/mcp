@@ -237,9 +237,64 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
 
   const drifted = run(fixture({ contract, md: '>=20.0.0' }));
   check('a value in the JSON missing from the .md FAILS', drifted.code, EXIT_DIVERGENCE);
-  check('...and names the missing value', drifted.out.includes("'9.9.9'"), true);
+  check('...and names the missing value', drifted.out.includes('Matrix version `9.9.9`'), true);
 
-  check('both copies agreeing passes', run(fixture({ contract, md: '9.9.9 >=20.0.0' })).code, EXIT_OK);
+  check(
+    'both copies agreeing passes',
+    run(fixture({ contract, md: 'Matrix version `9.9.9` >=20.0.0' })).code,
+    EXIT_OK,
+  );
+
+  // -------------------------------------------------------------------------
+  // #629 — THE AUTHORITATIVE POSITION, NOT MERE PRESENCE.
+  //
+  // The probe QA measured, and the clause that makes it a probe: the
+  // VERSION-HISTORY PROSE IS LEFT INTACT. A fixture that strips the prose
+  // proves nothing, because the OLD substring check passes that case too — it
+  // is only when an incidental mention is present that the two behaviours
+  // differ, and that is the state the real file is permanently in.
+  // -------------------------------------------------------------------------
+  {
+    const header = {
+      matrixVersion: '2.2.0',
+      appliesToRelease: '0.1.2',
+      runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } },
+    };
+
+    // The real file's shape: a stale authoritative line, plus history prose
+    // carrying the CURRENT version — which is what satisfied the old check.
+    const staleHeader =
+      '**Applies to release `0.1.2`. Matrix version `2.1.0`.**\n' +
+      '> **`2.2.0` widens enforcement** — see below.\n' +
+      'It is partially CI-enforced as of matrix `2.1.0` and more so as of `2.2.0`.\n>=20.0.0\n';
+
+    const r = run(fixture({ contract: header, md: staleHeader }));
+    check('a STALE authoritative line FAILS even though the value appears in prose', r.code, EXIT_DIVERGENCE);
+    check('...and names the position it expected', r.out.includes('Matrix version `2.2.0`'), true);
+    // The message must distinguish the stale-header case from plain absence,
+    // because the remedy differs — this is the sentence that says which.
+    check('...and says the value appears elsewhere in the file', r.out.includes('appears elsewhere'), true);
+
+    // THE OLD CHECK PASSED THIS EXACT INPUT. Asserted rather than asserted-about:
+    // bare presence is satisfied, so a reader can see the two are not equivalent.
+    check('...and the value IS present in the file, so bare presence would pass', staleHeader.includes('2.2.0'), true);
+
+    // appliesToRelease gets the same treatment (#629 acceptance 2).
+    const staleRelease =
+      '**Applies to release `0.1.1`. Matrix version `2.2.0`.**\n' +
+      'Earlier notes mention release `0.1.2` in passing.\n>=20.0.0\n';
+    const rr = run(fixture({ contract: header, md: staleRelease }));
+    check('a stale `Applies to release` line FAILS despite the value appearing in prose', rr.code, EXIT_DIVERGENCE);
+    check('...and names that position', rr.out.includes('Applies to release `0.1.2`'), true);
+
+    // THE POSITIVE CONTROL. Without it every assertion above is satisfied by a
+    // check that refuses everything — and the prose still mentions other
+    // versions, so this also pins that history prose does NOT cause a failure.
+    const correct =
+      '**Applies to release `0.1.2`. Matrix version `2.2.0`.**\n' +
+      '> A minor bump on the same grounds `2.1.0` was one.\n>=20.0.0\n';
+    check('both authoritative lines correct passes, with history prose intact', run(fixture({ contract: header, md: correct })).code, EXIT_OK);
+  }
 
   // THE STATED LIMIT, PINNED. Both copies say '>=18.0.0'; they agree with each
   // other and disagree with the code. E is silent; B is what fires.

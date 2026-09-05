@@ -54,7 +54,7 @@
  * Run: node .github/scripts/check-mutation-audit.test.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -1489,6 +1489,92 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
     check('ledger: ...and the honoured count is of SITES, not accepted entries', r.counts.honoured, 1);
     check('ledger: ...so undispositioned reports the true remainder', r.counts.undispositioned, 2);
     check('ledger: ...and entries counts all three, including the refused copy', r.counts.entries, 3);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AN INTERRUPTED RUN LEAVES THE TRACKED TREE CLEAN, BECAUSE NOTHING WRITES TO
+// IT (#652)
+//
+// The block above tests the SIGNAL HANDLER: interrupt, and the handler restores
+// what it had mutated. That narrows the window. It does not close it — a
+// handler cannot run while `spawnSync` holds the loop, `SIGHUP` was never
+// handled, and `SIGKILL` cannot be caught at all. QA hit exactly that doing
+// something routine, and was left with a DIFFERENT file dirty from the one
+// dirty moments earlier, because the harness had moved on.
+//
+// `audit()` now mutates a REPLICA, so there is no window to narrow. These cases
+// assert the property that follows: across a whole run, the tracked tree is
+// never written — not "is clean afterwards", which a run that never started
+// would also satisfy.
+//
+// TWO CONTROLS, because the assertion is about an absence and an absence is
+// what a broken harness also produces (see
+// docs/adr/ADR-024-output-must-vary-with-the-fact.md):
+//
+//   1. The tracked file is polled THROUGHOUT, not just at the end. The original
+//      defect was transient — a file dirty for one site and restored by the
+//      next — so an end-state check is the one shape that cannot see it.
+//   2. A mutation must actually be observed IN THE REPLICA while the run is
+//      live. Without that, "the tracked tree was never dirty" passes for an
+//      audit that crashed on startup, which is the vacuous pass this record
+//      describes.
+//
+// The SIGKILL case is the one that distinguishes this fix from a better signal
+// handler. No handler can survive it; a replica does not need to.
+// ---------------------------------------------------------------------------
+for (const signal of ['SIGINT', 'SIGKILL']) {
+  const slowTest = `#!/usr/bin/env node
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 700);
+console.log('ok   - slow but green');
+process.exit(0);
+`;
+  const dir = withFixture(FIXTURE_GUARD, slowTest);
+  const guardPath = join(dir, '.github', 'scripts', 'check-fixture.mjs');
+  const original = readFileSync(guardPath, 'utf-8');
+
+  const runnerPath = join(dir, 'runner.mjs');
+  writeFileSync(
+    runnerPath,
+    `import { audit } from ${JSON.stringify(join(import.meta.dirname, 'check-mutation-audit.mjs'))};\n` +
+      `audit(${JSON.stringify(dir)}, { onReplica: (p) => console.log('REPLICA ' + p) });\n`,
+  );
+
+  try {
+    const child = spawn(process.execPath, [runnerPath], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let stdout = '';
+    child.stdout.on('data', (d) => {
+      stdout += d;
+    });
+    // Attached NOW, not after the kill. A child that has already exited fires
+    // `exit` once and never again, so a listener registered afterwards waits
+    // forever — which is what the first draft of this case did, and it hung
+    // exactly when the run under test was fast enough to finish on its own.
+    const exited = new Promise((res) => child.on('exit', () => res()));
+
+    // Poll until the REPLICA is carrying a mutation — that is the live window,
+    // and the precondition that makes everything below non-vacuous. The tracked
+    // file is checked on every pass of the same loop.
+    let replicaMutated = false;
+    let trackedEverDirty = false;
+    for (let i = 0; i < 60 && !replicaMutated; i += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (readFileSync(guardPath, 'utf-8') !== original) trackedEverDirty = true;
+      const replicaRoot = /REPLICA (.+)/.exec(stdout)?.[1]?.trim();
+      if (replicaRoot === undefined) continue;
+      const replicaGuard = join(replicaRoot, '.github', 'scripts', 'check-fixture.mjs');
+      if (existsSync(replicaGuard) && readFileSync(replicaGuard, 'utf-8') !== original) replicaMutated = true;
+    }
+
+    child.kill(signal);
+    await exited;
+    if (readFileSync(guardPath, 'utf-8') !== original) trackedEverDirty = true;
+
+    check(`${signal}: a mutation was live in the replica when the signal landed (precondition)`, replicaMutated, true);
+    check(`${signal}: the tracked guard is never written at any point in the run`, trackedEverDirty, false);
+    check(`${signal}: ...and is byte-identical afterwards`, readFileSync(guardPath, 'utf-8'), original);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

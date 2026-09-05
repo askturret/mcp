@@ -58,7 +58,8 @@
  *   node .github/scripts/check-mutation-audit.mjs [rootDir] [--write]
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, cpSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve, basename } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
@@ -683,12 +684,70 @@ function runSelfTest(testPath, cwd, timeoutMs = SELF_TEST_TIMEOUT_MS) {
 }
 
 /**
+ * A throwaway, faithful copy of the tree, for mutating.
+ *
+ * FAITHFUL is the whole requirement — see the note in `audit`. A partial copy
+ * silently changes what the self-tests measure, in the direction that makes the
+ * audit over-report its own coverage.
+ *
+ * `node_modules` is symlinked, not copied: self-tests read it and none writes to
+ * it, and copying it would dominate the cost. `.git` is skipped entirely — no
+ * self-test needs it, and a shared `.git` would give a read-only tool a path to
+ * the real index.
+ *
+ * @returns {{root: string, cleanup: () => void}}
+ */
+export function createReplica(rootDir) {
+  const root = mkdtempSync(join(tmpdir(), 'mutation-audit-'));
+  cpSync(rootDir, root, {
+    recursive: true,
+    // `dereference: false` keeps symlinks as symlinks; copying through them
+    // could pull in the very node_modules this filter is skipping.
+    dereference: false,
+    filter: (src) => {
+      const base = basename(src);
+      return base !== 'node_modules' && base !== '.git';
+    },
+  });
+
+  const realModules = join(rootDir, 'node_modules');
+  if (existsSync(realModules)) {
+    try {
+      symlinkSync(realModules, join(root, 'node_modules'), 'dir');
+    } catch {
+      // A replica without node_modules still audits every guard that does not
+      // need it. Failing the whole run here would trade a working audit for a
+      // tidy one.
+    }
+  }
+
+  return {
+    root,
+    cleanup: () => {
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch {
+        // The replica lives under the OS temp directory, outside the
+        // repository. Failing to remove it leaves litter, never residue in the
+        // tracked tree — so it must not fail the audit.
+      }
+    },
+  };
+}
+
+/**
  * Audit one guard.
  *
- * The guard is mutated IN PLACE and restored from the original bytes in a
- * `finally`, with the restore verified. Copying the tree instead was rejected:
- * several self-tests assert against real repository state, so a copy changes
- * what is being measured.
+ * The guard is mutated in place WITHIN THE REPLICA and restored from the
+ * original bytes in a `finally`, with the restore verified. `guardPath` is a
+ * replica path on every production route (`audit` builds it), so the restore
+ * and the signal handler below protect the replica's consistency across sites
+ * — they are no longer what stands between an interrupt and a disarmed guard in
+ * the tracked tree. Nothing writes to the tracked tree at all (#652).
+ *
+ * They are kept because `auditGuard` is exported and takes an arbitrary
+ * `guardPath`: a caller that hands it a tracked file still gets the restore.
+ * Belt and braces, where the braces are structural.
  *
  * ## The `mutate` seam
  *
@@ -1260,7 +1319,71 @@ export async function audit(rootDir, {
   exempt = MUTATION_EXEMPT,
   mutate = applyMutations,
   selfTestTimeoutMs = SELF_TEST_TIMEOUT_MS,
+  // A SEAM, for the same reason `mutate` is one. The interrupted-run test needs
+  // to WITNESS that a mutation was genuinely on disk when the signal landed —
+  // otherwise "the tree is clean afterwards" passes for a run that never
+  // started, which is the vacuous-assertion shape
+  // docs/adr/ADR-024-output-must-vary-with-the-fact.md describes. Production
+  // callers pass nothing.
+  onReplica = () => {},
 } = {}) {
+  // EVERY MUTATION HAPPENS IN A REPLICA, NEVER IN THE TRACKED TREE (#652).
+  //
+  // The audit neutralises a guard, runs its self-test, and restores it. Doing
+  // that to the tracked file put a DISARMED GUARD on disk for ~28% of a
+  // five-minute run, and interrupting a five-minute tool is the expected
+  // interaction, not an unusual one. The residue is a plausible-looking
+  // one-character edit to a real guard — `process.exit(1)` -> `process.exit(0)`
+  // — which parses, lints, and can ride along into a commit unnoticed.
+  //
+  // The signal handler in `auditGuard` narrows that window. It does not close
+  // it: `SIGKILL` cannot be caught, `SIGHUP` was never handled, and a handler
+  // cannot run at all while `spawnSync` holds the loop. A replica closes it,
+  // because there is no longer anything to restore — the tracked file is never
+  // written, by any path, including the ones no handler can reach.
+  //
+  // ## Why the earlier rejection was right, and why it no longer applies
+  //
+  // This was previously rejected on the grounds that "several self-tests assert
+  // against real repository state, so a copy changes what is being measured".
+  // That is TRUE, measured, and it is the trap: copying only `.github/scripts/`
+  // to a temp directory takes check-runners.test.mjs from 74/0 to 68/6,
+  // check-sdk-boundary from 24/0 to 22/2, and crashes check-codeowners outright.
+  //
+  // AND THOSE FAILURES POINT THE WRONG WAY. A self-test that fails for an
+  // environmental reason is indistinguishable, to this audit, from one that
+  // CAUGHT THE MUTATION — so a partial copy makes the audit report better
+  // coverage than it has. That is the same defect class the audit exists to
+  // find, produced by the audit.
+  //
+  // The reasoning does not survive a FAITHFUL replica, because then the copy IS
+  // real repository state. Measured against the same self-tests: check-runners
+  // 74/0, check-codeowners 52/0, check-sdk-boundary 24/0, check-guards 160/0,
+  // check-audit-append-only 40/0, check-concealment-captures 133/0 — identical
+  // to the tracked tree in every case.
+  //
+  // Cost is one tree copy per RUN, not per guard: ~1s and ~15MB against a
+  // ~322s audit. `node_modules` is symlinked rather than copied (self-tests
+  // read it, none writes to it) and `.git` is skipped — no self-test needs it,
+  // and sharing it with the real repository is how a read-only tool acquires
+  // the ability to corrupt an index.
+  const replica = createReplica(rootDir);
+  onReplica(replica.root);
+  try {
+    return await auditIn(replica.root, { onProgress, exempt, mutate, selfTestTimeoutMs });
+  } finally {
+    replica.cleanup();
+  }
+}
+
+/**
+ * The audit proper, against whatever root it is handed.
+ *
+ * Split from `audit` so the replica is created exactly once per run rather than
+ * once per guard, and so the mutation logic below has no way to name the
+ * tracked tree even by mistake — it only ever sees the root it was given.
+ */
+async function auditIn(rootDir, { onProgress, exempt, mutate, selfTestTimeoutMs }) {
   const guards = discoverGuards(rootDir);
   const errors = [];
   const measured = [];

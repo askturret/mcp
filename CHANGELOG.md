@@ -59,9 +59,30 @@ at a guide describing a change the tool does not make.
 
 ## [Unreleased]
 
-Nothing released yet. The project is at `0.1.0` and **pre-1.0, so no
-compatibility guarantee is in force** — see the policy document for what changes
-when `1.0.0` ships.
+Entries below this heading are merged but not yet in a tagged release. The
+project is **pre-1.0, so no compatibility guarantee is in force** — see the
+policy document for what changes when `1.0.0` ships.
+
+For what has actually shipped, ask each authority the question it answers —
+**tagged, released and published are three different states, and they do not
+always agree**:
+
+| question | authority |
+|---|---|
+| what is tagged? | `git tag -l 'v*'` |
+| what has a GitHub Release? | the repository's releases page |
+| what is on npm? | `npm view @askturret/mcp-core versions`, or any public workspace |
+
+**Do not ask npm about `@askturret/mcp`.** The root manifest carries that name,
+and it is the one package here that is not published — so the query returns
+`E404`, which reads as *"nothing shipped"* and is the exact false belief this
+paragraph exists to prevent. Ask a workspace that publishes instead; each
+manifest's own `private` field says which those are.
+
+This heading names no current version deliberately. It previously read
+*"Nothing released yet. The project is at `0.1.0`"*, and went on saying it after
+the project had both tagged and published — a sentence that was true when
+written and had no way to notice it had stopped being true.
 
 ### Added
 - `NOT_FOUND` on `OperationErrorCode` (#201). An upstream 404 or 410 now returns

@@ -22,22 +22,36 @@
  * executes THIS file once per mutation site in `check-mutation-audit.mjs`,
  * plus once for the baseline, plus once for the completeness probe:
  *
- *   8 sites + 1 baseline + 1 probe = 10 runs
+ *   (sites in check-mutation-audit.mjs) + 1 baseline + 1 probe = runs
  *
  * The three call sites are `baseline`, the per-site run inside the loop, and
  * the `all`-neutralised probe — all in `auditGuard`. The site count comes from
  * the inventory and moves as the audit's own source changes; the shape does
  * not.
  *
- * Measured on this machine: this file takes 11.3 s, so it accounts for about
- * 113 s of a 322 s audit — roughly a THIRD of the whole run, spent auditing
- * the auditor.
+ * DO NOT TRUST THE FIGURES BELOW — RE-MEASURE. Both halves of this estimate
+ * have gone stale already, and the paragraph arguing to spend the time
+ * KNOWINGLY was itself the thing that stopped knowing:
+ *
+ *   time node .github/scripts/check-mutation-audit.test.mjs        # per run
+ *   node -e "import('./.github/scripts/check-mutation-audit.mjs')  # multiplier
+ *     .then(m=>console.log(m.enumerateSites(
+ *       require('fs').readFileSync(
+ *         '.github/scripts/check-mutation-audit.mjs','utf-8')).length))"
+ *
+ * As of #652 round two: 18 sites, so 20 runs, at ~15.2 s each — about 300 s.
+ * It previously read "8 sites ... 11.3 s ... about 113 s of a 322 s audit",
+ * which was low on BOTH factors at once: the per-run time by 26%, and the
+ * multiplier by more than double. The product was understated nearly threefold,
+ * and nothing went red, because an estimate in a comment cannot fail.
  *
  * That is not an argument for spending less. The fixtures that cost the time
  * spawn real child processes and send real SIGINTs, and they are what gave the
  * #435 signal-handler fix a witness — the right way to test a signal handler,
  * and worth every second. It is an argument for spending it KNOWINGLY: a
- * fixture that sleeps 700 ms here adds 7 s to the audit, not 700 ms.
+ * fixture that sleeps 700 ms here adds 14 s to the audit at the current
+ * multiplier, not 700 ms. Which is the same reason to re-derive the multiplier
+ * rather than read it here.
  *
  * The cost was misattributed once already, to the per-site `yield` in
  * `check-mutation-audit.mjs`, which measures ~3 ms across all 151 sites. If
@@ -54,7 +68,18 @@
  * Run: node .github/scripts/check-mutation-audit.test.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  readFileSync,
+  existsSync,
+  symlinkSync,
+  readlinkSync,
+  realpathSync,
+  lstatSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -67,6 +92,7 @@ import {
   reachedAssertions,
   auditGuard,
   audit,
+  createReplica,
   interpretProbe,
   discoverGuards,
   renderInventory,
@@ -771,10 +797,13 @@ process.exit(0);
 // ---------------------------------------------------------------------------
 // SELF-APPLICATION — the audit is in its own target list (#428 Q4)
 //
-// This property is also what makes THIS FILE cost about ten times its own
-// runtime on every full audit — 8 sites + baseline + probe. See the header
-// section "EVERY SECOND YOU ADD HERE IS CHARGED ABOUT TEN TIMES" (#437) before
-// adding a fixture that sleeps.
+// This property is also what makes THIS FILE cost a multiple of its own runtime
+// on every full audit — one run per site in check-mutation-audit.mjs, plus
+// baseline, plus probe. That multiple is currently about TWENTY, not the ten
+// this note and the header used to say. See the header section "EVERY SECOND
+// YOU ADD HERE IS CHARGED ABOUT TEN TIMES" (#437) — which keeps its title as
+// written, and tells you how to re-derive the real figure — before adding a
+// fixture that sleeps.
 // ---------------------------------------------------------------------------
 {
   const names = discoverGuards(join(process.cwd())).map((g) => g.name);
@@ -969,7 +998,9 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
  * The exemption ledger (#532, conditions 3-6)
  *
  * Pure calls over fixture reports — microseconds, which matters here because
- * every second in this file is charged about ten times over a full audit.
+ * every second in this file is charged once per mutation site in
+ * check-mutation-audit.mjs, plus baseline and probe. The header says how to
+ * re-derive that multiplier; it is not the "about ten times" this line carried.
  * There are no child processes below.
  *
  * The live ledger is EMPTY by design (#533 writes the entries), so every
@@ -1489,6 +1520,167 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
     check('ledger: ...and the honoured count is of SITES, not accepted entries', r.counts.honoured, 1);
     check('ledger: ...so undispositioned reports the true remainder', r.counts.undispositioned, 2);
     check('ledger: ...and entries counts all three, including the refused copy', r.counts.entries, 3);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// NO LINK IN THE REPLICA MAY ESCAPE BACK INTO THE REAL TREE (#652)
+//
+// The replica is only useful if it is FAITHFUL, and the first version was not,
+// in a way nothing visible would show: every file present and byte-identical,
+// but `cpSync` had rewritten relative symlinks as ABSOLUTE ones pointing at the
+// real tree. npm's workspace links therefore resolved out of the replica, npm
+// reported every package `extraneous`, `--omit=dev` pruned nothing, and
+// `generate-notice`'s self-test failed its own control — so the audit reported
+// CANNOT CHECK for that guard and failed on its own integrity, which is the
+// fail-closed behaviour working correctly.
+//
+// Asserted STRUCTURALLY, so it needs no npm and does not cost the four seconds
+// a real replica does: a link inside the replica must not resolve into the
+// source tree. The CONTROL is the fixture's own link, which must resolve inside
+// the FIXTURE — without it, a fixture whose link was broken or absent would
+// satisfy the assertion vacuously, which is the shape
+// docs/adr/ADR-024-output-must-vary-with-the-fact.md describes.
+// ---------------------------------------------------------------------------
+{
+  const src = mkdtempSync(join(tmpdir(), 'replica-fidelity-'));
+  let replica = null;
+  try {
+    mkdirSync(join(src, 'packages', 'core'), { recursive: true });
+    writeFileSync(join(src, 'packages', 'core', 'package.json'), '{"name":"@x/core"}');
+    mkdirSync(join(src, 'node_modules', '@x'), { recursive: true });
+    // The exact shape npm creates for a workspace: a RELATIVE link upwards.
+    symlinkSync(join('..', '..', 'packages', 'core'), join(src, 'node_modules', '@x', 'core'));
+
+    check(
+      'CONTROL: the fixture link resolves inside the FIXTURE (else the case is vacuous)',
+      realpathSync(join(src, 'node_modules', '@x', 'core')).startsWith(realpathSync(src)),
+      true,
+    );
+
+    const r = createReplica(src);
+    replica = r.root;
+    const linked = join(r.root, 'node_modules', '@x', 'core');
+
+    check('the replica carries node_modules at all', existsSync(join(r.root, 'node_modules')), true);
+
+    // A COMMENT IS THE WRONG DEFENCE AGAINST THE READER WHO IGNORES COMMENTS.
+    // Symlinking node_modules is the cheaper design, it is what a reader
+    // reclaiming ~124MB and ~4s will reach for first, and it is precisely what
+    // made this audit report CANNOT CHECK. The prose above `createReplica` says
+    // so; this assertion is what goes red if someone does it anyway.
+    check(
+      'and it is a REAL directory, not a symlink — symlinking it is the known-broken design',
+      lstatSync(join(r.root, 'node_modules')).isSymbolicLink(),
+      false,
+    );
+    check(
+      'a workspace link in the replica resolves INSIDE the replica, not into the source tree',
+      realpathSync(linked).startsWith(realpathSync(r.root)),
+      true,
+    );
+    check(
+      '...and is stored RELATIVE, so the replica does not encode its own path',
+      readlinkSync(linked).startsWith('..'),
+      true,
+    );
+  } finally {
+    rmSync(src, { recursive: true, force: true });
+    if (replica !== null) rmSync(replica, { recursive: true, force: true });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// AN INTERRUPTED RUN LEAVES THE TRACKED TREE CLEAN, BECAUSE NOTHING WRITES TO
+// IT (#652)
+//
+// The block above tests the SIGNAL HANDLER: interrupt, and the handler restores
+// what it had mutated. That narrows the window. It does not close it — a
+// handler cannot run while `spawnSync` holds the loop, `SIGHUP` was never
+// handled, and `SIGKILL` cannot be caught at all. QA hit exactly that doing
+// something routine, and was left with a DIFFERENT file dirty from the one
+// dirty moments earlier, because the harness had moved on.
+//
+// `audit()` now mutates a REPLICA, so there is no window to narrow. These cases
+// assert the property that follows: across a whole run, the tracked tree is
+// never written — not "is clean afterwards", which a run that never started
+// would also satisfy.
+//
+// TWO CONTROLS, because the assertion is about an absence and an absence is
+// what a broken harness also produces (see
+// docs/adr/ADR-024-output-must-vary-with-the-fact.md):
+//
+//   1. The tracked file is polled THROUGHOUT, not just at the end. The original
+//      defect was transient — a file dirty for one site and restored by the
+//      next — so an end-state check is the one shape that cannot see it.
+//   2. A mutation must actually be observed IN THE REPLICA while the run is
+//      live. Without that, "the tracked tree was never dirty" passes for an
+//      audit that crashed on startup, which is the vacuous pass this record
+//      describes.
+//
+// The SIGKILL case is the one that distinguishes this fix from a better signal
+// handler. No handler can survive it; a replica does not need to.
+// ---------------------------------------------------------------------------
+for (const signal of ['SIGINT', 'SIGKILL']) {
+  const slowTest = `#!/usr/bin/env node
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 700);
+console.log('ok   - slow but green');
+process.exit(0);
+`;
+  const dir = withFixture(FIXTURE_GUARD, slowTest);
+  const guardPath = join(dir, '.github', 'scripts', 'check-fixture.mjs');
+  const original = readFileSync(guardPath, 'utf-8');
+
+  const runnerPath = join(dir, 'runner.mjs');
+  writeFileSync(
+    runnerPath,
+    `import { audit } from ${JSON.stringify(join(import.meta.dirname, 'check-mutation-audit.mjs'))};\n` +
+      `audit(${JSON.stringify(dir)}, { onReplica: (p) => console.log('REPLICA ' + p) });\n`,
+  );
+
+  try {
+    const child = spawn(process.execPath, [runnerPath], { stdio: ['ignore', 'pipe', 'ignore'] });
+    let stdout = '';
+    child.stdout.on('data', (d) => {
+      stdout += d;
+    });
+    // Attached NOW, not after the kill. A child that has already exited fires
+    // `exit` once and never again, so a listener registered afterwards waits
+    // forever — which is what the first draft of this case did, and it hung
+    // exactly when the run under test was fast enough to finish on its own.
+    const exited = new Promise((res) => child.on('exit', () => res()));
+
+    // Poll until the REPLICA is carrying a mutation — that is the live window,
+    // and the precondition that makes everything below non-vacuous. The tracked
+    // file is checked on every pass of the same loop.
+    let replicaMutated = false;
+    let trackedEverDirty = false;
+    for (let i = 0; i < 60 && !replicaMutated; i += 1) {
+      await new Promise((r) => setTimeout(r, 100));
+      if (readFileSync(guardPath, 'utf-8') !== original) trackedEverDirty = true;
+      const replicaRoot = /REPLICA (.+)/.exec(stdout)?.[1]?.trim();
+      if (replicaRoot === undefined) continue;
+      const replicaGuard = join(replicaRoot, '.github', 'scripts', 'check-fixture.mjs');
+      if (existsSync(replicaGuard) && readFileSync(replicaGuard, 'utf-8') !== original) replicaMutated = true;
+    }
+
+    child.kill(signal);
+    await exited;
+    if (readFileSync(guardPath, 'utf-8') !== original) trackedEverDirty = true;
+
+    check(`${signal}: a mutation was live in the replica when the signal landed (precondition)`, replicaMutated, true);
+    check(`${signal}: the tracked guard is never written at any point in the run`, trackedEverDirty, false);
+    check(`${signal}: ...and is byte-identical afterwards`, readFileSync(guardPath, 'utf-8'), original);
+
+    // A KILLED run never reaches its own cleanup, so the replica outlives it.
+    // That is the accepted trade — litter in the OS temp directory instead of
+    // residue in the tracked tree — but at ~124MB per strand it accumulates
+    // fast, and a test that kills a child on every run would be the largest
+    // single source of it. So it clears up after itself.
+    const replicaRoot = /REPLICA (.+)/.exec(stdout)?.[1]?.trim();
+    if (replicaRoot !== undefined) rmSync(replicaRoot, { recursive: true, force: true });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 }
 

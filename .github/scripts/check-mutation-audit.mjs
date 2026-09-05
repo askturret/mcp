@@ -58,8 +58,22 @@
  *   node .github/scripts/check-mutation-audit.mjs [rootDir] [--write]
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
-import { join, resolve, basename } from 'node:path';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  mkdtempSync,
+  mkdirSync,
+  cpSync,
+  rmSync,
+  symlinkSync,
+  readlinkSync,
+  unlinkSync,
+  realpathSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve, basename, relative, isAbsolute, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
@@ -683,12 +697,169 @@ function runSelfTest(testPath, cwd, timeoutMs = SELF_TEST_TIMEOUT_MS) {
 }
 
 /**
+ * Repoint every symlink that escapes back into the real tree.
+ *
+ * `cpSync` with `dereference: false` does NOT preserve a relative symlink
+ * verbatim — it resolves the target and writes an ABSOLUTE link. So npm's
+ * workspace links, `../../packages/x` in the real tree, arrive in the replica
+ * pointing at the REAL `packages/x`. npm then sees no workspace installed
+ * where the manifest says one should be, and reports every other package as
+ * `extraneous`.
+ *
+ * The size of that effect is why this is worth a walk (#652, second round). In
+ * the real tree `npm ls --all --json --omit=dev` exits 0 with 57KB of output;
+ * with escaping links it exits 1 with `ELSPROBLEMS` and 510KB. `generate-notice`
+ * TOLERATES a non-zero exit by design — `npm ls` exits non-zero on peer
+ * complaints while still emitting a complete tree — so it parsed that tree,
+ * `--omit=dev` pruned nothing, and NOTICE regenerated with ~470 runtime
+ * entries against ~180. Its self-test failed its own control, and the audit
+ * correctly refused to report on a guard whose baseline was not green.
+ *
+ * Note what that near-miss was: a copy that LOOKED complete — every file
+ * present, byte-identical — and was wrong only in where its links pointed.
+ * Sampling seven guards did not catch it, because only one guard shells out to
+ * npm.
+ *
+ * Links are rewritten RELATIVE, so the replica does not encode its own path
+ * and a link cannot silently re-escape if the directory is ever moved.
+ */
+function repointEscapingLinks(realRoot, replicaRoot) {
+  // BOTH forms of the root, and the target resolved where it can be. On macOS
+  // `/var` is itself a symlink to `/private/var`, so a temp-directory root
+  // compared in only one form silently fails to match — the containment test
+  // then says "does not escape" about a link that plainly does. Caught by the
+  // fixture case below, which lives in exactly that directory.
+  const roots = [...new Set([realpathSync(realRoot), resolve(realRoot)])];
+  const escapes = (target) => {
+    let resolved = target;
+    try {
+      resolved = realpathSync(target);
+    } catch {
+      // A dangling link still has a target worth testing for containment.
+    }
+    for (const base of roots) {
+      for (const candidate of [resolved, target]) {
+        const rel = relative(base, candidate);
+        if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return rel;
+      }
+    }
+    return null;
+  };
+
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const p = join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        try {
+          const raw = readlinkSync(p);
+          const abs = isAbsolute(raw) ? raw : resolve(dir, raw);
+          const rel = escapes(abs);
+          if (rel === null) continue;
+          const inReplica = join(replicaRoot, rel);
+          unlinkSync(p);
+          symlinkSync(relative(dir, inReplica) || '.', p);
+        } catch {
+          // A link that cannot be repaired is left as it is. The guard that
+          // depends on it fails its own baseline and is reported CANNOT CHECK
+          // — loudly wrong beats quietly wrong.
+        }
+      } else if (entry.isDirectory()) {
+        walk(p);
+      }
+    }
+  };
+
+  walk(replicaRoot);
+}
+
+/**
+ * A throwaway, faithful copy of the tree, for mutating.
+ *
+ * FAITHFUL is the whole requirement — see the note in `audit`. A partial copy
+ * silently changes what the self-tests measure, in the direction that makes the
+ * audit over-report its own coverage.
+ *
+ * ## `node_modules` IS COPIED FOR REAL. DO NOT SYMLINK IT.
+ *
+ * That is the expensive part — measured at 109MB of a 124MB replica, 88% of it,
+ * and most of the ~3.9s build — so it is exactly what a later reader will want
+ * to optimise. It was tried, and it is the defect this file already had once
+ * (#652, second round):
+ *
+ * npm links each workspace as a RELATIVE symlink, `../../packages/x`. Reach
+ * `node_modules` through one link and those resolve against the REAL tree, so
+ * npm sees no workspace installed where the manifest says one should be and
+ * reports every other package `extraneous`. `npm ls --omit=dev` went from
+ * exit 0 / 57KB to exit 1 / 510KB, `generate-notice` regenerated NOTICE with
+ * ~470 runtime entries against ~180, its self-test failed its own control, and
+ * the audit reported CANNOT CHECK and failed on its own integrity in CI.
+ *
+ * So the cost is deliberate and the cheaper design is known-broken. If the 4s
+ * has to go, the thing to attack is the COPY MECHANISM — a reflink or hardlink
+ * clone preserves real directory semantics — never the link-vs-copy decision.
+ *
+ * `.git` is skipped entirely: no self-test needs it, and a shared `.git` would
+ * give a read-only tool a path to the real index.
+ *
+ * @returns {{root: string, cleanup: () => void}}
+ */
+export function createReplica(rootDir) {
+  const root = mkdtempSync(join(tmpdir(), 'mutation-audit-'));
+  cpSync(rootDir, root, {
+    recursive: true,
+    // `dereference: false` is LOAD-BEARING, not a default worth keeping by
+    // habit. npm links each workspace into `node_modules/<scope>/<name>` as a
+    // RELATIVE symlink — `../../packages/x` — so copying the links AS LINKS
+    // makes them resolve against the replica. Dereferencing would copy the
+    // package contents in their place, and npm would no longer see a workspace
+    // where it expects one.
+    dereference: false,
+    // `.git` only. No self-test needs it, and sharing it is how a read-only
+    // tool acquires the ability to corrupt an index.
+    filter: (src) => basename(src) !== '.git',
+  });
+
+  repointEscapingLinks(rootDir, root);
+
+  return {
+    root,
+    cleanup: () => {
+      try {
+        rmSync(root, { recursive: true, force: true });
+      } catch {
+        // The replica lives under the OS temp directory, outside the
+        // repository. Failing to remove it leaves litter, never residue in the
+        // tracked tree — so it must not fail the audit.
+        //
+        // "Litter" is ~124MB a time, and a KILLED run never reaches this line
+        // at all, so it accumulates: QA measured 150MB across six strays in a
+        // single session. Outside the repository and reaped by the OS, so it is
+        // still the right side of the trade — but it is not the trivial cost
+        // the word suggests, and an earlier note put it at ~15MB.
+      }
+    },
+  };
+}
+
+/**
  * Audit one guard.
  *
- * The guard is mutated IN PLACE and restored from the original bytes in a
- * `finally`, with the restore verified. Copying the tree instead was rejected:
- * several self-tests assert against real repository state, so a copy changes
- * what is being measured.
+ * The guard is mutated in place WITHIN THE REPLICA and restored from the
+ * original bytes in a `finally`, with the restore verified. `guardPath` is a
+ * replica path on every production route (`audit` builds it), so the restore
+ * and the signal handler below protect the replica's consistency across sites
+ * — they are no longer what stands between an interrupt and a disarmed guard in
+ * the tracked tree. Nothing writes to the tracked tree at all (#652).
+ *
+ * They are kept because `auditGuard` is exported and takes an arbitrary
+ * `guardPath`: a caller that hands it a tracked file still gets the restore.
+ * Belt and braces, where the braces are structural.
  *
  * ## The `mutate` seam
  *
@@ -810,8 +981,12 @@ export async function auditGuard({
       //
       //   this yield, 151 sites   ~3 ms      (measured directly: 113 setImmediate
       //                                       round-trips took 2.51 ms)
-      //   the audit's own self-test   ~113 s (11.3 s x 10 runs — see below)
-      //   whole audit                 322 s
+      //   the audit's own self-test  ~300 s  (~15.2 s x 20 runs — see the
+      //                                       self-test header, and re-measure:
+      //                                       this pair was ~113 s when written
+      //                                       and both factors have since moved)
+      //   whole audit                 322 s  (also pre-#652; the replica adds
+      //                                       ~3.9 s once per run)
       //
       // Roughly one part in a hundred thousand. QA reached the same conclusion
       // from the other direction, differencing two ~99 s runs at 99.0 vs 98.8;
@@ -1260,7 +1435,73 @@ export async function audit(rootDir, {
   exempt = MUTATION_EXEMPT,
   mutate = applyMutations,
   selfTestTimeoutMs = SELF_TEST_TIMEOUT_MS,
+  // A SEAM, for the same reason `mutate` is one. The interrupted-run test needs
+  // to WITNESS that a mutation was genuinely on disk when the signal landed —
+  // otherwise "the tree is clean afterwards" passes for a run that never
+  // started, which is the vacuous-assertion shape
+  // docs/adr/ADR-024-output-must-vary-with-the-fact.md describes. Production
+  // callers pass nothing.
+  onReplica = () => {},
 } = {}) {
+  // EVERY MUTATION HAPPENS IN A REPLICA, NEVER IN THE TRACKED TREE (#652).
+  //
+  // The audit neutralises a guard, runs its self-test, and restores it. Doing
+  // that to the tracked file put a DISARMED GUARD on disk for ~28% of a
+  // five-minute run, and interrupting a five-minute tool is the expected
+  // interaction, not an unusual one. The residue is a plausible-looking
+  // one-character edit to a real guard — `process.exit(1)` -> `process.exit(0)`
+  // — which parses, lints, and can ride along into a commit unnoticed.
+  //
+  // The signal handler in `auditGuard` narrows that window. It does not close
+  // it: `SIGKILL` cannot be caught, `SIGHUP` was never handled, and a handler
+  // cannot run at all while `spawnSync` holds the loop. A replica closes it,
+  // because there is no longer anything to restore — the tracked file is never
+  // written, by any path, including the ones no handler can reach.
+  //
+  // ## Why the earlier rejection was right, and why it no longer applies
+  //
+  // This was previously rejected on the grounds that "several self-tests assert
+  // against real repository state, so a copy changes what is being measured".
+  // That is TRUE, measured, and it is the trap: copying only `.github/scripts/`
+  // to a temp directory takes check-runners.test.mjs from 74/0 to 68/6,
+  // check-sdk-boundary from 24/0 to 22/2, and crashes check-codeowners outright.
+  //
+  // AND THOSE FAILURES POINT THE WRONG WAY. A self-test that fails for an
+  // environmental reason is indistinguishable, to this audit, from one that
+  // CAUGHT THE MUTATION — so a partial copy makes the audit report better
+  // coverage than it has. That is the same defect class the audit exists to
+  // find, produced by the audit.
+  //
+  // The reasoning does not survive a FAITHFUL replica, because then the copy IS
+  // real repository state. Measured against the same self-tests: check-runners
+  // 74/0, check-codeowners 52/0, check-sdk-boundary 24/0, check-guards 160/0,
+  // check-audit-append-only 40/0, check-concealment-captures 133/0 — identical
+  // to the tracked tree in every case.
+  //
+  // Cost is one tree copy per RUN, not per guard: ~3.9s and ~124MB against a
+  // ~322s audit. `node_modules` is COPIED FOR REAL and is 109MB of that 124MB
+  // — symlinking it is the known-broken design that made this audit report
+  // CANNOT CHECK, and `createReplica`'s docblock says why before anyone
+  // optimises it back. `.git` is skipped — no self-test needs it, and sharing
+  // it with the real repository is how a read-only tool acquires the ability
+  // to corrupt an index.
+  const replica = createReplica(rootDir);
+  onReplica(replica.root);
+  try {
+    return await auditIn(replica.root, { onProgress, exempt, mutate, selfTestTimeoutMs });
+  } finally {
+    replica.cleanup();
+  }
+}
+
+/**
+ * The audit proper, against whatever root it is handed.
+ *
+ * Split from `audit` so the replica is created exactly once per run rather than
+ * once per guard, and so the mutation logic below has no way to name the
+ * tracked tree even by mistake — it only ever sees the root it was given.
+ */
+async function auditIn(rootDir, { onProgress, exempt, mutate, selfTestTimeoutMs }) {
   const guards = discoverGuards(rootDir);
   const errors = [];
   const measured = [];

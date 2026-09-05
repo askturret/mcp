@@ -42,6 +42,6 @@
   },
   "askturret": {
     "versioning": "This package carries its OWN semver (see KIT_VERSION), scoped to conformance results: it moves when the categories change or an existing one gets stricter, not when @askturret/mcp releases. A result is only meaningful alongside the kit version that produced it.",
-    "publishing": "PRIVATE for now, like every other workspace in this repo. Publishing to npm needs a release-policy decision about which workspaces go public — this package depends on @askturret/mcp-adapter-conformance, which would have to go public too, and that pulls in its own dependency chain. Flagged in #54 rather than decided here."
+    "publishing": "PRIVATE, and still private after the first releases: `private: true` in this manifest is the authority, and `npm view @askturret/mcp-adapter-test` is how to check from outside. Some workspaces in this repo now publish and some do not — read each manifest's `private` field rather than assuming the repo is uniform, which an earlier version of this note did. Publishing this one needs a release-policy decision: it depends on @askturret/mcp-adapter-conformance, which would have to go public too, and that pulls in its own dependency chain. Flagged in #54 rather than decided here."
   }
 }

@@ -92,8 +92,36 @@
  */
 
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
+
+/** Number words this guard can read back out of the enforcement prose. */
+const WORD_TO_NUMBER = Object.freeze({
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+});
+
+/**
+ * The check letters this guard actually defines, read from its own source.
+ *
+ * `fileURLToPath`, never `new URL(...).pathname` — the latter percent-encodes,
+ * so a checkout path containing a space resolves to a file that does not exist
+ * (#110, which this repository keeps rediscovering).
+ *
+ * Reading its own source is the point rather than a shortcut: the alternative
+ * is a hand-maintained list of letters inside the guard, which is the same
+ * unenumerated-set defect one level down — a second copy to go stale.
+ */
+export function definedCheckLetters(guardPath = fileURLToPath(import.meta.url)) {
+  let text;
+  try {
+    text = readFileSync(guardPath, 'utf-8');
+  } catch {
+    return [];
+  }
+  return [...new Set([...text.matchAll(/^\s*\/\/ --- ([A-Z]): /gm)].map((m) => m[1]))].sort();
+}
 
 export const EXIT_OK = 0;
 export const EXIT_DIVERGENCE = 1;
@@ -508,6 +536,105 @@ export function main(argv) {
         `docs/compatibility.md does not mention '${value}', which docs/compatibility.json states — ` +
           `the two copies are hand-maintained and must be edited together`,
       );
+    }
+  }
+
+  // --- I: THE ENFORCEMENT FIELD DESCRIBES THIS GUARD ------------------------
+  //
+  // `contract.enforcement` is PROSE, and no check compared it against anything.
+  // It went stale once already — it claimed a versioned row naming no `source`
+  // fails the build, which check F stopped being true — and a human reading is
+  // what caught that.
+  //
+  // MOST OF IT CANNOT BE MECHANICALLY CHECKED, and this does not pretend
+  // otherwise. What CAN be is the part that goes stale the way it actually went
+  // stale: the field ENUMERATES the checks by letter and states how many there
+  // are, and this guard labels each of its checks with the same letter in
+  // source. Those two sets must agree.
+  //
+  // So the assertion is set equality plus the count, NOT a reading of the
+  // descriptions. Add a check without enumerating it here, remove one without
+  // deleting its claim, or renumber, and this fires. Reword what check C
+  // *means* and it does not — that is the bound, it is stated here rather than
+  // implied, and the self-test asserts it as a bound rather than describing it.
+  const enforcement = contract?.contract?.enforcement;
+  if (typeof enforcement !== 'string' || enforcement === '') {
+    divergences.push(
+      'contract.enforcement is absent or empty — the field that states what this guard enforces is the one ' +
+        'thing here with no source to re-derive from, so an empty one is a claim nobody can check rather than ' +
+        'a missing nicety',
+    );
+  } else {
+    const claimed = [...new Set([...enforcement.matchAll(/\(([A-Z])\)/g)].map((m) => m[1]))].sort();
+    const defined = definedCheckLetters();
+
+    if (defined.length === 0) {
+      // The markers are how this check sees the guard. If they vanish, it must
+      // say it could not look rather than report agreement with an empty set.
+      cannotCheck.push(
+        'no `// --- X:` check markers were found in this guard, so the enforcement field could not be ' +
+          'compared against the checks that actually run',
+      );
+    } else {
+      const missing = defined.filter((l) => !claimed.includes(l));
+      const extra = claimed.filter((l) => !defined.includes(l));
+
+      if (missing.length > 0) {
+        divergences.push(
+          `contract.enforcement does not enumerate check(s) ${missing.join(', ')}, which this guard runs and ` +
+            'fails the build on. A check the contract does not claim is enforcement nobody was told about.',
+        );
+      }
+      if (extra.length > 0) {
+        divergences.push(
+          `contract.enforcement enumerates check(s) ${extra.join(', ')}, which this guard does not run. ` +
+            'That is the stale-claim shape this field has already had once.',
+        );
+      }
+
+      // THE SAME ENUMERATION EXISTS TWICE. `docs/compatibility.md` carries it a
+      // second time, as a `| **A** | ... |` table — so checking only the JSON
+      // would leave the one-copy-updated-the-other-not defect that this entire
+      // guard exists to catch, in the passage describing the guard.
+      const inMd = [...new Set([...md.matchAll(/^\s*\|\s*\*\*([A-Z])\*\*\s*\|/gm)].map((m) => m[1]))].sort();
+      if (inMd.length === 0) {
+        cannotCheck.push(
+          'docs/compatibility.md carries no `| **X** |` check table, so its copy of the enumeration could ' +
+            'not be compared — it may have been restructured, which needs a human rather than a pass',
+        );
+      } else {
+        const mdMissing = defined.filter((l) => !inMd.includes(l));
+        const mdExtra = inMd.filter((l) => !defined.includes(l));
+        if (mdMissing.length > 0) {
+          divergences.push(
+            `docs/compatibility.md's check table omits ${mdMissing.join(', ')}, which this guard runs. The ` +
+              'JSON and the .md each carry this list, and both are hand-maintained.',
+          );
+        }
+        if (mdExtra.length > 0) {
+          divergences.push(
+            `docs/compatibility.md's check table lists ${mdExtra.join(', ')}, which this guard does not run.`,
+          );
+        }
+      }
+
+      // THE COUNT IS ASSERTED AGAINST THE DERIVATION, NOT TRUSTED. A spelled
+      // number in prose is the tally trap this repository keeps removing — the
+      // remedy is not to delete the number but to make it re-derived, so a
+      // reader still sees a figure and the figure cannot be wrong.
+      const spelled = enforcement.match(/runs ([A-Z]+) checks/);
+      const stated = spelled ? WORD_TO_NUMBER[spelled[1].toLowerCase()] : undefined;
+      if (spelled && stated === undefined) {
+        divergences.push(
+          `contract.enforcement says it runs '${spelled[1]}' checks, which is not a number word this guard ` +
+            'can read. Spell it in words this recognises, or the count is unverifiable.',
+        );
+      } else if (stated !== undefined && stated !== defined.length) {
+        divergences.push(
+          `contract.enforcement says it runs ${spelled[1]} checks, but this guard defines ${defined.length} ` +
+            `(${defined.join(', ')}). The count and the enumeration must both come from the same place.`,
+        );
+      }
     }
   }
 

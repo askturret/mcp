@@ -30,6 +30,7 @@ import {
   versionBearingRows,
   majorsNamedBy,
   installedVersion,
+  definedCheckLetters,
   discoverPublicPackages,
   EXIT_OK,
   EXIT_DIVERGENCE,
@@ -68,12 +69,36 @@ function silently(fn) {
 }
 
 /** A throwaway repo root carrying a contract, a rendering and a lockfile. */
+/**
+ * A `contract.enforcement` and a `.md` check table that satisfy check I (#630).
+ *
+ * DERIVED from `definedCheckLetters()` rather than hardcoded, so a fixture never
+ * has to be edited when a check is added — the dedicated check-I cases below
+ * construct their disagreements EXPLICITLY, so deriving here does not make that
+ * check vacuous where it is actually under test.
+ *
+ * Every fixture gets these unless it supplies its own: a contract with no
+ * enforcement statement is an incomplete contract, and before #630 the guard
+ * had no opinion about that.
+ */
+const LETTERS = definedCheckLetters();
+const NUMBER_WORD = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+const defaultEnforcement = () =>
+  `runs ${NUMBER_WORD[LETTERS.length].toUpperCase()} checks: ${LETTERS.map((l) => `(${l}) a check`).join('; ')}.`;
+const defaultCheckTable = () => LETTERS.map((l) => `  | **${l}** | a check |`).join('\n');
+
 function fixture({ contract, md = '', lock = { packages: {} }, packages = {}, rootManifest = {} }) {
   const dir = mkdtempSync(join(tmpdir(), 'compat-contract-'));
   tmpDirs.push(dir);
   mkdirSync(join(dir, 'docs'), { recursive: true });
-  writeFileSync(join(dir, 'docs', 'compatibility.json'), JSON.stringify(contract, null, 2));
-  writeFileSync(join(dir, 'docs', 'compatibility.md'), md);
+  // Complete the contract unless the case under test supplies its own.
+  const withEnforcement =
+    contract && typeof contract === 'object' && contract.contract === undefined
+      ? { ...contract, contract: { enforcement: defaultEnforcement() } }
+      : contract;
+  const withTable = md.includes('| **') ? md : `${md}\n${defaultCheckTable()}\n`;
+  writeFileSync(join(dir, 'docs', 'compatibility.json'), JSON.stringify(withEnforcement, null, 2));
+  writeFileSync(join(dir, 'docs', 'compatibility.md'), withTable);
   writeFileSync(join(dir, 'package-lock.json'), JSON.stringify(lock, null, 2));
   // `rootManifest` lets an adapter fixture supply the peer range its `source`
   // points at — without it check B reports cannot-check and the row-level
@@ -454,6 +479,83 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
     uncovered.map((u) => u.path).join(' | '),
     '',
   );
+}
+
+// ---------------------------------------------------------------------------
+// CHECK I — THE ENFORCEMENT CLAIM IS ITSELF COMPARED (#630).
+//
+// `contract.enforcement` was prose that no check compared against anything, and
+// it had already gone stale once: it claimed a versioned row naming no `source`
+// fails the build, after check F stopped making that true. A human reading was
+// the only thing that caught it.
+//
+// These construct their disagreements EXPLICITLY rather than deriving them, so
+// that unlike the fixture default they cannot agree by construction.
+// ---------------------------------------------------------------------------
+{
+  // The extraction itself, controlled. If this returned nothing, every case
+  // below would pass against an empty set and the check would be decoration.
+  check('the guard defines a non-empty set of check letters', LETTERS.length > 0, true);
+  check('...and it includes the ones the contract has always named', ['A', 'E', 'H'].every((l) => LETTERS.includes(l)), true);
+  check('...including I itself, which is what makes this self-describing', LETTERS.includes('I'), true);
+
+  const base = { runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } } };
+  const withEnforcement = (text, mdLetters = LETTERS) =>
+    fixture({
+      contract: { ...base, contract: { enforcement: text } },
+      md: `>=20.0.0\n${mdLetters.map((l) => `  | **${l}** | a check |`).join('\n')}\n`,
+    });
+
+  const word = NUMBER_WORD[LETTERS.length].toUpperCase();
+  const allLetters = (letters) => letters.map((l) => `(${l}) a check`).join('; ');
+
+  // A check the contract does not claim.
+  const omits = LETTERS.filter((l) => l !== 'E');
+  const rOmit = run(withEnforcement(`runs ${word} checks: ${allLetters(omits)}.`));
+  check('enforcement omitting a check the guard runs -> exit 1', rOmit.code, EXIT_DIVERGENCE);
+  check('...and names the omitted letter', rOmit.out.includes('does not enumerate check(s) E'), true);
+
+  // A check the contract claims and the guard does not run. This is the shape
+  // the field actually had when it went stale.
+  const rExtra = run(withEnforcement(`runs ${word} checks: ${allLetters([...LETTERS, 'Z'])}.`));
+  check('enforcement claiming a check the guard does NOT run -> exit 1', rExtra.code, EXIT_DIVERGENCE);
+  check('...and names the phantom letter', rExtra.out.includes('enumerates check(s) Z'), true);
+
+  // THE COUNT, asserted against the derivation rather than trusted. A spelled
+  // number in prose is the tally trap; the remedy is to re-derive it, not to
+  // delete it, so a reader still sees a figure that cannot be wrong.
+  const rCount = run(withEnforcement(`runs THREE checks: ${allLetters(LETTERS)}.`));
+  check('a count word disagreeing with the letters -> exit 1', rCount.code, EXIT_DIVERGENCE);
+  check('...and names both figures', rCount.out.includes(`says it runs THREE checks, but this guard defines ${LETTERS.length}`), true);
+
+  const rWord = run(withEnforcement(`runs SEVENTEENISH checks: ${allLetters(LETTERS)}.`));
+  check('a count word the guard cannot read -> exit 1, not a silent skip', rWord.code, EXIT_DIVERGENCE);
+
+  // An absent claim is a divergence, not a pass. This is the field's whole
+  // subject: before #630 its absence was indistinguishable from its presence.
+  const rAbsent = run(fixture({ contract: { ...base, contract: { stability: 'x' } }, md: '>=20.0.0\n  | **A** | a |\n' }));
+  check('an absent enforcement statement -> exit 1', rAbsent.code, EXIT_DIVERGENCE);
+  check('...and says an unchecked claim is worse than a missing one', rAbsent.out.includes('a claim nobody can check'), true);
+
+  // THE SECOND COPY. The same enumeration lives in docs/compatibility.md as a
+  // table, and checking only the JSON would leave the one-copy-updated-the-
+  // other-not defect inside the guard that exists to catch it.
+  const rMd = run(withEnforcement(`runs ${word} checks: ${allLetters(LETTERS)}.`, LETTERS.filter((l) => l !== 'G')));
+  check("the .md check table omitting a letter -> exit 1", rMd.code, EXIT_DIVERGENCE);
+  check('...and says which copy is short', rMd.out.includes("check table omits G"), true);
+
+  // THE POSITIVE CONTROL. Without it every case above is satisfied by a check
+  // that always fires.
+  const rOk = run(withEnforcement(`runs ${word} checks: ${allLetters(LETTERS)}.`));
+  check('both copies agreeing with the guard -> exit 0', rOk.code, EXIT_OK);
+
+  // THE BOUND, MADE EXECUTABLE. Check I compares the LETTER SET and the COUNT.
+  // It does NOT read the descriptions — so rewording what a check MEANS does
+  // not fire, and that is exactly how this field went stale before. Stated in
+  // the guard header and in both documents; asserted here so the statement
+  // cannot quietly become false.
+  const rReworded = run(withEnforcement(`runs ${word} checks: ${LETTERS.map((l) => `(${l}) something entirely different and wrong`).join('; ')}.`));
+  check('BOUND: rewording what a check MEANS does not fire — descriptions are unchecked', rReworded.code, EXIT_OK);
 }
 
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });

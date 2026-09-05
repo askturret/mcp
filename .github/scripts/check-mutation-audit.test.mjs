@@ -98,6 +98,8 @@ import {
   renderInventory,
   parseInventoryTotals,
   unaccountedSites,
+  partitionIdentity,
+  PARTITION_VERDICTS,
   inventoryDelta,
   evaluateExemptions,
   siteSource,
@@ -1765,6 +1767,39 @@ process.exit(0);
   // "I could not localise" must not render as "nothing to localise".
   const noGuards = inventoryDelta(null, totals).join('\n');
   check('partition: a caller with no guards says so rather than implying none exist', /NOT localised/.test(noGuards), true);
+
+  // -------------------------------------------------------------------------
+  // THE PRINTED IDENTITY MUST NAME EVERY BUCKET THE CODE SUMS (#651)
+  //
+  // Adding the three missing buckets closed the arithmetic and left the
+  // inventory still printing `witnessed + unwitnessed + cannot-check sites =
+  // failure sites` — directly beneath totals reading 167 + 17 + 0 against 185.
+  // The sum was fixed; the artifact went on asserting the identity the sum had
+  // just abandoned. That is #651 one level up, and it is how the first one
+  // survived three days: the document and the code each looked right alone.
+  //
+  // MEMBERSHIP, not a fixed sentence. Pinning the expected string would pass
+  // whatever the code sums, which is the failure being guarded — the identity
+  // is DERIVED from PARTITION_VERDICTS, so a sixth verdict is named here
+  // automatically or this assertion goes red.
+  for (const v of PARTITION_VERDICTS) {
+    check(`identity: the printed identity names the \`${v}\` bucket`, partitionIdentity().includes(v), true);
+  }
+  check(
+    'identity: ...and names cannot-check sites, which is a guard status rather than a verdict',
+    partitionIdentity().includes('cannot-check sites'),
+    true,
+  );
+
+  const doc = rendered(TOTALS);
+  check('identity: the rendered inventory prints that identity', doc.includes(partitionIdentity()), true);
+  // CONTROL: the superseded three-term sentence is genuinely gone from the
+  // artifact, not merely joined by a longer one elsewhere in the document.
+  check(
+    'identity: CONTROL — the superseded three-term sentence is absent',
+    doc.includes('`witnessed + unwitnessed + cannot-check sites = failure sites`'),
+    false,
+  );
 }
 
 console.log('');

@@ -869,6 +869,27 @@ export const PARTITION_VERDICTS = new Set([
 ]);
 
 /**
+ * The partition identity, WRITTEN FROM THE SET THE CODE ACTUALLY SUMS.
+ *
+ * Both the failure message and the inventory used to spell these terms out by
+ * hand. Adding the three missing buckets fixed the arithmetic and left the
+ * inventory's copy still reading `witnessed + unwitnessed + cannot-check sites
+ * = failure sites` — an artifact stating an identity its own totals contradict
+ * (167 + 17 + 0 against 185), printed one line below them.
+ *
+ * That is #651 one level up, and hand-editing a second copy is what produced it,
+ * so the second copy is removed rather than corrected: a sixth verdict added to
+ * the set above now updates both sentences, and cannot leave a stale one behind.
+ */
+function partitionTerms() {
+  return `${[...PARTITION_VERDICTS].join(' + ')} + cannot-check sites`;
+}
+
+export function partitionIdentity() {
+  return `${partitionTerms()} = failure sites`;
+}
+
+/**
  * Sites the partition cannot account for, NAMED.
  *
  * Two ways a site escapes, and they are reported apart because the remedies
@@ -1334,8 +1355,8 @@ function partitionFindings(totals, guards) {
 
   lines.push('');
   lines.push(
-    `**Partition does not close:** witnessed + unwitnessed + not-mutatable + unparseable + ` +
-      `did-not-terminate + cannot-check sites = ${partitionNow}, against ${totals.sites} failure sites. ` +
+    `**Partition does not close:** ${partitionTerms()} = ${partitionNow}, ` +
+      `against ${totals.sites} failure sites. ` +
       `Treat every figure above as unexplained until that is understood.`,
   );
 
@@ -1498,7 +1519,7 @@ export function renderInventory(report, previousMarkdown = null) {
       `${report.exemptions?.undispositioned ?? report.totals.unwitnessed} unwitnessed site(s) carry no entry`,
   );
   lines.push('');
-  lines.push('`witnessed + unwitnessed + cannot-check sites = failure sites`. The site-level');
+  lines.push(`\`${partitionIdentity()}\`. The site-level`);
   lines.push('figure is what closes that identity, and it is what makes a fall in `witnessed`');
   lines.push('legible as a change of CATEGORY rather than a loss of coverage (#438).');
   lines.push('');

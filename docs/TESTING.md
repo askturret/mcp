@@ -672,12 +672,39 @@ it — one call settles it, and the answer has changed at least once:
 | what to run | what it returns today |
 |---|---|
 | `gh_pr_checks` on any open PR | `required_known: true`, `required_checks: []` |
-| `GET /repos/askturret/mcp/rulesets` | `200`, two rulesets, both `enforcement: active` |
+| `GET /repos/askturret/mcp/rulesets` | `200`, two rulesets — both `enforcement: active`, both `target: branch` |
 | `GET /repos/askturret/mcp/branches/main/protection` | `404 Branch not protected` — rules live in rulesets, not legacy protection |
 
 So the consequence is **not** that the list cannot be read. It is that the list
 is **empty**: no check is required to merge, and a green board is a fact about
 what ran rather than about what had to.
+
+**The ruleset row carries two attributes, and the second is the load-bearing
+one.** `enforcement` says the rulesets are switched **on**; `target` says what
+they **cover**. Read on 2026-09-05, both active rulesets — `General` (`21858953`)
+and `Main` (`21859048`) — target **branches**, so tag creation is unprotected,
+and correctly so: tagging ships nothing here. A row recording only `enforcement`
+would report that rulesets exist and answer nothing about their scope, which is
+exactly the row someone updates believing they have settled the ruleset
+question (#638).
+
+**What this row does NOT cover.** `enforcement` and `target` only. It says
+nothing about the **rules inside** each ruleset — those come from the
+per-ruleset read and are recorded separately below, where the absence of a
+`required_status_checks` rule is what makes the empty required set above
+consistent rather than surprising. Note the two calls are one path segment
+apart and are not interchangeable: `GET /rulesets` is the readable list,
+`GET /rulesets/{id}` is the per-ruleset detail.
+
+**What would falsify it.** Re-run the call — it is one request and needs no
+admin. The row is false the moment a third ruleset appears, either of these
+flips to `evaluate` or `disabled`, or **any ruleset arrives with
+`target: tag`.** That last one is not a detail: `docs/releasing.md` argues the
+tag posture is safe *because* no tag ruleset exists **and** no publishing path
+carries a `tags:` trigger, and #622 was refused on that evidence. A
+`target: tag` result here is the signal to go and re-read that argument, not a
+cosmetic drift in a table. The two passages are one measurement recorded in two
+places, and whoever changes this fact is holding the other.
 
 That leaves the waiter's own list as the practical source of truth for *what
 should have run* — the same conclusion as before, reached for a different

@@ -26,10 +26,48 @@
  * THE TREE -> REGISTRY BOUND IS `scanTree` AND THE TWO PREDICATES BELOW — NOT
  * THIS PARAGRAPH. Read them: they are the only accurate statement of reach, and
  * they can be widened without anyone editing this text. As they stand today
- * they are regex matches over the TOP LEVEL of two directories, so a
+ * they are pattern matches over the TOP LEVEL of two directories, so a
  * label-dependent site in a subdirectory, in a file type not scanned, or
- * written in a shape the patterns do not recognise is not found. #593 is the
- * issue that widens them, and it enumerates the known blind spots.
+ * written in a shape the patterns do not recognise is not found.
+ *
+ * THE KNOWN BLIND SPOTS, MEASURED (#593). QA enumerated these by IMPORTING the
+ * predicates rather than reasoning about them; each is now pinned as an
+ * executable assertion in the self-test, so this list cannot quietly go stale
+ * and a future widening REDDENS the test that says it is missed:
+ *
+ *   CLOSED by #593:
+ *     - `types:` in YAML BLOCK-SEQUENCE style (the ordinary idiom, previously
+ *       invisible — only the flow style `types: [labeled]` was seen)
+ *     - `labels` reached by BRACKET notation, `payload.pull_request["labels"]`
+ *
+ *   STILL NOT DETECTED, and accepted as such rather than half-closed:
+ *     - `gh pr view --json labels` — a label read through a subprocess
+ *     - octokit `listLabelsOnIssue` — a label read through the API
+ *     - labels arriving in an arbitrary environment variable
+ *     - a DESTRUCTURED payload read, `const { GITHUB_EVENT_PATH } = process.env`
+ *     - files that are not `.mjs` / `.yml`, and any subdirectory of the two
+ *       scanned directories
+ *     - A SECOND label-dependent site inside an ALREADY-DECLARED file
+ *
+ * WHY THOSE ARE ACCEPTED RATHER THAN CHASED. The first three are a different
+ * KIND of problem: the label arrives at runtime through a channel no static
+ * reading of this file can see, so detecting them means detecting "a subprocess
+ * or an HTTP call might return labels", which is not decidable here. The
+ * destructured read is deliberately left alone for a reason already written
+ * into `scriptIsLabelDependent`: keying on the bare identifier made this guard
+ * flag ITSELF, and re-widening to catch destructuring reintroduces exactly that
+ * false positive.
+ *
+ * THE ALREADY-DECLARED-FILE CASE deserves its own note, because it is the
+ * cheapest to hit and the tempting fix is worse than the gap. A declared path
+ * is skipped by the TREE -> REGISTRY loop, so a SECOND dependency added to it —
+ * on a different label — is invisible. The obvious close is to record a site
+ * COUNT per entry and compare. That is rejected: a hand-maintained count that
+ * every edit must remember to update is the tally trap this repository keeps
+ * removing (#599's `23 on the approved pool`, #541's `honoured` counter), and
+ * it would go stale in the same silent way while reading as though it were
+ * verified. Counting sites soundly needs the parse this file deliberately does
+ * not do, so the gap is STATED and asserted instead.
  *
  * WHAT THAT MEANS FOR YOU, PRACTICALLY: adding an entry here IS checked.
  * FAILING to add one may not be.
@@ -89,6 +127,50 @@ export function workflowIsLabelDependent(text) {
   if (/github\.event\.label\b/.test(text)) return true;
   if (/github\.event\.pull_request\.labels/.test(text)) return true;
   if (/types:\s*\[[^\]]*\b(?:un)?labeled\b/.test(text)) return true;
+  // BLOCK-SEQUENCE `types:` (#593). The flow-style test above sees
+  // `types: [labeled]` and nothing else, so the ordinary YAML idiom
+  //
+  //   types:
+  //     - labeled
+  //
+  // was invisible — a workflow triggered BY labelling that the label-dependence
+  // guard could not see. Measured as MISSED against the real predicate before
+  // this was added.
+  if (typesBlockSequenceIncludesLabeled(text)) return true;
+  return false;
+}
+
+/**
+ * `types:` as a YAML block sequence, containing `labeled` or `unlabeled`.
+ *
+ * A LINE SCAN, NOT A PARSER — deliberately, and the distinction is the whole of
+ * what this can claim. It walks from a bare `types:` through the `- item` lines
+ * that follow and stops at the first line that is not one. It therefore knows
+ * nothing about anchors, multi-document files, flow mappings, or a `types:` key
+ * nested somewhere that does not mean what it looks like.
+ *
+ * It is chosen over a real YAML parse because direction B is a HEURISTIC by
+ * construction (see the header), and a parser here would buy exactness for the
+ * two syntaxes while leaving every non-syntactic miss — `gh --json labels`,
+ * octokit, labels arriving through an environment variable — exactly where it
+ * is. Trading "regex that under-covers" for "parser that under-covers" while
+ * gaining the word "parse" is the kind of claim this issue exists to stop.
+ */
+export function typesBlockSequenceIncludesLabeled(text) {
+  const lines = text.split('\n');
+
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!/^\s*types:\s*$/.test(lines[i])) continue;
+
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (/^\s*-\s*(?:un)?labeled\s*$/.test(lines[j])) return true;
+      // Another sequence item — keep walking. `labeled` is frequently not first.
+      if (/^\s*-\s*[A-Za-z_][\w-]*\s*$/.test(lines[j])) continue;
+      // Anything else ends the sequence. A blank line does too: continuing past
+      // it would let an unrelated later list satisfy an earlier `types:`.
+      break;
+    }
+  }
   return false;
 }
 
@@ -108,7 +190,12 @@ export function scriptIsLabelDependent(text) {
   // exempting away: an exemption list is a place to hide a real dependence,
   // and a tighter predicate is not.
   const readsPayload = /process\.env\[['"]GITHUB_EVENT_PATH['"]\]|process\.env\.GITHUB_EVENT_PATH/.test(text);
-  return readsPayload && /\.labels\b/.test(text);
+  // Dot AND bracket access (#593). `p.pull_request["labels"]` is the same read
+  // written the other way, and it was MISSED — measured, not assumed. Accepting
+  // both syntaxes widens no CONCEPT: the key is still "reads the payload AND
+  // reaches for labels".
+  const reachesForLabels = /\.labels\b/.test(text) || /\[\s*['"]labels['"]\s*\]/.test(text);
+  return readsPayload && reachesForLabels;
 }
 
 /**

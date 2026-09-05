@@ -239,6 +239,83 @@ const AGREEING = () => ({
   );
 }
 
+// ---------------------------------------------------------------------------
+// THE BOUND OF DIRECTION B, MADE EXECUTABLE (#593).
+//
+// The header and the registry both state that TREE -> REGISTRY is best-effort
+// and name what it does not reach. A stated limit that nothing asserts is the
+// same class of claim this guard exists to catch, so the limit is pinned here.
+//
+// READ THE `false` CASES AS SPECIFICATIONS OF A KNOWN GAP, NOT AS DESIRED
+// BEHAVIOUR. Each says "this label dependence is INVISIBLE to the detector".
+// If you widen a predicate to catch one, the matching assertion REDDENS — which
+// is the point: it forces the prose in the guard header and in
+// .github/label-dependent-checks.json to be corrected in the same change,
+// rather than silently becoming an understatement.
+// ---------------------------------------------------------------------------
+{
+  // --- CLOSED BY #593, previously missed. Measured before and after. --------
+  check(
+    'bound: `types:` as a BLOCK SEQUENCE is now caught',
+    workflowIsLabelDependent('on:\n  pull_request:\n    types:\n      - labeled\n'),
+    true,
+  );
+  check(
+    'bound: ...including when `labeled` is not the first item',
+    workflowIsLabelDependent('on:\n  pull_request:\n    types:\n      - opened\n      - synchronize\n      - labeled\n'),
+    true,
+  );
+  check(
+    'bound: ...and `unlabeled` too',
+    workflowIsLabelDependent('on:\n  pull_request:\n    types:\n      - unlabeled\n'),
+    true,
+  );
+  check(
+    'bound: labels via BRACKET notation is now caught',
+    scriptIsLabelDependent('const p = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH));\np.pull_request["labels"];\n'),
+    true,
+  );
+
+  // The negative control for the block-sequence scan. Without it, a scan that
+  // returned true for any `types:` at all would satisfy the three above.
+  check(
+    'bound: a `types:` block sequence WITHOUT labeled is not label-dependent',
+    workflowIsLabelDependent('on:\n  pull_request:\n    types:\n      - opened\n      - synchronize\n'),
+    false,
+  );
+  // And it must not walk past the end of the sequence into an unrelated list.
+  check(
+    'bound: the scan stops at the end of the sequence',
+    workflowIsLabelDependent('on:\n  pull_request:\n    types:\n      - opened\n\njobs:\n  x:\n    steps:\n      - labeled\n'),
+    false,
+  );
+
+  // --- STILL NOT DETECTED. Asserted, so the gap is executable. --------------
+  check(
+    'bound: a label read through `gh pr view --json labels` is NOT detected',
+    scriptIsLabelDependent("spawnSync('gh', ['pr', 'view', '--json', 'labels']);\n"),
+    false,
+  );
+  check(
+    'bound: a label read through octokit is NOT detected',
+    scriptIsLabelDependent('await octokit.rest.issues.listLabelsOnIssue({ owner, repo, issue_number });\n'),
+    false,
+  );
+  check(
+    'bound: labels arriving in an environment variable are NOT detected',
+    scriptIsLabelDependent("const labels = (process.env.PR_LABELS || '').split(',');\n"),
+    false,
+  );
+  check(
+    'bound: a DESTRUCTURED payload read is NOT detected',
+    scriptIsLabelDependent('const { GITHUB_EVENT_PATH } = process.env;\nconst p = JSON.parse(readFileSync(GITHUB_EVENT_PATH));\np.pull_request.labels;\n'),
+    false,
+  );
+  // That last one is deliberate rather than an oversight: widening to the bare
+  // identifier is what made this guard flag ITSELF on its first run, and that
+  // false positive is worse than the gap. Pinned so the trade stays visible.
+}
+
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });
 
 console.log(`\n${passed} passed, ${failed} failed`);

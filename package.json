@@ -1,6 +1,7 @@
 {
   "name": "@askturret/mcp",
   "version": "0.1.2",
+  "private": true,
   "description": "Agent-facing API layer - discover, shape, govern, and serve operations through Model Context Protocol",
   "type": "module",
   "bin": {
@@ -40,6 +41,7 @@
     "examples/*"
   ],
   "scripts": {
+    "prepublishOnly": "node -e \"console.error('\\nREFUSED: the repository root is not a publishable package.\\n\\n  It has no build output of its own - its exports map points at ./packages/*/dist,\\n  which resolves to nothing outside this workspace - and publishing it would ship\\n  the entire repository, including .github/ and .operum/, to a public registry\\n  under an immutable version (#591).\\n\\n  To release the packages:  npm publish --workspaces\\n\\n  private:true does NOT stop this on its own: npm gates that check on\\n  `workspace && manifest.private`, so a bare root publish skips it. This script\\n  is what actually refuses.\\n'); process.exit(1)\"",
     "build": "tsc -b",
     "test": "npm test --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",

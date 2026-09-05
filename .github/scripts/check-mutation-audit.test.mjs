@@ -998,7 +998,9 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
  * The exemption ledger (#532, conditions 3-6)
  *
  * Pure calls over fixture reports — microseconds, which matters here because
- * every second in this file is charged about ten times over a full audit.
+ * every second in this file is charged once per mutation site in
+ * check-mutation-audit.mjs, plus baseline and probe. The header says how to
+ * re-derive that multiplier; it is not the "about ten times" this line carried.
  * There are no child processes below.
  *
  * The live ledger is EMPTY by design (#533 writes the entries), so every

@@ -293,7 +293,8 @@ export async function checkLive({ rootDir, readState = readLiveState }) {
  * is really an outage. But outranking a finding is not the same as deleting it.
  * Divergences are printed whenever they were found, and the incomplete-read
  * block then says why the run is still not a pass. Nothing computed is
- * discarded, and no sentence claims more than was actually compared (#652).
+ * discarded, and no sentence claims more than was actually compared — see
+ * docs/adr/ADR-024-output-must-vary-with-the-fact.md.
  */
 export function report(result, { log = console.log, error = console.error } = {}) {
   const { divergences, cannotCheck, attestations, suppressed, compared = 0, considered = 0 } = result;

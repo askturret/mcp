@@ -58,9 +58,22 @@
  *   node .github/scripts/check-mutation-audit.mjs [rootDir] [--write]
  */
 
-import { readFileSync, writeFileSync, existsSync, readdirSync, mkdtempSync, cpSync, rmSync, symlinkSync } from 'node:fs';
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  readdirSync,
+  mkdtempSync,
+  mkdirSync,
+  cpSync,
+  rmSync,
+  symlinkSync,
+  readlinkSync,
+  unlinkSync,
+  realpathSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve, basename } from 'node:path';
+import { join, resolve, basename, relative, isAbsolute, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
 
@@ -697,29 +710,105 @@ function runSelfTest(testPath, cwd, timeoutMs = SELF_TEST_TIMEOUT_MS) {
  *
  * @returns {{root: string, cleanup: () => void}}
  */
+/**
+ * Repoint every symlink that escapes back into the real tree.
+ *
+ * `cpSync` with `dereference: false` does NOT preserve a relative symlink
+ * verbatim — it resolves the target and writes an ABSOLUTE link. So npm's
+ * workspace links, `../../packages/x` in the real tree, arrive in the replica
+ * pointing at the REAL `packages/x`. npm then sees no workspace installed
+ * where the manifest says one should be, and reports every other package as
+ * `extraneous`.
+ *
+ * The size of that effect is why this is worth a walk (#652, second round). In
+ * the real tree `npm ls --all --json --omit=dev` exits 0 with 57KB of output;
+ * with escaping links it exits 1 with `ELSPROBLEMS` and 510KB. `generate-notice`
+ * TOLERATES a non-zero exit by design — `npm ls` exits non-zero on peer
+ * complaints while still emitting a complete tree — so it parsed that tree,
+ * `--omit=dev` pruned nothing, and NOTICE regenerated with ~470 runtime
+ * entries against ~180. Its self-test failed its own control, and the audit
+ * correctly refused to report on a guard whose baseline was not green.
+ *
+ * Note what that near-miss was: a copy that LOOKED complete — every file
+ * present, byte-identical — and was wrong only in where its links pointed.
+ * Sampling seven guards did not catch it, because only one guard shells out to
+ * npm.
+ *
+ * Links are rewritten RELATIVE, so the replica does not encode its own path
+ * and a link cannot silently re-escape if the directory is ever moved.
+ */
+function repointEscapingLinks(realRoot, replicaRoot) {
+  // BOTH forms of the root, and the target resolved where it can be. On macOS
+  // `/var` is itself a symlink to `/private/var`, so a temp-directory root
+  // compared in only one form silently fails to match — the containment test
+  // then says "does not escape" about a link that plainly does. Caught by the
+  // fixture case below, which lives in exactly that directory.
+  const roots = [...new Set([realpathSync(realRoot), resolve(realRoot)])];
+  const escapes = (target) => {
+    let resolved = target;
+    try {
+      resolved = realpathSync(target);
+    } catch {
+      // A dangling link still has a target worth testing for containment.
+    }
+    for (const base of roots) {
+      for (const candidate of [resolved, target]) {
+        const rel = relative(base, candidate);
+        if (rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)) return rel;
+      }
+    }
+    return null;
+  };
+
+  const walk = (dir) => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const p = join(dir, entry.name);
+      if (entry.isSymbolicLink()) {
+        try {
+          const raw = readlinkSync(p);
+          const abs = isAbsolute(raw) ? raw : resolve(dir, raw);
+          const rel = escapes(abs);
+          if (rel === null) continue;
+          const inReplica = join(replicaRoot, rel);
+          unlinkSync(p);
+          symlinkSync(relative(dir, inReplica) || '.', p);
+        } catch {
+          // A link that cannot be repaired is left as it is. The guard that
+          // depends on it fails its own baseline and is reported CANNOT CHECK
+          // — loudly wrong beats quietly wrong.
+        }
+      } else if (entry.isDirectory()) {
+        walk(p);
+      }
+    }
+  };
+
+  walk(replicaRoot);
+}
+
 export function createReplica(rootDir) {
   const root = mkdtempSync(join(tmpdir(), 'mutation-audit-'));
   cpSync(rootDir, root, {
     recursive: true,
-    // `dereference: false` keeps symlinks as symlinks; copying through them
-    // could pull in the very node_modules this filter is skipping.
+    // `dereference: false` is LOAD-BEARING, not a default worth keeping by
+    // habit. npm links each workspace into `node_modules/<scope>/<name>` as a
+    // RELATIVE symlink — `../../packages/x` — so copying the links AS LINKS
+    // makes them resolve against the replica. Dereferencing would copy the
+    // package contents in their place, and npm would no longer see a workspace
+    // where it expects one.
     dereference: false,
-    filter: (src) => {
-      const base = basename(src);
-      return base !== 'node_modules' && base !== '.git';
-    },
+    // `.git` only. No self-test needs it, and sharing it is how a read-only
+    // tool acquires the ability to corrupt an index.
+    filter: (src) => basename(src) !== '.git',
   });
 
-  const realModules = join(rootDir, 'node_modules');
-  if (existsSync(realModules)) {
-    try {
-      symlinkSync(realModules, join(root, 'node_modules'), 'dir');
-    } catch {
-      // A replica without node_modules still audits every guard that does not
-      // need it. Failing the whole run here would trade a working audit for a
-      // tidy one.
-    }
-  }
+  repointEscapingLinks(rootDir, root);
 
   return {
     root,

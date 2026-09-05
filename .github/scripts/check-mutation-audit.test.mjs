@@ -54,7 +54,17 @@
  * Run: node .github/scripts/check-mutation-audit.test.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
+import {
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  readFileSync,
+  existsSync,
+  symlinkSync,
+  readlinkSync,
+  realpathSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -67,6 +77,7 @@ import {
   reachedAssertions,
   auditGuard,
   audit,
+  createReplica,
   interpretProbe,
   discoverGuards,
   renderInventory,
@@ -1489,6 +1500,62 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
     check('ledger: ...and the honoured count is of SITES, not accepted entries', r.counts.honoured, 1);
     check('ledger: ...so undispositioned reports the true remainder', r.counts.undispositioned, 2);
     check('ledger: ...and entries counts all three, including the refused copy', r.counts.entries, 3);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// NO LINK IN THE REPLICA MAY ESCAPE BACK INTO THE REAL TREE (#652)
+//
+// The replica is only useful if it is FAITHFUL, and the first version was not,
+// in a way nothing visible would show: every file present and byte-identical,
+// but `cpSync` had rewritten relative symlinks as ABSOLUTE ones pointing at the
+// real tree. npm's workspace links therefore resolved out of the replica, npm
+// reported every package `extraneous`, `--omit=dev` pruned nothing, and
+// `generate-notice`'s self-test failed its own control — so the audit reported
+// CANNOT CHECK for that guard and failed on its own integrity, which is the
+// fail-closed behaviour working correctly.
+//
+// Asserted STRUCTURALLY, so it needs no npm and does not cost the four seconds
+// a real replica does: a link inside the replica must not resolve into the
+// source tree. The CONTROL is the fixture's own link, which must resolve inside
+// the FIXTURE — without it, a fixture whose link was broken or absent would
+// satisfy the assertion vacuously, which is the shape
+// docs/adr/ADR-024-output-must-vary-with-the-fact.md describes.
+// ---------------------------------------------------------------------------
+{
+  const src = mkdtempSync(join(tmpdir(), 'replica-fidelity-'));
+  let replica = null;
+  try {
+    mkdirSync(join(src, 'packages', 'core'), { recursive: true });
+    writeFileSync(join(src, 'packages', 'core', 'package.json'), '{"name":"@x/core"}');
+    mkdirSync(join(src, 'node_modules', '@x'), { recursive: true });
+    // The exact shape npm creates for a workspace: a RELATIVE link upwards.
+    symlinkSync(join('..', '..', 'packages', 'core'), join(src, 'node_modules', '@x', 'core'));
+
+    check(
+      'CONTROL: the fixture link resolves inside the FIXTURE (else the case is vacuous)',
+      realpathSync(join(src, 'node_modules', '@x', 'core')).startsWith(realpathSync(src)),
+      true,
+    );
+
+    const r = createReplica(src);
+    replica = r.root;
+    const linked = join(r.root, 'node_modules', '@x', 'core');
+
+    check('the replica carries node_modules at all', existsSync(join(r.root, 'node_modules')), true);
+    check(
+      'a workspace link in the replica resolves INSIDE the replica, not into the source tree',
+      realpathSync(linked).startsWith(realpathSync(r.root)),
+      true,
+    );
+    check(
+      '...and is stored RELATIVE, so the replica does not encode its own path',
+      readlinkSync(linked).startsWith('..'),
+      true,
+    );
+  } finally {
+    rmSync(src, { recursive: true, force: true });
+    if (replica !== null) rmSync(replica, { recursive: true, force: true });
   }
 }
 

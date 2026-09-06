@@ -282,17 +282,79 @@ jobs:
       - run: npm run build -w packages/core
       - run: npm test --workspace=packages/core
 
-  # Test adapters-express package
+  # Test adapters-express package, against BOTH declared Express majors (#705).
+  #
+  # The adapter's `peerDependencies.express` is `^4.18.0 || ^5.0.0` — it claims
+  # both majors. Until this matrix, CI installed whichever one the lockfile
+  # resolved (4), so one of the two CLAIMED configurations was never executed.
+  #
+  # That is not upgrade-prep. The PUBLISHED package carries that peer range
+  # today and npm auto-installs peers, so a consumer installing right now
+  # resolves express 5.2.1 — the leg that had never run is the one users
+  # actually get.
+  #
+  # Both legs run on every implicated PR, deliberately. The suite itself is
+  # ~2s, so a leg costs `npm ci` + build rather than test time; and the
+  # alternative placements (nightly, or behind a label) do not GATE a merge. A
+  # configuration users install is either covered by the merge gate or it is
+  # not covered. Runner contention is real and is #687's subject — but the
+  # lever for it is cancelling superseded runs, not leaving a shipped
+  # configuration untested.
   test-adapters-express:
+    name: test-adapters-express (express ${{ matrix.express }})
     runs-on: [self-hosted, Linux, X64, askturret]
     needs: changes
     if: needs.changes.outputs.adapters-express == 'true' || needs.changes.outputs.workspace == 'true'
+    strategy:
+      # Both legs always report. A failure under one major is a real result
+      # about that major, and cancelling its sibling would hide whether the
+      # break is version-specific — which is the whole question this matrix
+      # asks. GitHub still reports the JOB as failed if either leg fails, so
+      # `coverage-status` (which reads this job's aggregate result through
+      # `needs`, not its check-run names) is unchanged by the split.
+      fail-fast: false
+      matrix:
+        include:
+          # The lockfile state — what `npm ci` produces, and what this job has
+          # always tested. Deliberately NOT re-installed, so this leg stays
+          # byte-for-byte the baseline it was before the matrix existed.
+          - express: '4'
+            install: ''
+          # The other declared major. `--save-dev` is LOAD-BEARING, not
+          # tidiness: it rewrites the adapter's own devDependency, and that is
+          # what makes npm place express 5 in
+          # `packages/adapters-express/node_modules/` instead of hoisting it to
+          # the workspace root.
+          #
+          # Installing at the ROOT is the #585 trap — the root gets 5, the
+          # adapter goes on resolving its nested 4, and the leg passes having
+          # tested the wrong major. `--no-save` reintroduces exactly that,
+          # because the adapter's declared `^4.18.0` would still force the
+          # nested copy. The resolution check below is what catches either.
+          - express: '5'
+            install: 'npm install express@^5.0.0 --workspace=packages/adapters-express --save-dev'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
       - run: npm ci
+
+      - name: Install Express ${{ matrix.express }} under test
+        if: matrix.install != ''
+        run: ${{ matrix.install }}
+
+      # The assertion that makes the leg mean something. "express 5 was
+      # installed" and "the adapter RESOLVES express 5" are different facts,
+      # and #585 found a real tree where they disagreed.
+      #
+      # Runs on BOTH legs: if a future change hoists 5 to the root, the
+      # express-4 leg starts testing 5 while still reporting express-4, so the
+      # drift needs catching from that side too. Placed before the build so a
+      # wrong tree fails in seconds rather than after a full compile.
+      - name: Adapter resolves the Express major under test
+        run: node .github/scripts/check-express-resolution.mjs ${{ matrix.express }} .
+
       - run: npm run build -w packages/core -w packages/sources-openapi -w packages/transports -w packages/explorer -w packages/adapters-express
       - run: npm test --workspace=packages/adapters-express
 
@@ -868,6 +930,17 @@ jobs:
       # a package omitted from that list would silently never be required.
       - name: Self-test the coverage signal
         run: node .github/scripts/ci-coverage-status.test.mjs
+
+      # #705: the dual-version matrix's resolution check. Only its SELF-TEST
+      # runs here — the guard itself asserts against an installed tree and so
+      # belongs in the matrix legs, where a specific Express major has been
+      # installed. Self-tested for the reason every guard here is: this one is
+      # the only thing separating "the leg is named express-5" from "the leg
+      # tested express 5", so a guard that quietly stopped failing would
+      # restore the false-coverage state the matrix was built to end, and it
+      # would look identical in a CI log.
+      - name: Self-test the Express resolution guard
+        run: node .github/scripts/check-express-resolution.test.mjs
 
       # Needs dist/ — packages resolve each other through their built entry points.
       - run: npm run build

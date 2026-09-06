@@ -75,7 +75,7 @@
         {
           "version": "5.x",
           "status": "declared-untested",
-          "note": "Accepted by peerDependencies, but no CI job installs Express 5 and @types/express is pinned to v4."
+          "note": "Accepted by peerDependencies, and since #705 the test-adapters-express matrix runs the suite under Express 5 — the express-5 leg installs it into the adapter workspace and asserts the adapter resolves it, so the leg cannot pass having tested Express 4. Still NOT supported: @types/express is pinned to v4 and the suite has a known blind spot under Express 5 (#706). #708 carries the support-state decision for this row."
         }
       ]
     },

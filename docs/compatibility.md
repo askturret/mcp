@@ -92,9 +92,18 @@ Declared: `devDependencies.typescript` = **`^5.5.0`**
 | **Fastify** | 5.x | ✅ Supported | `@askturret/mcp-adapters-fastify` |
 | **Fastify** | 4.x | ⚠️ Declared, untested | `@askturret/mcp-adapters-fastify` |
 
-> **Express 5 is allowed but not verified.** The `peerDependencies` range accepts
-> `^4.18.0 || ^5.0.0`, but CI installs Express 4 and `@types/express` is pinned to
-> v4 types. Treat Express 5 as best-effort until a CI job covers it.
+> **Express 5 is exercised by CI, and is still not supported.** The
+> `peerDependencies` range accepts `^4.18.0 || ^5.0.0`, and since
+> [#705](https://github.com/askturret/mcp/issues/705) the `test-adapters-express`
+> job runs the adapter suite under **both** majors: the `express-5` leg installs
+> Express 5 into the adapter's own workspace and then asserts that the adapter
+> actually resolves it, so a green leg cannot be one that silently tested Express
+> 4. Two things still stand between that and a support claim — `@types/express`
+> is pinned to v4 types, and the suite has a known blind spot under Express 5
+> ([#706](https://github.com/askturret/mcp/issues/706)) — so a green run does not
+> yet establish support. Treat Express 5 as best-effort;
+> [#708](https://github.com/askturret/mcp/issues/708) carries the decision to
+> change the row above.
 
 > **Fastify 5 is verified; Fastify 4 is not.** The adapter ships as
 > `@askturret/mcp-adapters-fastify` and the `test-adapters-fastify` CI job exercises it

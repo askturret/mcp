@@ -192,15 +192,43 @@ export function expressMcp(options: ExpressMcpOptions): Router {
 /**
  * Has something already read this request's body to the end?
  *
- * `readableEnded` is the stream's own answer and covers any consumer.
- * `_body` is what `body-parser` sets once it has handled a request, and it is
- * checked too because a parser can mark the body handled without the stream
- * reporting ended (an empty body, or a `type` mismatch that still short-circuits).
- * Either one means the transport must not expect `data` events.
+ * `readableEnded` is the stream's own answer, it is public Node API, and it
+ * covers any consumer — not only `body-parser`. It is the whole predicate.
+ *
+ * ## Why `req._body` is no longer consulted (#706)
+ *
+ * This function also read `req._body`, a `body-parser` INTERNAL, justified by
+ * the claim that "a parser can mark the body handled without the stream
+ * reporting ended (an empty body, or a `type` mismatch that still
+ * short-circuits)". **Both halves of that claim are false**, and the private
+ * coupling bought nothing. Measured across 13 host-parser shapes — json,
+ * urlencoded, raw, text, type mismatch, empty body, gzipped body, malformed
+ * and over-limit error paths, a bodyless GET, and no parser at all — on BOTH
+ * majors:
+ *
+ * | | `_body` set when `readableEnded` is false? | hang cases `readableEnded` misses |
+ * |---|---|---|
+ * | express 4 / body-parser 1.20.6 | **0 of 13** — perfectly correlated | **0** |
+ * | express 5 / body-parser 2.3.0 | never sets `_body` at all | **0** |
+ *
+ * The two cited cases behave the opposite way round. An empty body DOES report
+ * `readableEnded === true`, because the parser still reads the stream to its
+ * end. A `type` mismatch leaves the stream UNREAD, so `_body` is not set either
+ * and no guard is wanted — the transport can read the body itself.
+ *
+ * So the clause was redundant under body-parser 1 and dead under body-parser 2,
+ * where the field is never written. Removing it drops a bet on a transitive
+ * dependency's private field WITHOUT replacing it with a weaker mechanism,
+ * because the public one was already complete. That is why this is a deletion
+ * rather than a documented version bound: there is no version range to bound —
+ * there is no behaviour to preserve.
+ *
+ * The guard as a whole is NOT redundant, and `hang-guard.test.ts` is what says
+ * so: disable this predicate and that suite goes red on both majors.
  */
 function bodyAlreadyConsumed(req: Request): boolean {
-  const raw = req as unknown as { readableEnded?: boolean; _body?: boolean };
-  return raw.readableEnded === true || raw._body === true;
+  const raw = req as unknown as { readableEnded?: boolean };
+  return raw.readableEnded === true;
 }
 
 /**

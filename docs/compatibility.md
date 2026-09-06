@@ -98,10 +98,13 @@ Declared: `devDependencies.typescript` = **`^5.5.0`**
 > job runs the adapter suite under **both** majors: the `express-5` leg installs
 > Express 5 into the adapter's own workspace and then asserts that the adapter
 > actually resolves it, so a green leg cannot be one that silently tested Express
-> 4. Two things still stand between that and a support claim — `@types/express`
-> is pinned to v4 types, and the suite has a known blind spot under Express 5
-> ([#706](https://github.com/askturret/mcp/issues/706)) — so a green run does not
-> yet establish support. Treat Express 5 as best-effort;
+> 4. The blind spot that leg was most at risk of —
+> [#706](https://github.com/askturret/mcp/issues/706), the #147 hang guard reading
+> a `body-parser` private field that v2 never sets — is **closed**: the guard now
+> uses `readableEnded` alone, which is public Node API and was measured complete
+> on both majors, and a dedicated suite fails on both if the guard is weakened.
+> What still stands between this and a support claim is `@types/express`, still
+> pinned to v4 types. Treat Express 5 as best-effort;
 > [#708](https://github.com/askturret/mcp/issues/708) carries the decision to
 > change the row above.
 

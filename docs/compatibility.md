@@ -103,10 +103,19 @@ Declared: `devDependencies.typescript` = **`^5.5.0`**
 > a `body-parser` private field that v2 never sets — is **closed**: the guard now
 > uses `readableEnded` alone, which is public Node API and was measured complete
 > on both majors, and a dedicated suite fails on both if the guard is weakened.
-> What still stands between this and a support claim is `@types/express`, still
-> pinned to v4 types. Treat Express 5 as best-effort;
-> [#708](https://github.com/askturret/mcp/issues/708) carries the decision to
-> change the row above.
+>
+> Since [#707](https://github.com/askturret/mcp/issues/707), Express 5 is also
+> what the lockfile installs — so it is now the leg that runs *without* an
+> explicit install, and Express 4 is the one installed into the adapter workspace
+> on purpose. `@types/express` has moved to `^5`.
+>
+> **The one blocker this note used to name is therefore gone**, and no stated
+> obstacle to a support claim remains. The row above is nevertheless left
+> unchanged: that call belongs to
+> [#708](https://github.com/askturret/mcp/issues/708), and #707 deliberately does
+> not make it. Until it is made, `check-compatibility-contract` fails check G by
+> design — a `supported` row must cover the major the lockfile installs, and that
+> major is now 5.
 
 > **Fastify 5 is verified; Fastify 4 is not.** The adapter ships as
 > `@askturret/mcp-adapters-fastify` and the `test-adapters-fastify` CI job exercises it

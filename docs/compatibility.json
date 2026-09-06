@@ -70,12 +70,12 @@
         {
           "version": "4.18.x - 4.x",
           "status": "supported",
-          "note": "CI installs and tests Express 4."
+          "note": "Exercised by CI on every pull request. Since #707 moved all four manifests to Express 5, this major is no longer what the lockfile resolves — it is covered by the matrix leg that installs it explicitly into the adapter workspace, which the resolution guard then asserts."
         },
         {
           "version": "5.x",
           "status": "declared-untested",
-          "note": "Accepted by peerDependencies, and since #705 the test-adapters-express matrix runs the suite under Express 5 — the express-5 leg installs it into the adapter workspace and asserts the adapter resolves it, so the leg cannot pass having tested Express 4. The #706 blind spot is closed: the #147 hang guard no longer reads a body-parser private field that v2 never sets, and a dedicated suite fails on both majors if the guard is weakened. Still NOT supported: @types/express is pinned to v4. #708 carries the support-state decision for this row."
+          "note": "Accepted by peerDependencies, and since #705 the test-adapters-express matrix runs the suite under Express 5 — asserting the adapter actually resolves it, so a green leg cannot be one that silently tested Express 4. The #706 blind spot is closed: the #147 hang guard no longer reads a body-parser private field that v2 never sets, and a dedicated suite fails on both majors if the guard is weakened. Since #707 Express 5 is also what the lockfile installs, so it is now the leg needing no explicit install, and @types/express has moved to ^5. The single blocker this note previously named — types pinned to v4 — is therefore gone, and no stated obstacle to a support claim remains. The status above is #708's call and is deliberately NOT changed here. Until it is made this contract fails check G by design, which requires a 'supported' row to cover the major the lockfile installs."
         }
       ]
     },

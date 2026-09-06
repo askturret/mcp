@@ -315,24 +315,35 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The lockfile state — what `npm ci` produces, and what this job has
-          # always tested. Deliberately NOT re-installed, so this leg stays
-          # byte-for-byte the baseline it was before the matrix existed.
-          - express: '4'
-            install: ''
-          # The other declared major. `--save-dev` is LOAD-BEARING, not
-          # tidiness: it rewrites the adapter's own devDependency, and that is
-          # what makes npm place express 5 in
-          # `packages/adapters-express/node_modules/` instead of hoisting it to
-          # the workspace root.
+          # The lockfile state — what `npm ci` produces, deliberately NOT
+          # re-installed.
           #
-          # Installing at the ROOT is the #585 trap — the root gets 5, the
-          # adapter goes on resolving its nested 4, and the leg passes having
-          # tested the wrong major. `--no-save` reintroduces exactly that,
-          # because the adapter's declared `^4.18.0` would still force the
-          # nested copy. The resolution check below is what catches either.
+          # #707 moved all four manifests to express 5, which INVERTED this
+          # matrix: express 5 is now the committed lockfile resolution, so it is
+          # the leg that needs no install. Before #707 this entry was express 4.
+          #
+          # The empty-install leg tests whatever the lockfile resolves, so this
+          # pair must track the lockfile. If a future change moves the lockfile
+          # again without moving this entry, the resolution check below fails —
+          # it does not silently test the same major twice.
           - express: '5'
-            install: 'npm install express@^5.0.0 --workspace=packages/adapters-express --save-dev'
+            install: ''
+          # The other declared major. The peer range still claims `^4.18.0`, so
+          # express 4 remains a shipped configuration and keeps its leg — it
+          # just needs an explicit install now that the lockfile resolves 5.
+          #
+          # `--save-dev` is LOAD-BEARING, not tidiness: it rewrites the
+          # adapter's own devDependency, and that is what makes npm place
+          # express 4 in `packages/adapters-express/node_modules/` instead of
+          # hoisting it to the workspace root.
+          #
+          # Installing at the ROOT is the #585 trap — the root gets 4, the
+          # adapter goes on resolving its nested 5, and the leg passes having
+          # tested the wrong major. `--no-save` reintroduces exactly that,
+          # because the adapter's declared `^5.2.1` would still force the
+          # nested copy. The resolution check below is what catches either.
+          - express: '4'
+            install: 'npm install express@^4.18.0 --workspace=packages/adapters-express --save-dev'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

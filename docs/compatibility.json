@@ -70,12 +70,12 @@
         {
           "version": "4.18.x - 4.x",
           "status": "supported",
-          "note": "CI installs and tests Express 4."
+          "note": "Exercised by CI on every pull request, and still supported. Since #707 moved all four manifests to Express 5, this major is no longer what the lockfile resolves — it is covered by the matrix leg that installs it explicitly into the adapter workspace, which the resolution guard then asserts. Support for Express 4 is unchanged by that inversion; only the mechanism that puts it in the tree changed."
         },
         {
           "version": "5.x",
-          "status": "declared-untested",
-          "note": "Accepted by peerDependencies, and since #705 the test-adapters-express matrix runs the suite under Express 5 — the express-5 leg installs it into the adapter workspace and asserts the adapter resolves it, so the leg cannot pass having tested Express 4. The #706 blind spot is closed: the #147 hang guard no longer reads a body-parser private field that v2 never sets, and a dedicated suite fails on both majors if the guard is weakened. Still NOT supported: @types/express is pinned to v4. #708 carries the support-state decision for this row."
+          "status": "supported",
+          "note": "Promoted from declared-untested by #707, which carries the scope of #708. Every condition that row was waiting on is now met: the test-adapters-express matrix runs the suite under Express 5 and asserts the adapter actually resolves it, so a green leg cannot be one that silently tested Express 4 (#705); the #147 hang guard no longer reads a body-parser private field that v2 never sets, and a dedicated suite fails on both majors if the guard is weakened (#706); @types/express is now ^5, which was the single blocker the previous note named; and Express 5 is what the lockfile installs, making it the leg that runs without an explicit install. Witnessed at 65/65 under both majors, conformance 53/53, adapter-test 30/30, tsc -b clean."
         }
       ]
     },

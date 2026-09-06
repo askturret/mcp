@@ -200,28 +200,53 @@ export function expressMcp(options: ExpressMcpOptions): Router {
  * This function also read `req._body`, a `body-parser` INTERNAL, justified by
  * the claim that "a parser can mark the body handled without the stream
  * reporting ended (an empty body, or a `type` mismatch that still
- * short-circuits)". **Both halves of that claim are false**, and the private
- * coupling bought nothing. Measured across 13 host-parser shapes — json,
- * urlencoded, raw, text, type mismatch, empty body, gzipped body, malformed
- * and over-limit error paths, a bodyless GET, and no parser at all — on BOTH
- * majors:
+ * short-circuits)". **Both halves of that claim are false.** An empty body DOES
+ * report `readableEnded === true`, because the parser still reads the stream to
+ * its end. A `type` mismatch leaves the stream UNREAD, so `_body` is not set
+ * either and no guard is wanted — the transport can read the body itself.
+ *
+ * Measured across json, urlencoded, raw, text, type mismatch, empty body,
+ * gzipped body, malformed and over-limit error paths, a bodyless GET, and no
+ * parser at all, on BOTH majors:
  *
  * | | `_body` set when `readableEnded` is false? | hang cases `readableEnded` misses |
  * |---|---|---|
- * | express 4 / body-parser 1.20.6 | **0 of 13** — perfectly correlated | **0** |
+ * | express 4 / body-parser 1.20.6 | ONE shape — see below | **0** |
  * | express 5 / body-parser 2.3.0 | never sets `_body` at all | **0** |
  *
- * The two cited cases behave the opposite way round. An empty body DOES report
- * `readableEnded === true`, because the parser still reads the stream to its
- * end. A `type` mismatch leaves the stream UNREAD, so `_body` is not set either
- * and no guard is wanted — the transport can read the body itself.
+ * ## The one shape where they diverge, and why it does not save the clause
  *
- * So the clause was redundant under body-parser 1 and dead under body-parser 2,
- * where the field is never written. Removing it drops a bet on a transitive
- * dependency's private field WITHOUT replacing it with a weaker mechanism,
- * because the public one was already complete. That is why this is a deletion
- * rather than a documented version bound: there is no version range to bound —
- * there is no behaviour to preserve.
+ * A **mid-body client abort** on express 4 leaves `_body === true` with
+ * `readableEnded === false`. body-parser 1.20.6 sets the field EARLY, at
+ * `lib/read.js:46`, before the read completes, so a connection that dies partway
+ * through is marked handled without the stream ever ending. (Found by QA running
+ * a broader probe than the one this comment originally cited, which had no abort
+ * case; reproduced independently before this was written.)
+ *
+ * It does not make the clause load-bearing, for three independent reasons:
+ *
+ * 1. **This function is never reached on that path.** body-parser calls
+ *    `next(err)` with `request.aborted`, which routes to ERROR middleware; the
+ *    transport is mounted as ordinary middleware and is skipped entirely.
+ * 2. **There is nothing to guard.** The socket is already gone — `req.aborted`
+ *    is true. No response can be delivered, so there is no hang to prevent.
+ * 3. **express 5 never had the guard here anyway.** body-parser 2 does not set
+ *    the field, so that path was already unguarded under the OLD predicate. The
+ *    deletion changes nothing about it.
+ *
+ * So the clause was redundant on every path where this predicate actually runs,
+ * and dead under body-parser 2 regardless. Removing it drops a bet on a
+ * transitive dependency's private field WITHOUT replacing it with a weaker
+ * mechanism, because the public one was already complete. That is why this is a
+ * deletion rather than a documented version bound: there is no version range to
+ * bound — there is no behaviour to preserve.
+ *
+ * **No test covers the abort shape, deliberately.** Since the abort never
+ * reaches this function, such a test would assert Express's error-routing rather
+ * than this predicate — it would pass identically under any predicate, including
+ * one that is plainly wrong. That is the cannot-fail shape this repository keeps
+ * filing issues about, and adding one here while correcting an inaccurate
+ * self-description would be trading one instance of the species for another.
  *
  * The guard as a whole is NOT redundant, and `hang-guard.test.ts` is what says
  * so: disable this predicate and that suite goes red on both majors.

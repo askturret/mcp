@@ -88,11 +88,11 @@ Declared: `devDependencies.typescript` = **`^5.5.0`**
 | Framework | Versions | Status | Entry point |
 |---|---|---|---|
 | **Express** | 4.18.x – 4.x | ✅ Supported | `@askturret/mcp-adapters-express` |
-| **Express** | 5.x | ⚠️ Declared, untested | `@askturret/mcp-adapters-express` |
+| **Express** | 5.x | ✅ Supported | `@askturret/mcp-adapters-express` |
 | **Fastify** | 5.x | ✅ Supported | `@askturret/mcp-adapters-fastify` |
 | **Fastify** | 4.x | ⚠️ Declared, untested | `@askturret/mcp-adapters-fastify` |
 
-> **Express 5 is exercised by CI, and is still not supported.** The
+> **Express 5 is supported, and both majors are exercised by CI.** The
 > `peerDependencies` range accepts `^4.18.0 || ^5.0.0`, and since
 > [#705](https://github.com/askturret/mcp/issues/705) the `test-adapters-express`
 > job runs the adapter suite under **both** majors: the `express-5` leg installs
@@ -107,15 +107,20 @@ Declared: `devDependencies.typescript` = **`^5.5.0`**
 > Since [#707](https://github.com/askturret/mcp/issues/707), Express 5 is also
 > what the lockfile installs — so it is now the leg that runs *without* an
 > explicit install, and Express 4 is the one installed into the adapter workspace
-> on purpose. `@types/express` has moved to `^5`.
+> on purpose. `@types/express` has moved to `^5`, which was the last thing
+> standing between this row and a support claim.
 >
-> **The one blocker this note used to name is therefore gone**, and no stated
-> obstacle to a support claim remains. The row above is nevertheless left
-> unchanged: that call belongs to
-> [#708](https://github.com/askturret/mcp/issues/708), and #707 deliberately does
-> not make it. Until it is made, `check-compatibility-contract` fails check G by
-> design — a `supported` row must cover the major the lockfile installs, and that
-> major is now 5.
+> **That is why the row above now reads Supported.** #707 carries the scope of
+> [#708](https://github.com/askturret/mcp/issues/708), which held the
+> support-state decision for this row: its condition was that the matrix make the
+> claim true, and it now does. Express 5 is declared, installed by the lockfile,
+> exercised on every pull request, asserted to be the version the adapter really
+> resolves, and green at 65/65 under both majors alongside conformance 53/53 and
+> the adapter-test kit 30/30.
+>
+> **Express 4 remains supported.** Inverting which leg installs explicitly
+> changed the mechanism, not the commitment — the peer range still accepts both,
+> and both legs gate every implicated pull request.
 
 > **Fastify 5 is verified; Fastify 4 is not.** The adapter ships as
 > `@askturret/mcp-adapters-fastify` and the `test-adapters-fastify` CI job exercises it

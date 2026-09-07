@@ -52,6 +52,7 @@
  *    flagged.
  */
 
+import { MCP_PROTOCOL_VERSION } from '@askturret/mcp-core';
 import type {
   McpFacadeOptions,
   OperationExecutor,
@@ -494,7 +495,7 @@ export const CATEGORIES: readonly Category[] = [
         // `conformance.test.ts`, which is where a cross-adapter comparison
         // belongs anyway. Flagged rather than silently dropped.
         const init = await rpc(server.url, 'initialize', {
-          protocolVersion: '2024-11-05',
+          protocolVersion: MCP_PROTOCOL_VERSION,
           capabilities: {},
           clientInfo: { name: 'conformance', version: '1.0.0' },
         });

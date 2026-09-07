@@ -275,6 +275,102 @@ const run = (dir) => silently(() => main(['node', GUARD, dir]));
 }
 
 // ---------------------------------------------------------------------------
+// THE ISO-DATE SHAPE (#689).
+//
+// The MCP protocol version is date-shaped, so it was invisible to a guard that
+// matched only `N.N.N` — in BOTH directions. The class had live members at the
+// time: two hardcoded duplicates of `MCP_PROTOCOL_VERSION`, each inside the same
+// object literal as a semver the registry DID declare.
+//
+// WHY THE `shape` ASSERTIONS ARE HERE AND NOT DECORATION. `found.length === 1`
+// says something matched; it does not say the DATE pattern is what matched. A
+// second semver pattern that happened to accept dates would satisfy the count
+// and leave this change unexercised. Asserting the shape id is what makes the
+// test cover the property claimed rather than a property adjacent to it.
+// ---------------------------------------------------------------------------
+{
+  const seen = (source) => discoverLiterals(fixture({ source })).found;
+  const shapes = (source) => seen(source).map((f) => f.shape).join(',');
+
+  check('shape iso-date: a quoted date-shaped version IS found', seen("export const P = '2024-11-05';").length, 1);
+  check('...and the ISO-DATE shape is what matched it', shapes("export const P = '2024-11-05';"), 'iso-date');
+  check('...while a semver still reports the semver shape', shapes("export const V = '1.2.3';"), 'semver-triple');
+
+  // The bound of the NEW shape, asserted on the same terms as every shape above:
+  // what it still cannot see, measured rather than described.
+  check('bound: a two-digit-year date is NOT found', seen("export const P = '24-11-05';").length, 0);
+  check('bound: a slash-separated date is NOT found', seen("export const P = '2024/11/05';").length, 0);
+  // Same closing-quote rule the prerelease case documents: the quote must follow
+  // the day, so a timestamp is invisible rather than truncated.
+  check('bound: a date-time is NOT found at all', seen("export const P = '2024-11-05T00:00:00Z';").length, 0);
+}
+
+// ---------------------------------------------------------------------------
+// THE COMPARISON ARM, FOR THE DATE SHAPE SPECIFICALLY (#689).
+//
+// This PR DELETED both live date duplicates rather than declaring them, because
+// removing a duplicate beats asserting it stays equal to its original. That
+// leaves the comparison half of the guard with no date subject in the tree — and
+// #736's lesson is that a check with no live subject is insensitive to its own
+// correctness.
+//
+// The answer is a permanent subject HERE rather than a retained defect THERE: a
+// fixture whose date literal mirrors a canonical source, asserted in both
+// directions. Keeping a real duplicate alive so the guard has something to bite
+// on would be keeping a defect to justify its detector.
+// ---------------------------------------------------------------------------
+{
+  const dateEntry = (over = {}) => ({
+    id: 'pkg:PROTOCOL',
+    path: 'packages/pkg/src/index.ts',
+    source: "export const P = '2024-11-05';",
+    mirrors: 'protocol.json#version',
+    reason: 'declared for the test',
+    ...over,
+  });
+  const withCanonical = (value) =>
+    fixture({
+      source: "export const P = '2024-11-05';",
+      literals: [dateEntry()],
+      extraFiles: { 'protocol.json': `${JSON.stringify({ version: value }, null, 2)}\n` },
+    });
+
+  // Agreeing first: without this, the red below is satisfied by a guard that
+  // always fails on a date.
+  const agree = run(withCanonical('2024-11-05'));
+  check('a date literal agreeing with its declared source -> exit 0', agree.code, EXIT_OK);
+  check('...and it was actually compared, not skipped', agree.out.includes('1 compared'), true);
+
+  const diverge = run(withCanonical('2025-06-18'));
+  check('a date literal that disagrees with its declared source -> exit 1', diverge.code, EXIT_DIVERGENCE);
+  check(
+    '...and names both dates',
+    diverge.out.includes("carries '2024-11-05'") && diverge.out.includes("is '2025-06-18'"),
+    true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// THE REGRESSION #689 FIXED, pinned against the REAL tree.
+//
+// Both sites now import MCP_PROTOCOL_VERSION. Re-introducing either literal
+// reddens here by name, which is the assertion the registry cannot make: a
+// declared duplicate would be a PASSING entry.
+// ---------------------------------------------------------------------------
+{
+  const realFound = discoverLiterals(REPO_ROOT).found;
+  const datesIn = (path) => realFound.filter((f) => f.path === path && f.shape === 'iso-date').length;
+
+  check('#689: the CLI does not hardcode the protocol version', datesIn('packages/cli/src/commands/inspect.ts'), 0);
+  check('#689: the conformance bank does not hardcode it either', datesIn('packages/adapter-conformance/src/bank.ts'), 0);
+  check(
+    '#689: the canonical constant is still where the registry says it is',
+    datesIn('packages/core/src/protocol/versions.ts'),
+    1,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // resolveCanonical — never returns a bare undefined, because an unresolvable
 // reference comparing equal to an absent literal reports agreement between two
 // nothings.

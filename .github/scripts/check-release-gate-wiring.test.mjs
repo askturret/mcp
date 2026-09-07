@@ -13,10 +13,17 @@
  * release. So the wiring is asserted by READING the workflows, which is a
  * check that runs on every PR.
  *
- * Deliberately dependency-free: `js-yaml` is only hoisted into the root
- * `node_modules` via a transitive dependency, and the `readiness` job runs
- * without `npm ci` at all. A test that cannot run everywhere its subject runs
- * is a test that silently stops running.
+ * Deliberately dependency-free: the `readiness` job runs without `npm ci` at
+ * all, and a test that cannot run everywhere its subject runs is a test that
+ * silently stops running.
+ *
+ * That reasoning is unchanged by PR #742, but the provenance sentence it used
+ * to open with is: `js-yaml` was described here as "only hoisted into the root
+ * `node_modules` via a transitive dependency", which was true when written and
+ * was falsified by #742 declaring it as a root devDependency (#743). A DECLARED
+ * devDependency is still absent from a job that never installs, so being
+ * dependency-free remains the requirement — only the reason js-yaml happens to
+ * be resolvable has changed.
  *
  * Run: node .github/scripts/check-release-gate-wiring.test.mjs
  */

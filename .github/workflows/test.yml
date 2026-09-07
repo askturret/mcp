@@ -748,19 +748,42 @@ jobs:
       # one: a file this step rejects is a file whose contents no other check
       # has meaningfully read.
       #
-      # This is the ONE script under .github/scripts that needs `npm ci` — it
-      # uses the real js-yaml parser, because a hand-rolled one is lenient
-      # exactly where YAML is strict and so cannot answer this question. That is
-      # safe HERE and only here: this job installs before any guard runs. The
-      # install-less scripts (check-readiness-matrix.mjs and its self-test, run
-      # by supply-chain.yml's readiness job and tag-readiness-advisory.yml) are
-      # untouched and must stay zero-dependency. If the parser is ever missing
-      # the guard exits 2 CANNOT CHECK rather than passing — see its header.
+      # This script needs `npm ci` — it uses the real js-yaml parser, because a
+      # hand-rolled one is lenient exactly where YAML is strict and so cannot
+      # answer this question. That is safe HERE: this job installs before any
+      # guard runs.
+      #
+      # What must stay dependency-free is the set of scripts invoked by jobs
+      # that do NOT install. That set is DERIVED and enforced by
+      # check-install-less-deps.mjs below — deliberately not written down here
+      # as a count. #743: it was written down, as "exactly one family", in four
+      # places, and was wrong within a day of being written.
+      #
+      # If the parser is ever missing the guard exits 2 CANNOT CHECK rather than
+      # passing — see its header.
       - name: Self-test the workflow-parse guard
         run: node .github/scripts/check-workflows-parse.test.mjs
 
       - name: Every workflow file is loadable YAML
         run: node .github/scripts/check-workflows-parse.mjs
+
+      # #743: a script that runs in a job with no `npm ci` has no node_modules,
+      # so one bare import is a crash on a line that looks fine in review. Which
+      # scripts those are was documented as a hand-maintained count in four
+      # places; this derives it from the workflow files instead — every
+      # .github/scripts entry point named by a job with no install step, walked
+      # transitively through its relative imports.
+      #
+      # Adding an install-less job extends the inventory automatically. Adding a
+      # dependency to a script already in it fails HERE, on the PR that did it,
+      # instead of later on whatever unrelated PR happens to trigger
+      # lane-check.yml's `labeled` event — where the breakage would be attributed
+      # to the label, not the cause.
+      - name: Self-test the install-less dependency guard
+        run: node .github/scripts/check-install-less-deps.test.mjs
+
+      - name: Install-less scripts import only Node builtins
+        run: node .github/scripts/check-install-less-deps.mjs
 
       # #687: dropping `push: main` above made reliability-nightly.yml's
       # `integrated-tree` job the SOLE proof for the tree main actually has. A

@@ -415,6 +415,17 @@ function capitalize(str: string): string {
 }
 
 /**
+ * The input schema for an operation that takes no arguments.
+ *
+ * Built fresh per call rather than shared as a module constant: the returned
+ * object is embedded in a compiled operation and frozen downstream, so a shared
+ * instance would alias every argumentless operation to one object.
+ */
+function emptyInputSchema(): Record<string, unknown> {
+  return { type: 'object', properties: {} };
+}
+
+/**
  * Extract input schema from OpenAPI operation
  */
 function extractInputSchema(operation: OpenAPIOperation): Record<string, unknown> | undefined {
@@ -444,7 +455,23 @@ function extractInputSchema(operation: OpenAPIOperation): Record<string, unknown
   // For operations with parameters (GET, DELETE), build schema from parameters
   const parameters = operation.parameters;
   if (!parameters || !Array.isArray(parameters) || parameters.length === 0) {
-    return undefined;
+    // An operation declaring NO parameters and NO request body takes no
+    // arguments. That is a legitimate — and extremely common — tool shape
+    // ("list all the things"), not an incomplete one, and MCP requires
+    // `inputSchema` on every tool. So the honest encoding is the empty object
+    // schema.
+    //
+    // Returning `undefined` unconditionally here modelled "takes no arguments"
+    // as "has no schema", and `validate-invariants` (pass 8) treats a missing
+    // `input` as a missing REQUIRED FIELD and drops the operation from the
+    // registry outright (#717). The invariant is correct; this was the wrong
+    // input to it.
+    //
+    // Deliberately conditioned on there being no request body either. A
+    // requestBody that yielded no usable schema above is a DIFFERENT condition
+    // — something WAS declared and could not be read — and presenting such an
+    // operation as argumentless would be worse than dropping it.
+    return requestBody === undefined ? emptyInputSchema() : undefined;
   }
 
   // Convert parameters array to JSON Schema object
@@ -468,7 +495,13 @@ function extractInputSchema(operation: OpenAPIOperation): Record<string, unknown
     }
   }
 
-  // Return schema only if we found parameters
+  // Parameters WERE declared, but none yielded a property — every entry was an
+  // unresolved `$ref`, or lacked a name or schema. Unlike the no-parameters
+  // case above this is NOT "takes no arguments": something was declared and
+  // could not be read, so presenting the tool as argumentless would invite a
+  // caller to invoke it with nothing when it in fact needs input. Existing
+  // behaviour is kept deliberately; see the PR for #717 for why this branch is
+  // left alone.
   if (Object.keys(properties).length === 0) {
     return undefined;
   }

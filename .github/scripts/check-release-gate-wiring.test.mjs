@@ -120,5 +120,64 @@ check(
   /advisory/i.test(advisory) && /cannot|does not block/i.test(advisory),
 );
 
+// --- the tarball gate on the release path (#670) -----------------------------
+// Until #670, check-tarball-compliance ran in the PR lane ONLY: supply-chain's
+// publish job went `npm run build` -> `npm publish` with nothing between, so no
+// exit code the guard returned could stop a bad publish. The protection is one
+// STEP, and it can be removed three ways that all leave every other test green
+// — delete it, move it after the publish, or split it into its own job. This
+// block is what makes each of those fail.
+const publishJob = publish ?? '';
+const tarballRun = /^[^\n]*node \.github\/scripts\/check-tarball-compliance\.mjs\b[^\n]*$/m.exec(publishJob);
+
+check(
+  'the publish job asserts tarball compliance before publishing',
+  tarballRun !== null,
+  'a PR-lane-only invocation proves the PR tree; the release publishes the release tree (#670)',
+);
+
+const buildAt = publishJob.indexOf('npm run build');
+const gateAt = publishJob.indexOf('check-tarball-compliance.mjs');
+const publishAt = publishJob.indexOf('npm publish');
+check(
+  'the gate sits between npm run build and npm publish',
+  buildAt !== -1 && gateAt !== -1 && publishAt !== -1 && buildAt < gateAt && gateAt < publishAt,
+  `build@${buildAt} gate@${gateAt} publish@${publishAt} — the guard packs, and npm pack reports dist/ only once built, so it must follow the build; after the publish it asserts nothing`,
+);
+
+// The gate's index being inside `publishJob` at all IS the "same job"
+// assertion: jobBlock() returns only the publish job's own lines.
+check(
+  'the gate is a STEP in the publish job, not a separate job wired by needs:',
+  gateAt !== -1,
+  'id-token: write and the OIDC token --provenance consumes are JOB-scoped — a separate job would leave the permission apart from the publish and silently cost the attestation, while every checker stayed green (#698)',
+);
+check(
+  'the publish job still declares id-token: write alongside the gate',
+  /id-token:\s*write/.test(publishJob),
+  'the gate must not have displaced the permission that makes provenance possible',
+);
+
+check(
+  'the gate does not swallow its exit code',
+  tarballRun !== null && !/\|\||continue-on-error/.test(tarballRun[0]),
+  `EXIT_DIVERGENCE (1) and EXIT_CANNOT_CHECK (2) must BOTH block: ${tarballRun ? tarballRun[0].trim() : '(absent)'}`,
+);
+// Matches the KEY form (`continue-on-error:` at the start of a line), never the
+// bare word. The step's own comment says "NO continue-on-error" for the reader,
+// and a substring test flags that comment as the very violation it warns
+// against — which is how a guard ends up forbidding its own documentation.
+check(
+  'no step in the publish job is continue-on-error',
+  !/^\s*continue-on-error\s*:/m.test(publishJob),
+  'immediately before an irreversible publish, "I could not establish this" is a stop, not a shrug — refusing to publish is recoverable, publishing an unverified artifact is not',
+);
+
+check(
+  'the PR-lane invocation is retained, not moved',
+  testWorkflow.includes('check-tarball-compliance.mjs'),
+  'the PR lane is the cheapest refusal available; the release gate is additional to it, not a relocation of it',
+);
+
 console.log(`\npassed: ${passed}  failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

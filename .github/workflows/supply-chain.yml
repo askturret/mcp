@@ -255,6 +255,44 @@ jobs:
       - run: npm ci
       - run: npm run build
 
+      # THE RELEASE GATE (#670). Until this existed, `check-tarball-compliance`
+      # ran in the PR lane only, so no exit code it returned could stop a bad
+      # publish: the two steps above and below it were adjacent, with nothing
+      # asserting anything about the tarballs about to go out.
+      #
+      # IT MUST BE A STEP IN THIS JOB, NEVER A SEPARATE JOB WIRED BY `needs:`.
+      # `id-token: write` and the OIDC token `--provenance` consumes are
+      # JOB-SCOPED. Splitting this out would leave the permission and the token
+      # in a different job from the publish and silently cost the attestation
+      # this job exists to produce — and per #698 every checker would stay green
+      # while it did. If you are tempted to tidy this into its own job: that is
+      # the failure mode, not a refactor.
+      #
+      # WHY THIS EXACT SEAM. `npm run build` above satisfies the guard's
+      # precondition — it packs, and `npm pack` reports `dist/` only for a
+      # package that has actually been built, so an unbuilt package is
+      # cannot-check rather than a pass. And NO PACKAGE IS LIVE YET: a refusal
+      # here leaves a published GitHub Release with its tag and SBOM asset and
+      # NOTHING on npm. That is a release that did not publish, not a partial
+      # one, and it is recoverable by re-running this job.
+      #
+      # NO `continue-on-error`, NO `|| true`, NO masking of the exit code.
+      # EXIT_DIVERGENCE (1) and EXIT_CANNOT_CHECK (2) must BOTH block. On a PR,
+      # "I could not establish this" is a reasonable shrug; immediately before
+      # an IRREVERSIBLE publish it is a stop. The asymmetry is the whole
+      # justification: refusing to publish is recoverable, publishing an
+      # unverified artifact is not — npm versions are immutable, and the only
+      # remedy is burning the next version number nine times. #660 records that
+      # nothing currently reports tag/release/registry divergence, which is
+      # precisely why a silent no-op here would be indistinguishable from a pass.
+      #
+      # The PR-lane invocation in test.yml's `test-integrity` is RETAINED, not
+      # moved: it is the cheapest refusal available and catches a committed
+      # regression before merge. This one proves the release tree, which is a
+      # different tree built on a different runner.
+      - name: Published tarballs carry README, LICENSE and NOTICE
+        run: node .github/scripts/check-tarball-compliance.mjs .
+
       # --provenance requires id-token: write above and a registry that accepts
       # attestations. Publishing is gated behind licence review and SBOM
       # generation by `needs:`, so a release cannot skip them.

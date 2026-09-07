@@ -37,7 +37,30 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SCRIPT = resolve(HERE, 'ci-throughput-metric.mjs');
 
 const mod = await import('./ci-throughput-metric.mjs');
-const { run, render, percentile, median, computeMetrics, inStall, EXIT_REPORTED, EXIT_CANNOT_CHECK } = mod;
+const { run, render, percentile, median, computeMetrics, inStall } = mod;
+
+/**
+ * The exit contract, as LITERALS (#746).
+ *
+ * Deliberately NOT imported from the module under test. Every exit assertion
+ * below compares against these, and the module's own exported constants are
+ * pinned to them once, immediately below.
+ *
+ * WHY, because the first version of this file got it wrong: it asserted
+ * `r.exit === EXIT_CANNOT_CHECK` with `EXIT_CANNOT_CHECK` IMPORTED from the
+ * module under test. That compares the module's value against itself, so it
+ * holds for every possible value — a tautology. QA's mutation testing showed
+ * what it cost: setting `EXIT_CANNOT_CHECK = 0` left all 24 checks GREEN while
+ * an unreadable API began exiting 0, which is exactly the "could not check" ->
+ * "passed" conflation this script exists to make impossible. Setting
+ * `EXIT_REPORTED = 3` was equally invisible and would redden the nightly on
+ * every success.
+ *
+ * A literal cannot drift with the thing it measures. That is the entire point,
+ * and it is why these two lines are not a stylistic preference.
+ */
+const REPORTED = 0;
+const CANNOT_CHECK = 2;
 
 let passed = 0;
 let failed = 0;
@@ -50,6 +73,22 @@ function check(desc, ok, detail = '') {
     failed++;
   }
 }
+
+// --- 0. the exit contract itself (#746) -------------------------------------
+// First, because everything below reads exit codes: if the contract has moved,
+// say so once and plainly rather than as a cascade of confusing arm failures.
+check('EXIT_REPORTED is 0 — the workflow reads 0 as "this ran and reported"', mod.EXIT_REPORTED === REPORTED, `got ${mod.EXIT_REPORTED}`);
+check('EXIT_CANNOT_CHECK is 2 — non-zero, so a nightly reddens rather than passing', mod.EXIT_CANNOT_CHECK === CANNOT_CHECK, `got ${mod.EXIT_CANNOT_CHECK}`);
+check(
+  'the two exit codes are distinct — a report and a refusal must not collapse',
+  mod.EXIT_REPORTED !== mod.EXIT_CANNOT_CHECK,
+  `both ${mod.EXIT_REPORTED}`,
+);
+check(
+  'CANNOT CHECK is non-zero — the fail-open direction, and the one QA proved was reachable',
+  mod.EXIT_CANNOT_CHECK !== 0,
+  'exit 0 for an unreadable API is "could not check" reported as "passed"',
+);
 
 /** A fetch stub keyed by URL fragment. */
 function stubFetch(routes) {
@@ -96,7 +135,7 @@ function job(created, started, completed, stepMins = 1) {
     fetchImpl: stubFetch({ '/pulls': [], '/actions/runs': { workflow_runs: [] } }),
     now: NOW,
   });
-  check('an empty window is NO DATA, not a pass', r.outcome === 'NO_DATA' && r.exit === EXIT_CANNOT_CHECK, `got ${r.outcome}/${r.exit}`);
+  check('an empty window is NO DATA, not a pass', r.outcome === 'NO_DATA' && r.exit === CANNOT_CHECK, `got ${r.outcome}/${r.exit}`);
   const text = render(r);
   check('NO DATA says nothing was measured', /NOT "no change"/.test(text), text);
 }
@@ -106,7 +145,7 @@ function job(created, started, completed, stepMins = 1) {
     fetchImpl: stubFetch({ '/pulls': 'ERROR' }),
     now: NOW,
   });
-  check('an unreadable API is CANNOT CHECK', r.outcome === 'CANNOT_CHECK' && r.exit === EXIT_CANNOT_CHECK, `got ${r.outcome}`);
+  check('an unreadable API is CANNOT CHECK', r.outcome === 'CANNOT_CHECK' && r.exit === CANNOT_CHECK, `got ${r.outcome}/${r.exit}`);
   check('CANNOT CHECK names the HTTP failure', /HTTP 500/.test(render(r)), render(r));
 }
 {
@@ -188,7 +227,10 @@ function job(created, started, completed, stepMins = 1) {
     env: { ...process.env, CI_THROUGHPUT_METRIC_IMPORT_ONLY: '', GITHUB_STEP_SUMMARY: '' },
   });
   const out = `${r.stdout ?? ''}${r.stderr ?? ''}`;
-  check('spawning the script PRODUCES OUTPUT — exit 0 with silence is the defect', r.status === EXIT_REPORTED && out.trim().length > 0, `exit ${r.status}, output ${JSON.stringify(out.slice(0, 120))}`);
+  // Literal, not the module's EXIT_REPORTED: this is a SPAWNED process, so the
+  // number the OS reports is the contract, and comparing it to the module's own
+  // idea of that number is the #746 tautology in its most tempting form.
+  check('spawning the script PRODUCES OUTPUT — exit 0 with silence is the defect', r.status === REPORTED && out.trim().length > 0, `exit ${r.status}, output ${JSON.stringify(out.slice(0, 120))}`);
   check('the spawned output carries the predicate', /PREDICATE/.test(out), out.slice(0, 200));
 }
 

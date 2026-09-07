@@ -8,7 +8,7 @@ npx @askturret/mcp-gateway \
   --spec ./openapi.yaml \
   --overlay ./askturret.mcp.yaml \
   --upstream https://api.example.com \
-  --port 7000
+  --port 7078
 ```
 
 > **`@askturret/mcp-gateway` is on npm**, so the `npx` line above resolves
@@ -53,7 +53,7 @@ spec: ./openapi.yaml
 overlay:
   - ./askturret.mcp.yaml
 upstream: https://api.example.com
-port: 7000
+port: 7078
 basePath: /mcp
 preset: production
 audit:

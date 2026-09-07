@@ -10,12 +10,13 @@
 #   upstream  — a mock "existing API" the adopter cannot modify. This is the
 #               premise of §11.3: the gateway exists because this service is
 #               not going to grow an MCP endpoint.
-#   gateway   — reads the spec, serves MCP on 7000, proxies to `upstream`.
+#   gateway   — reads the spec, serves MCP on container port 7000 (published on
+#               host 7078), proxies to `upstream`.
 #   collector — an OTel collector, so the observability path has a real
 #               destination rather than a documented one.
 #
 # Then:
-#   curl -s localhost:7000/mcp -H 'Content-Type: application/json' \
+#   curl -s localhost:7078/mcp -H 'Content-Type: application/json' \
 #        -H 'Accept: application/json, text/event-stream' \
 #        -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 #   curl -s localhost:9464/metrics
@@ -66,7 +67,10 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://collector:4318
       OTEL_SERVICE_NAME: askturret-mcp-gateway
     ports:
-      - "7000:7000"   # MCP
+      # Host 7078, not 7000: macOS enables AirPlay Receiver by default and it
+      # holds host port 7000, so publishing there fails to bind on a Mac (#719).
+      # The container side stays 7000 — nothing inside the container competes.
+      - "7078:7000"   # MCP
       - "9464:9464"   # Prometheus scrape
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:7000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

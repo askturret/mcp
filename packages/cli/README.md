@@ -12,14 +12,14 @@ Analyze OpenAPI specifications for MCP readiness. Works standalone, no runtime i
 
 ```bash
 # Analyze a local spec file
-npx @askturret/mcp doctor ./openapi.yaml
-npx @askturret/mcp doctor ./openapi.json
+npx @askturret/mcp-cli doctor ./openapi.yaml
+npx @askturret/mcp-cli doctor ./openapi.json
 
 # Analyze a remote MCP server
-npx @askturret/mcp doctor --url http://localhost:7000/mcp
+npx @askturret/mcp-cli doctor --url http://localhost:7078/mcp
 
 # Output machine-readable JSON
-npx @askturret/mcp doctor ./openapi.yaml --json
+npx @askturret/mcp-cli doctor ./openapi.yaml --json
 ```
 
 **What it checks:**
@@ -50,8 +50,8 @@ Inspect a running MCP server: handshake, `tools/list`, latency, optional dry-run
 **Usage:**
 
 ```bash
-npx @askturret/mcp inspect --url <endpoint>
-npx @askturret/mcp inspect --url <endpoint> --tool <name> --dry-run
+npx @askturret/mcp-cli inspect --url <endpoint>
+npx @askturret/mcp-cli inspect --url <endpoint> --tool <name> --dry-run
 ```
 
 **Exit codes:**

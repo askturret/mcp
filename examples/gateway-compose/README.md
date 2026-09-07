@@ -11,20 +11,20 @@ Three services, and the third is the point of the exercise:
 | Service | Role |
 |---|---|
 | `upstream` | A mock "existing API" — the application the adopter **cannot modify**. Nothing in it knows what MCP is. |
-| `gateway` | Reads `openapi.yaml`, serves MCP on `7000`, proxies to `upstream`. |
+| `gateway` | Reads `openapi.yaml`, serves MCP on container port `7000`, published on host `7078`, proxies to `upstream`. |
 | `collector` | An OTel collector that receives OTLP **and scrapes the gateway's metrics endpoint**, so the observability path has a real destination. |
 
 ## Try it
 
 ```bash
 # The tool surface, derived from the spec
-curl -s localhost:7000/mcp \
+curl -s localhost:7078/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 
 # A call, proxied through to the upstream
-curl -s localhost:7000/mcp \
+curl -s localhost:7078/mcp \
   -H 'Content-Type: application/json' \
   -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"listPets","arguments":{}}}'
@@ -33,7 +33,7 @@ curl -s localhost:7000/mcp \
 curl -s localhost:9464/metrics
 
 # Readiness, on the MCP port — the one traffic is routed to
-curl -s localhost:7000/health/ready
+curl -s localhost:7078/health/ready
 ```
 
 `docker compose logs upstream` shows the proxied request arriving, which is the

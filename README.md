@@ -17,33 +17,122 @@ Discover from OpenAPI, routes, schemas, or handlers. Shape agent-friendly tools.
 <summary><strong>Click to expand: 20-second terminal demo</strong></summary>
 
 ```bash
-# Install (the adapter pulls in core, the OpenAPI source and the Explorer)
-npm install @askturret/mcp-adapters-express
+# Install. `express` is a peer dependency, so name it explicitly.
+npm install express @askturret/mcp-adapters-express
 
-# Check readiness of an OpenAPI spec
+# Write the spec this quick start uses. It is a complete OpenAPI 3.0 document
+# with two operations — nothing else is needed to follow the steps below.
+cat > petstore.yaml <<'YAML'
+openapi: 3.0.0
+info:
+  title: Petstore API
+  version: 1.0.0
+servers:
+  - url: https://petstore.example.com/api/v1
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      description: Returns a list of all pets in the store
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of pets to return
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: A list of pets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+  /pets/{petId}:
+    get:
+      operationId: getPetById
+      description: Returns a single pet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          description: ID of the pet to return
+          schema: { type: string }
+      responses:
+        '200':
+          description: A pet
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+YAML
+
+# Check readiness of the spec
 npx @askturret/mcp-cli doctor petstore.yaml
 # Output:
-# ✓ 8/10 operations ready
-# ✓ All schemas valid
-# ⚠ 2 operations have side effects (require confirmation)
+# ✓ MCP Readiness Score: 90/100
+#
+# Summary:
+#   Total Operations: 2
+#   Errors:           0
+#   Warnings:         0
+#   Light Exposed:    2
+#
+# ✓ Analysis complete. No issues found.
 
-# Create a working MCP server in 5 lines
+# Now the server. The MCP layer is the single `app.use` line.
 ```
+
+Save this as `server.mjs` — the `.mjs` extension is what lets `import` work
+without any `package.json` setup.
 
 ```javascript
 import express from 'express';
 import { mcpFromOpenApi } from '@askturret/mcp-adapters-express';
 
+const port = Number(process.env.PORT ?? 7078);
 const app = express();
 app.use('/mcp', mcpFromOpenApi('./petstore.yaml'));
-app.listen(7000);
+
+// Bind with explicit handlers. Passing a callback to `app.listen` is NOT
+// equivalent: express 5 registers that callback as a one-shot 'error' handler
+// too, so it fires on failure as well as success. Without an 'error' listener a
+// taken port surfaces as an unhandled event and a raw EADDRINUSE stack trace,
+// which reads like a broken install rather than a busy port.
+const server = app.listen(port);
+server.on('listening', () => console.log(`MCP server on http://localhost:${port}/mcp`));
+server.on('error', (err) => {
+  if (err.code !== 'EADDRINUSE') throw err;
+  console.error(`Port ${port} is already in use. Start it on another port: PORT=8078 node server.mjs`);
+  process.exit(1);
+});
 ```
+
+```bash
+node server.mjs
+# MCP server on http://localhost:7078/mcp
+```
+
+> **Why not port 7000?** macOS enables AirPlay Receiver by default, and it holds
+> port 7000 — so the obvious choice is occupied before you start on the most
+> common developer platform. `PORT` overrides the default on any platform, and
+> the handler above names the collision when it happens rather than leaving you
+> with a stack trace.
 
 ```bash
 # Your API now exposes tools over MCP.
 # MCP speaks JSON-RPC 2.0 over POST to the single endpoint you mounted above —
 # `tools/list` is a method name, not a URL path.
-curl -X POST http://localhost:7000/mcp \
+curl -X POST http://localhost:7078/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 # Returns: {"jsonrpc":"2.0","id":1,"result":{"tools":[
@@ -52,7 +141,7 @@ curl -X POST http://localhost:7000/mcp \
 # ]}}
 ```
 
-**Explorer UI.** Visit `http://localhost:7000/mcp/explorer` to browse, test, and inspect all tools with a live UI.
+**Explorer UI.** Visit `http://localhost:7078/mcp/explorer` to browse, test, and inspect all tools with a live UI.
 
 </details>
 
@@ -119,7 +208,7 @@ const server = createMcpServer({
 turret doctor ./openapi.yaml
 
 # Inspect a running server
-turret inspect --url http://localhost:7000/mcp
+turret inspect --url http://localhost:7078/mcp
 
 # Compare versions
 turret diff --before snapshot-v1.json --after snapshot-v2.json
@@ -212,7 +301,7 @@ separate server that reads your spec and proxies to the API you already have:
 
 ```bash
 npx @askturret/mcp-gateway \
-  --spec ./openapi.yaml --upstream https://api.example.com --port 7000
+  --spec ./openapi.yaml --upstream https://api.example.com --port 7078
 ```
 
 It is the *same* runtime — same compiler, same overlays, same presets, same
@@ -387,7 +476,7 @@ app.get('/pets', (req, res) => { /* ... */ });
 // Add MCP alongside your API
 app.use('/mcp', mcpFromOpenApi('./petstore.yaml'));
 
-app.listen(7000, () => console.log('MCP server at http://localhost:7000/mcp'));
+app.listen(7078); // port-collision handling: see the quick start above
 ```
 
 ### Fastify + OpenAPI
@@ -408,7 +497,7 @@ app.get('/pets', async () => { /* ... */ });
 // it does not change body parsing, hooks or decorators for your other routes.
 await app.register(mcpFromOpenApi('./petstore.yaml'), { prefix: '/mcp' });
 
-await app.listen({ port: 7000 });
+await app.listen({ port: 7078 });
 ```
 
 Composable form, identical in shape to the Express one:

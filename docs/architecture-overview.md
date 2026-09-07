@@ -185,10 +185,10 @@ opaque to the canonical model.
 Your Application (Node.js)
 ├─ Existing API routes (/api/...)
 ├─ AskTurret MCP server
-│  ├─ /mcp/tools/list
-│  ├─ /mcp/tools/call
+│  ├─ POST /mcp            (JSON-RPC 2.0 — tools/list, tools/call, ...)
+│  ├─ GET  /mcp            (SSE stream)
 │  ├─ /mcp/explorer        (local dev UI)
-│  └─ /mcp/health          (readiness probes)
+│  └─ /mcp/health/live, /mcp/health/ready   (probes)
 └─ Database, cache, etc.
 ```
 

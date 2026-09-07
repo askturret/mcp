@@ -142,6 +142,54 @@ describe('petstore-light example (#99)', () => {
     expect(names).toEqual(['getPetById', 'listPets']);
   });
 
+  it("derives listPets' input schema from `parameters`, with no extension involved (#736)", async () => {
+    const { app, ready } = mountExample();
+    await ready;
+
+    const res = await request(app)
+      .post('/mcp')
+      .send({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
+      .expect(200);
+
+    const listPets = (res.body.result.tools as Array<{ name: string; inputSchema: unknown }>).find(
+      (t) => t.name === 'listPets',
+    );
+    const schema = listPets?.inputSchema as {
+      type?: string;
+      properties?: Record<string, { type?: string; minimum?: number; maximum?: number; default?: number }>;
+    };
+
+    // #736 removed an `x-mcp-input-schema` from this operation that DUPLICATED
+    // the `limit` parameter. Nothing consumed it — the adapter derives the
+    // schema from `parameters` — so the removal had to leave this identical.
+    //
+    // That claim is only worth something if something asserts the shape, and
+    // until now nothing did: the other cases here exercise tools/list NAMES and
+    // tools/call BEHAVIOUR, both of which would pass whether or not the derived
+    // schema had silently changed. This is what makes the deletion checkable
+    // rather than merely un-contradicted.
+    expect(schema?.type).toBe('object');
+    expect(schema?.properties?.limit).toBeDefined();
+    expect(schema?.properties?.limit?.type).toBe('integer');
+    expect(schema?.properties?.limit?.minimum).toBe(1);
+    expect(schema?.properties?.limit?.maximum).toBe(100);
+    expect(schema?.properties?.limit?.default).toBe(20);
+
+    // The SECOND deleted block was on getPetById and declared `required:
+    // [petId]`. Asserting only listPets would have left that one unwitnessed —
+    // and `required` is precisely the field that would differ if the extension
+    // had ever been feeding the derived schema.
+    const getPetById = (res.body.result.tools as Array<{ name: string; inputSchema: unknown }>).find(
+      (t) => t.name === 'getPetById',
+    );
+    const pathSchema = getPetById?.inputSchema as {
+      required?: string[];
+      properties?: Record<string, { type?: string }>;
+    };
+    expect(pathSchema?.properties?.petId?.type).toBe('string');
+    expect(pathSchema?.required).toContain('petId');
+  });
+
   it('answers tools/call for listPets instead of failing upstream', async () => {
     const { app, ready } = mountExample();
     await ready;

@@ -296,6 +296,88 @@ export const UNCOMMITTED_ROWS_CANNOT_CHECK_KEY = 'UNCOMMITTED capture rows:';
  */
 export const REQUIRED_ON_ADDED_FIELDS = Object.freeze(['templates_revision']);
 
+/** The agent-facing instruction surface this repository controls. */
+export const AGENT_INSTRUCTIONS_REL = '.operum/agents';
+
+/**
+ * Every agent instruction file names every field required on an added row (#666).
+ *
+ * ---------------------------------------------------------------------------
+ * THE FAILURE THIS EXISTS TO CATCH
+ * ---------------------------------------------------------------------------
+ *
+ * The capture-fields template an agent actually reads at capture time is composed
+ * at RUNTIME and does not live in this repository. It enumerates `ts`, `agent`,
+ * `issue`, `context`, `verbatim`, `stated_cause`, `stated_cause_false`,
+ * `template_id`, `classification`, `factor_1`, `factor_1_basis`, `channel`,
+ * `stated_cause_frame`, `stated_cause_evidence` — and stops. `templates_revision`
+ * appears nowhere in it.
+ *
+ * So the instruction set is COMPLETE-LOOKING AND WRONG, and an agent that follows
+ * it exactly produces a row CI refuses with no author error. That is not a
+ * hypothesis: three PRs were rejected on exactly this field (#665, #667, #715),
+ * by three agents on three different days, none of whom had seen the others.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY A CHECK RATHER THAN JUST WRITING IT DOWN
+ * ---------------------------------------------------------------------------
+ *
+ * The repair is to state the field in `.operum/agents/*.md`, which composes into
+ * the same prompt. But that creates a FOURTH copy of the field list — after the
+ * validator, the corpus README and the runtime template — and this repository has
+ * already fixed heading-vs-validator drift twice (#462, #506). A third occurrence
+ * was the predictable cost of a third copy.
+ *
+ * So the copy is ASSERTED rather than trusted: every agent file must name every
+ * entry in `REQUIRED_ON_ADDED_FIELDS`. Add a required field and this goes red
+ * until the agent-facing copy says so, which is the property that makes writing
+ * it down safe. The validator stays the single source; the copies are checked
+ * against it rather than maintained alongside it.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT IT DOES NOT CLAIM
+ * ---------------------------------------------------------------------------
+ *
+ * It asserts the field is NAMED, not that the surrounding prose is correct or
+ * that the runtime actually delivers the file. Delivery was verified by hand —
+ * `.operum/agents/engineer.md`'s bytes appear verbatim at the top of the
+ * engineer's composed instructions — but that is an observation, not something
+ * this check can make true.
+ *
+ * A missing directory is reported as a NOTE rather than an error: a checkout
+ * without an agent surface has nothing to keep in step, and failing there would
+ * make this validator unusable on any repository that does not carry one.
+ */
+export function agentInstructionGaps(rootDir) {
+  const dir = join(rootDir, AGENT_INSTRUCTIONS_REL);
+  let files;
+  try {
+    files = readdirSync(dir)
+      .filter((f) => f.endsWith('.md'))
+      .sort();
+  } catch {
+    return { gaps: [], reason: `no ${AGENT_INSTRUCTIONS_REL}/ directory, so no agent-facing copy to keep in step` };
+  }
+  if (files.length === 0) {
+    return { gaps: [], reason: `${AGENT_INSTRUCTIONS_REL}/ contains no .md files` };
+  }
+
+  const gaps = [];
+  for (const file of files) {
+    let text;
+    try {
+      text = readFileSync(join(dir, file), 'utf-8');
+    } catch (err) {
+      gaps.push({ file, field: null, reason: `could not be read (${err?.message ?? err})` });
+      continue;
+    }
+    for (const field of REQUIRED_ON_ADDED_FIELDS) {
+      if (!text.includes(field)) gaps.push({ file, field, reason: null });
+    }
+  }
+  return { gaps, reason: null };
+}
+
 /** The allowlist path, relative to the repo root. */
 const TEMPLATES_PATH = TEMPLATES_REL;
 
@@ -1051,6 +1133,27 @@ export function check(rootDir, { diffBase = null, addedFiles = null, modifiedFil
   // prints first, so unqualified it hands a skimmer reassurance two lines before
   // the caveat (#518). Qualified only when condition 7 fires — every other run
   // keeps the plain form, because that is the case where the count is the answer.
+  // #666: the agent-facing copy must name every field required on an added row.
+  // Checked corpus-wide rather than diff-scoped, because the gap is a standing
+  // property of the instructions rather than something a particular change
+  // introduces — and it is what stops a fourth copy drifting from this file.
+  const agentInstructions = agentInstructionGaps(rootDir);
+  if (agentInstructions.reason !== null) {
+    notes.push(`agent-instruction check skipped: ${agentInstructions.reason}`);
+  }
+  for (const gap of agentInstructions.gaps) {
+    errors.push(
+      gap.field === null
+        ? `${AGENT_INSTRUCTIONS_REL}/${gap.file}: ${gap.reason}`
+        : `${AGENT_INSTRUCTIONS_REL}/${gap.file} never mentions \`${gap.field}\`, which this validator ` +
+          `REQUIRES on every row a change adds. An agent reading that file learns a field list that is ` +
+          `complete-looking and wrong, and produces a row CI refuses with no author error — three PRs ` +
+          `were rejected exactly that way (#665, #667, #715). State the field there, with ` +
+          `\`git hash-object ${TEMPLATES_REL}\` as the way to obtain it and the note that a commit SHA is ` +
+          `refused (#462). This check exists so that copy cannot drift from REQUIRED_ON_ADDED_FIELDS.`,
+    );
+  }
+
   notes.push(
     uncommittedRows === null
       ? `validated ${rows.length} row(s) across ${files.length} corpus file(s)`

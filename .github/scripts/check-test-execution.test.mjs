@@ -135,6 +135,34 @@ function summaryLine(p, f, c) {
   return `${p} passed, ${f} failed, ${c} cannot-check`;
 }
 
+/**
+ * The VERDICT, as a pure function so it can be asserted (#679).
+ *
+ * Same move as `summaryLine` above and for the same reason, one level up: that
+ * one was extracted because the printed FIGURES were pinned nowhere; this one
+ * because the EXIT CODE was. "`cannotChecked` is reported, never gating" was a
+ * comment plus the shape of an expression, and the two `summaryLine` tests pin
+ * the string this run prints — not the verdict it returns.
+ *
+ * WHY THAT GAP WAS WORTH CLOSING RATHER THAN NOTING. #434 is a fail-closed flip:
+ * making guards refuse rather than tolerate is a planned direction here, so
+ * somebody writing `f === 0 && c === 0` is a PREDICTED edit, not a far-fetched
+ * one. It would not look like a mistake in review — it looks like tightening a
+ * guard, which is the thing we keep asking for. The truth table below is what
+ * turns it from an accident into a decision.
+ *
+ * `c` IS DELIBERATELY UNREAD, and it is a parameter precisely so that the
+ * not-reading is expressible as a test — `exitCodeFor(0, 18) === 0` — instead of
+ * as prose about an expression. A skip must still exit 0: site 494 is
+ * unreachable on most Linux images BY DESIGN, so gating on it would be a
+ * permanent red nobody can clear for a guard working correctly. The mutation
+ * audit is the fail-closed layer that records such a site unwitnessed.
+ */
+function exitCodeFor(f, c) {
+  void c;
+  return f === 0 ? 0 : 1;
+}
+
 /** A throwaway repo root: a root package.json plus the given packages. */
 function fixture({ workspaces = ['packages/*'], packages = {} }) {
   const dir = mkdtempSync(join(tmpdir(), 'test-execution-'));
@@ -523,9 +551,57 @@ check(
   '12 passed, 0 failed, 0 cannot-check',
 );
 
+// ---------------------------------------------------------------------------
+// THE VERDICT (#679). The summary tests above pin the STRING this run prints;
+// these pin the CODE it returns, which is the property PR #673's discharge of
+// #576's full-tree obligation actually rests on.
+//
+// The realistic inverting edit is `f === 0 && c === 0` — #434's fail-closed
+// direction applied here. Every `c` below is non-zero for exactly that reason:
+// a truth table whose cannot-check column were always 0 would survive that
+// mutation unchanged and pin nothing.
+// ---------------------------------------------------------------------------
+check('verdict: a clean run exits 0', exitCodeFor(0, 0), 0);
+check('verdict: a cannot-check ALONE does not gate', exitCodeFor(0, 1), 0);
+check('verdict: ...nor do eighteen of them, the largest run observed', exitCodeFor(0, 18), 0);
+check('verdict: a failure gates', exitCodeFor(1, 0), 1);
+check('verdict: ...and still gates when cannot-checks are also present', exitCodeFor(1, 5), 1);
+
+// THE BYPASS, which the truth table alone does NOT cover (#761 clause 2).
+//
+// Asserting `exitCodeFor` proves the FUNCTION is right. It says nothing about
+// whether the process consults it — an edit that inlines
+// `process.exit(failed === 0 && cannotChecked === 0 ? 0 : 1)` leaves every
+// assertion above green while inverting the property they exist to protect.
+// So the exit site is read from this file's own source and pinned by shape.
+//
+// ANCHORED AT LINE START, and that is load-bearing rather than tidiness: the
+// real exit is the only statement in this file beginning at column 0 with
+// `process.exit(`. A pattern that scanned anywhere would match the specimen
+// inside the comment directly above — and with `[^;]*` spanning newlines it ran
+// on to the next statement, reporting two exit sites where there is one. Caught
+// by writing the assertion and reading what it actually matched.
+{
+  const selfSource = readFileSync(fileURLToPath(import.meta.url), 'utf8');
+  const calls = [...selfSource.matchAll(/^process\.exit\((.*)\);\s*$/gm)];
+  check('verdict: the file has exactly one exit site to pin', calls.length, 1);
+  check(
+    'verdict: ...and the process exit is DRIVEN BY exitCodeFor, not an inline expression',
+    calls.at(-1)?.[1].replace(/\s+/g, ' ').trim(),
+    'exitCodeFor(failed, cannotChecked)',
+  );
+}
+
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 
 console.log(`\n${summaryLine(passed, failed, cannotChecked)}`);
 // UNCHANGED, deliberately: a skip must still exit 0. `cannotChecked` is
 // reported, never gating. See the note on `cannotCheck` above.
-process.exit(failed === 0 ? 0 : 1);
+//
+// NOW ASSERTED, NOT MERELY STATED (#679). The rule this comment describes lives
+// in `exitCodeFor`, whose truth table above pins it — including that a
+// cannot-check does not gate at 1 and at 18 — and a companion assertion pins
+// THIS LINE to that function, so inlining the decision here reddens too. A
+// comment and a test that agree are much harder to drift apart than a comment
+// alone; changing the rule now means changing both, knowingly.
+process.exit(exitCodeFor(failed, cannotChecked));

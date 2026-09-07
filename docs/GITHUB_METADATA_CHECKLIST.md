@@ -67,11 +67,14 @@ Check: LICENSE file is present and detected by GitHub
 
 ## npm Package Configuration (package.json)
 
-If publishing to npm as `@askturret/mcp`:
+There is **no umbrella `@askturret/mcp` package** — the workspaces publish
+individually (`@askturret/mcp-core`, `@askturret/mcp-cli`, and the rest), and
+`registry.npmjs.org/@askturret/mcp` returns 404. The shape below is the metadata
+each published package carries; `@askturret/mcp-core` is used as the example.
 
 ```json
 {
-  "name": "@askturret/mcp",
+  "name": "@askturret/mcp-core",
   "version": "0.1.0",
   "description": "Production-grade MCP layer for existing APIs. Discover from OpenAPI, shape agent-friendly tools, govern access, observe every call.",
   "keywords": [
@@ -204,7 +207,7 @@ This Code of Conduct is adapted from the [Contributor Covenant](https://www.cont
 Add to README.md (already included):
 
 ```markdown
-[![npm version](https://img.shields.io/npm/v/@askturret/mcp.svg?style=flat-square)](https://www.npmjs.com/package/@askturret/mcp)
+[![npm version](https://img.shields.io/npm/v/@askturret/mcp-core.svg?style=flat-square)](https://www.npmjs.com/package/@askturret/mcp-core)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0%2B-blue?style=flat-square)](https://www.typescriptlang.org/)
 [![Node.js](https://img.shields.io/badge/Node.js-18%2B-green?style=flat-square)](https://nodejs.org/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg?style=flat-square)](LICENSE)

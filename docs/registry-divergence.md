@@ -29,7 +29,7 @@ files that were meant to be identical and are not.
 ## Every instance reports its hash
 
 ```bash
-curl -s localhost:7000/mcp/health/ready | jq .registryHash
+curl -s localhost:7078/mcp/health/ready | jq .registryHash
 ```
 
 Present whether or not the instance is ready — comparing it across pods by hand

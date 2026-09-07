@@ -27,7 +27,8 @@
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import express, { type Express } from 'express';
 import request from 'supertest';
-import { readFileSync, readdirSync, statSync } from 'fs';
+import { readFileSync, readdirSync, statSync, mkdtempSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { dirname, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -49,6 +50,57 @@ const SPEC_PATH = resolvePath(repoRoot(), 'examples/petstore-light/openapi.yaml'
 
 /** The prose marker the quick start's proof command sits under. */
 const PROOF_MARKER = 'Your API now exposes tools over MCP';
+
+/** The heredoc that writes the quick start's spec (#719). */
+const SPEC_HEREDOC_OPEN = "cat > petstore.yaml <<'YAML'";
+
+/** The prose marker the quick start's server file sits under (#719). */
+const SERVER_MARKER = 'Save this as `server.mjs`';
+
+/**
+ * The OpenAPI document the quick start tells the reader to write.
+ *
+ * #719: the quick start referenced `./petstore.yaml` twice and never provided
+ * it, so the documented first run was a guaranteed ENOENT. The spec is now
+ * inlined as a heredoc — and inlining it is only worth anything if something
+ * proves the inlined bytes actually produce the tools the README then claims.
+ * That is what this extracts, and the test below mounts it for real.
+ */
+function inlinedSpec(): string {
+  const readme = readFileSync(README_PATH, 'utf8');
+  const open = readme.indexOf(SPEC_HEREDOC_OPEN);
+  if (open === -1) {
+    throw new Error(
+      `README.md no longer writes the quick-start spec with ${JSON.stringify(SPEC_HEREDOC_OPEN)}. ` +
+        'If the reader now obtains the spec another way, update this guard in the same change — ' +
+        'but do NOT delete it: #719 is the quick start referencing a file it never provided.',
+    );
+  }
+  const bodyStart = readme.indexOf('\n', open) + 1;
+  const end = readme.indexOf('\nYAML', bodyStart);
+  if (end === -1) {
+    throw new Error('README.md quick-start spec heredoc is not terminated by YAML.');
+  }
+  return readme.slice(bodyStart, end);
+}
+
+/** The fenced javascript block holding the quick start's server file (#719). */
+function serverSnippet(): string {
+  const readme = readFileSync(README_PATH, 'utf8');
+  const markerAt = readme.indexOf(SERVER_MARKER);
+  if (markerAt === -1) {
+    throw new Error(
+      `README.md no longer contains the quick-start server marker ${JSON.stringify(SERVER_MARKER)}. ` +
+        'If it was reworded, update SERVER_MARKER here in the same change.',
+    );
+  }
+  const fenceStart = readme.indexOf('```javascript', markerAt);
+  const fenceEnd = readme.indexOf('```', fenceStart + 3);
+  if (fenceStart === -1 || fenceEnd === -1) {
+    throw new Error('README.md quick-start server block is not a closed javascript fence.');
+  }
+  return readme.slice(fenceStart, fenceEnd);
+}
 
 /**
  * The fenced bash block containing the quick start's proof command.
@@ -154,6 +206,69 @@ describe("the README's quick-start proof command (#716)", () => {
   it('404s the form the README used to document, proving the fix was needed', async () => {
     const response = await request(app).get('/mcp/tools/list');
     expect(response.status).toBe(404);
+  });
+});
+
+describe('the quick start can be followed from a cold start (#719)', () => {
+  it('provides the spec it tells the reader to use, and it really serves those tools', async () => {
+    // Written to a scratch dir, so this mounts the README's OWN bytes rather
+    // than the checked-in example a newcomer does not have.
+    const dir = mkdtempSync(join(tmpdir(), 'askturret-quickstart-'));
+    const specPath = join(dir, 'petstore.yaml');
+    writeFileSync(specPath, inlinedSpec(), 'utf8');
+
+    const coldApp = express();
+    coldApp.use('/mcp', mcpFromOpenApi(specPath));
+
+    const response = await request(coldApp)
+      .post('/mcp')
+      .set('Content-Type', 'application/json')
+      .send({ jsonrpc: '2.0', id: 1, method: 'tools/list' });
+
+    expect(response.status).toBe(200);
+    const names = (response.body.result.tools as Array<{ name: string }>).map((t) => t.name);
+    // Exactly what the README's `Returns:` block advertises immediately below.
+    expect(names).toContain('listPets');
+    expect(names).toContain('getPetById');
+  });
+
+  it('declares a servers entry, so calls resolve an upstream instead of warning', () => {
+    // Without this the runtime logs "Could not resolve an upstream base URL"
+    // and every tools/call fails — tools/list alone passing is not enough to
+    // call the quick start followable.
+    expect(inlinedSpec()).toContain('servers:');
+  });
+
+  it('documents a listen that names a port collision instead of throwing a stack trace', () => {
+    const snippet = serverSnippet();
+    // The defect: a bare `app.listen(port)` surfaces EADDRINUSE as an unhandled
+    // 'error' event and a raw stack trace on the reader's FIRST command.
+    expect(snippet).toContain('EADDRINUSE');
+    expect(snippet).toContain("server.on('error'");
+    // And an override, so the fix does not depend on the chosen default alone.
+    expect(snippet).toContain('process.env.PORT');
+  });
+
+  it('does not log success from the listen callback, which express 5 also calls on error', () => {
+    // express 5's `app.listen(port, cb)` does `server.once('error', cb)`, so a
+    // callback that logs "listening" prints on a FAILED bind too — measured on
+    // express 5.2.1. The documented snippet must not take that shortcut.
+    expect(serverSnippet()).not.toMatch(/app\.listen\([^)]*,\s*\(/);
+  });
+});
+
+describe('no doc surface documents a demo server on macOS-occupied port 7000 (#719)', () => {
+  it('leaves no copy of the port-7000 form behind', () => {
+    const offenders: string[] = [];
+    for (const file of markdownFiles(repoRoot())) {
+      const text = readFileSync(file, 'utf8');
+      // The runnable forms only. Prose ABOUT port 7000 is legitimate and is
+      // exactly what the README now uses to explain why the default moved.
+      if (text.includes('localhost:7000') || text.includes('--port 7000') || text.includes('port: 7000')) {
+        offenders.push(file.slice(repoRoot().length + 1));
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 });
 

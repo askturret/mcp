@@ -24,16 +24,10 @@ paths:
             minimum: 1
             maximum: 100
             default: 20
-      x-mcp-input-schema:
-        type: object
-        properties:
-          limit:
-            type: integer
-            format: int32
-            minimum: 1
-            maximum: 100
-            default: 20
-            description: Maximum number of pets to return
+      # MCP metadata goes in a NESTED `x-mcp:` object (effects, annotations) —
+      # never in flat `x-mcp-*` keys, which nothing reads. See docs/overlays.md
+      # for where it sits in the precedence chain. This operation needs none:
+      # its input schema is derived from the `parameters` above.
       responses:
         '200':
           description: A list of pets
@@ -61,14 +55,6 @@ paths:
           description: ID of pet to return
           schema:
             type: string
-      x-mcp-input-schema:
-        type: object
-        required:
-          - petId
-        properties:
-          petId:
-            type: string
-            description: ID of pet to return
       responses:
         '200':
           description: A pet

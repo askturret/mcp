@@ -4,6 +4,7 @@
  */
 
 import { readFile } from 'fs/promises';
+import { MCP_PROTOCOL_VERSION } from '@askturret/mcp-core';
 import { normalizeFlags, renderOptions, type FlagSpec } from '../args.js';
 import type {
   InspectResult,
@@ -299,7 +300,7 @@ async function performHandshake(url: string): Promise<ServerInfo> {
       id: 1,
       method: 'initialize',
       params: {
-        protocolVersion: '2024-11-05',
+        protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
         clientInfo: {
           name: '@askturret/mcp-cli',

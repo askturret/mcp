@@ -67,7 +67,6 @@
       "mirrors": "packages/transports/package.json#version",
       "reason": "The server version the HTTP transport advertises. THIS ONE WAS ON NOBODY'S LIST — it is absent from the enumeration #601 was scoped from, and it reads 0.1.2 today by luck rather than by anything checking. It is now a published surface: v0.1.2 shipped to npm with SLSA provenance attached."
     },
-
     {
       "id": "core:PLUGIN_API_VERSION",
       "path": "packages/core/src/plugin/types.ts",
@@ -103,13 +102,26 @@
       "mirrors": "none",
       "reason": "The MCP `clientInfo.version` the conformance bank presents to a server under test. It identifies the test client to the protocol, and is not this package's version — packages/adapter-conformance/package.json is 0.1.0, which is what makes that plain."
     },
-
     {
       "id": "cli:openapi-format-default",
       "path": "packages/cli/src/commands/doctor.ts",
       "source": "const openApiVersion = (spec as any).openapi || '3.0.0';",
       "mirrors": "none",
       "reason": "NOT A VERSION LITERAL AT ALL — an OpenAPI FORMAT default for a document that omits its `openapi` field. Declared rather than excluded by a hardcoded skip in the guard: an exclusion nobody can read is how a real literal eventually hides behind a pattern exception."
+    },
+    {
+      "id": "core:MCP_PROTOCOL_VERSION",
+      "path": "packages/core/src/protocol/versions.ts",
+      "source": "export const MCP_PROTOCOL_VERSION = '2024-11-05';",
+      "mirrors": "none",
+      "reason": "THE MCP PROTOCOL VERSION, AND THE CANONICAL SOURCE FOR IT — not a package version, and it moves with the protocol specification rather than with any release of ours. `mirrors` is `none` because there is nothing above it to mirror: this IS the thing other sites derive from. Until #689 it was invisible to this guard entirely, because the discovery pass matched only the semver shape — and two hardcoded duplicates of it were live in published source at the time, inside the same object literals as semver literals the registry did declare. Those duplicates now import this constant, so the registry entries they would have needed do not exist. That is the preferred outcome: deleting a duplicate is strictly better than asserting it stays equal to its original."
+    },
+    {
+      "id": "transports:negotiation-history-comment",
+      "path": "packages/transports/src/http/index.ts",
+      "source": "// we do not speak was told \"2024-11-05\" and allowed to proceed, which fails",
+      "mirrors": "none",
+      "reason": "PROSE IN A LINE COMMENT, describing what the code did BEFORE #61 made it negotiate rather than announce. It is a historical statement, so it stays true when the protocol version moves and must NOT be updated to track it — hence `mirrors: none`. Declared rather than pattern-excluded, for the same reason core:plugin-doc-example-version is: a literal that is merely ignored is indistinguishable from one nobody looked at. Excluding comments wholesale was considered and REFUSED — core:plugin-doc-example-version is a declared literal inside a JSDoc block, so a comment filter would have silently deleted an existing member of the registry."
     }
   ]
 }

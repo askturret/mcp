@@ -26,18 +26,29 @@
  *                      and is SILENT on the ones it does not.
  *
  * THE TREE -> REGISTRY BOUND IS `discoverLiterals`, NOT THIS PARAGRAPH. Read it.
- * As it stands it matches a quoted `N.N.N` in non-test `.ts` files under
- * `packages/<pkg>/src`, so these are NOT found:
+ * As it stands it matches TWO quoted shapes — `N.N.N` and `YYYY-MM-DD` — in
+ * non-test `.ts` files under `packages/<pkg>/src`, so these are NOT found:
  *
  *   - a version built by concatenation or a template string
  *   - a two-component version, or one carrying a prerelease or build suffix
+ *   - a date with a two-digit year, slash separators, or a time component
  *   - a literal in a file type that is not `.ts`, or outside `packages/<pkg>/src`
  *   - a version read from a constant defined elsewhere and re-exported
+ *   - a version in ANY SHAPE THIS LIST DOES NOT NAME — which is the bound that
+ *     actually bit (#689), and the one no enumeration of known shapes can close
  *
  * Each of those is pinned as an executable assertion in the self-test, so
  * widening the pattern REDDENS the assertion that says the shape is missed and
  * forces this list to be corrected in the same change. A described bound is what
  * goes stale; an asserted one cannot.
+ *
+ * THE LAST ENTRY IS NOT A HEDGE, AND #689 IS WHY IT IS WRITTEN DOWN. The date
+ * shape was never on this list — not misjudged, simply never enumerated — and
+ * because the registry was built by enumerating what the pattern found, the gap
+ * was invisible from both sides at once. The mechanism above worked exactly as
+ * designed for the four shapes it knew about, and that is the point: a pinned
+ * assertion protects a bound you have THOUGHT OF. Adding a shape narrows this
+ * list; it never empties it.
  *
  * ## `mirrors` IS THE WHOLE DESIGN, AND THE EXCLUSION IS STRUCTURAL
  *
@@ -84,13 +95,29 @@ export const EXIT_CANNOT_CHECK = 2;
 const REQUIRED_FIELDS = Object.freeze(['id', 'path', 'source', 'mirrors', 'reason']);
 
 /**
- * A quoted three-component version, as it appears in source.
+ * The quoted version SHAPES this guard can see, as it appears in source.
  *
  * Deliberately narrow. A looser pattern would collect every quoted number in the
  * tree and drown the real members — the discovery pass exists to FIND CANDIDATES
  * for declaration, and a candidate list nobody can read is not one.
+ *
+ * A LIST RATHER THAN ONE PATTERN, because the shapes are genuinely unrelated and
+ * a fourth would otherwise need the same surgery again (#689). Each entry is
+ * narrow on its own terms; widening happens by ADDING one, which forces the
+ * blind-spot list in the header and its pinned assertions to be revisited.
+ *
+ * `iso-date` was added by #689. The version-literal registry had been built by
+ * enumerating what the semver pattern found, so a date-shaped version was
+ * invisible to BOTH directions — and the class already had live members. Two of
+ * them were hardcoded duplicates of `MCP_PROTOCOL_VERSION` sitting inside the
+ * same object literal as a semver the registry DID declare, four and two lines
+ * away. The enumeration walked straight past them: proximity was not enough,
+ * shape was the whole filter.
  */
-const VERSION_LITERAL = /['"](\d+\.\d+\.\d+)['"]/g;
+const VERSION_LITERAL_SHAPES = Object.freeze([
+  { id: 'semver-triple', pattern: /['"](\d+\.\d+\.\d+)['"]/g },
+  { id: 'iso-date', pattern: /['"](\d{4}-\d{2}-\d{2})['"]/g },
+]);
 
 /** Whitespace-normalised, so indentation changes do not break identity. */
 export function normaliseSource(line) {
@@ -142,15 +169,18 @@ export function discoverLiterals(repoRoot) {
         continue;
       }
       text.split('\n').forEach((line) => {
-        for (const m of line.matchAll(VERSION_LITERAL)) {
-          found.push({
-            // `relative`, not a slice of the absolute path: with `repoRoot` of
-            // '.' a slice removes one real character and every path silently
-            // fails to match its registry entry.
-            path: relative(repoRoot, abs).split(sep).join('/'),
-            source: normaliseSource(line),
-            literal: m[1],
-          });
+        for (const shape of VERSION_LITERAL_SHAPES) {
+          for (const m of line.matchAll(shape.pattern)) {
+            found.push({
+              // `relative`, not a slice of the absolute path: with `repoRoot` of
+              // '.' a slice removes one real character and every path silently
+              // fails to match its registry entry.
+              path: relative(repoRoot, abs).split(sep).join('/'),
+              source: normaliseSource(line),
+              literal: m[1],
+              shape: shape.id,
+            });
+          }
         }
       });
     }

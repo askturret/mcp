@@ -43,11 +43,19 @@
  * made silently.
  *
  * What the property protects is a script that must run in a job with NO
- * `npm ci`. Exactly one family does: `check-readiness-matrix.mjs` and its
- * self-test, invoked by `supply-chain.yml`'s `readiness` job and by
- * `tag-readiness-advisory.yml`, whose own comment reads "No `npm ci`: the
- * script and its self-test use only Node builtins". THOSE ARE UNTOUCHED and
- * must stay that way.
+ * `npm ci`. THOSE ARE UNTOUCHED by this change and must stay that way.
+ *
+ * WHICH scripts those are is NOT recorded here. It is derived from the workflow
+ * files by `check-install-less-deps.mjs`, which walks each install-less entry
+ * point's relative imports and requires every specifier to be a Node builtin.
+ * Run it to read the current inventory; it prints one.
+ *
+ * This paragraph used to name the set — "exactly one family",
+ * `check-readiness-matrix.mjs` and its self-test — and repeated that count in
+ * four places. It was already wrong when written (five), and a nightly job
+ * added hours later made it six, while no copy of the number moved (#743). A
+ * count maintained by hand in four files is guidance that goes stale silently;
+ * a derived check does not.
  *
  * This guard runs in `test.yml`'s `test-integrity` job, which does `npm ci`
  * before any guard runs — the same job, and after the same install, as

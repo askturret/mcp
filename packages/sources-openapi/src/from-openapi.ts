@@ -32,6 +32,11 @@ type OpenAPIDocument = OpenAPIV3.Document | OpenAPIV3_1.Document;
 type OpenAPIOperation = OpenAPIV3.OperationObject | OpenAPIV3_1.OperationObject;
 
 /**
+ * OpenAPI parameter object, after the `$ref` guard has narrowed it (#718).
+ */
+type OpenAPIParameter = OpenAPIV3.ParameterObject | OpenAPIV3_1.ParameterObject;
+
+/**
  * x-mcp extension metadata (extracted from OpenAPI spec)
  */
 interface XMcpExtension {
@@ -426,6 +431,57 @@ function emptyInputSchema(): Record<string, unknown> {
 }
 
 /**
+ * The one media type a `content`-form parameter can be SERVED under (#718).
+ *
+ * OpenAPI 3 lets a parameter carry either `schema` or `content`, and `content`
+ * is the documented form for a parameter needing complex serialization — a
+ * JSON-valued query parameter is the common case. The spec says that map MUST
+ * hold exactly one entry, so this is a support decision, not a preference
+ * between candidates.
+ *
+ * WHY ONLY JSON, rather than "first entry with a schema" as the requestBody
+ * path above does. The two are not the same question. A requestBody's media
+ * type is carried on the wire in `Content-Type`, so honouring an arbitrary one
+ * is coherent. A query parameter's is not: `buildQuery` in
+ * `packages/core/src/executor/http-request.ts` serialises an object-valued
+ * parameter with `JSON.stringify` and has no other encoder. So for
+ * `application/json` the existing executor is already exactly right, and for
+ * any other media type we would advertise a tool whose upstream request is
+ * malformed — JSON sent where the spec declared XML.
+ *
+ * Dropping those is therefore the correct outcome, and the point of naming it
+ * here is that it now drops for THAT reason rather than by falling into the
+ * unreadable branch below by accident.
+ */
+const SERVABLE_PARAMETER_MEDIA_TYPE = 'application/json';
+
+/**
+ * The JSON Schema for a parameter, from either place OpenAPI 3 allows it.
+ *
+ * Returning `undefined` means "no schema we can serve", which is the input the
+ * unreadable branch in `extractInputSchema` acts on.
+ */
+function parameterSchema(param: OpenAPIParameter): Record<string, unknown> | undefined {
+  const direct = param.schema;
+  if (direct && typeof direct === 'object') {
+    return direct as Record<string, unknown>;
+  }
+
+  const content = param.content;
+  if (!content || typeof content !== 'object') {
+    return undefined;
+  }
+
+  const media = content[SERVABLE_PARAMETER_MEDIA_TYPE];
+  if (!media || typeof media !== 'object') {
+    return undefined;
+  }
+
+  const schema = media.schema;
+  return schema && typeof schema === 'object' ? (schema as Record<string, unknown>) : undefined;
+}
+
+/**
  * Extract input schema from OpenAPI operation
  */
 function extractInputSchema(operation: OpenAPIOperation): Record<string, unknown> | undefined {
@@ -485,9 +541,9 @@ function extractInputSchema(operation: OpenAPIOperation): Record<string, unknown
     }
 
     const name = param.name;
-    const paramSchema = param.schema;
+    const paramSchema = parameterSchema(param);
 
-    if (name && paramSchema && typeof paramSchema === 'object') {
+    if (name && paramSchema) {
       properties[name] = paramSchema;
       if (param.required === true) {
         required.push(name);
@@ -496,12 +552,19 @@ function extractInputSchema(operation: OpenAPIOperation): Record<string, unknown
   }
 
   // Parameters WERE declared, but none yielded a property — every entry was an
-  // unresolved `$ref`, or lacked a name or schema. Unlike the no-parameters
-  // case above this is NOT "takes no arguments": something was declared and
-  // could not be read, so presenting the tool as argumentless would invite a
-  // caller to invoke it with nothing when it in fact needs input. Existing
-  // behaviour is kept deliberately; see the PR for #717 for why this branch is
-  // left alone.
+  // unresolved `$ref`, lacked a name, or carried no schema we can serve. Unlike
+  // the no-parameters case above this is NOT "takes no arguments": something was
+  // declared and could not be read, so presenting the tool as argumentless would
+  // invite a caller to invoke it with nothing when it in fact needs input. That
+  // reasoning is #717's and it is unchanged.
+  //
+  // #718 NARROWED THIS BRANCH RATHER THAN WEAKENING IT. The condition used to be
+  // `!param.schema`, which is BROADER than the rationale above: a `content`-form
+  // parameter is standard OpenAPI 3 and perfectly readable, just located
+  // elsewhere, so "lacks `schema`" and "could not be read" came apart for it and
+  // valid specs were silently dropped. `parameterSchema` closes that gap, and
+  // everything still reaching here is genuinely unservable — an unresolved
+  // `$ref`, a missing name, or a media type we cannot encode.
   if (Object.keys(properties).length === 0) {
     return undefined;
   }

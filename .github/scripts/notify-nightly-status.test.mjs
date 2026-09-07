@@ -233,7 +233,82 @@ check('an UNRECOGNISED result fails CLOSED and pages', dispositionFor('weird-new
   check('a 403 from the issues API is CANNOT CHECK (exit 2), not a pass', (await run({ NEEDS_JSON: JSON.stringify(GREEN_NEEDS) }, notOk)) === EXIT_CANNOT_CHECK);
 }
 
-/* -- 11. the two exit codes are distinct ------------------------------------ */
+/* -- 11. A FAILED COMMENT POST MUST NOT SILENCE THE NEXT NIGHT -------------- */
+//
+// QA's finding on PR #751, and the arm that pins the fix. The persisted
+// `nightly-state` is what suppresses the next comment, so writing it BEFORE the
+// comment lands means one transient POST failure silences the alarm FOREVER:
+// night 1 exits 2 having notified nobody, and nights 2+ exit 0 looking green
+// while integrated-tree is broken. That is #739's own defect, one level up.
+//
+// STATEFUL ON PURPOSE. The PATCH really mutates the stored body and the GET
+// reads it back, so this runs consecutive nightlies against ONE tracking issue
+// rather than asserting on call ORDER. An order assertion would also pass for a
+// router that called them in the right sequence and still persisted the wrong
+// thing; asserting the OUTCOME cannot be satisfied that way.
+{
+  function trackerFixture(initialBody, failPostNumber = 1) {
+    let stored = initialBody;
+    let posts = 0;
+    let patches = 0;
+    const impl = async (url, opts = {}) => {
+      const method = opts.method ?? 'GET';
+      if (method === 'GET') return { ok: true, status: 200, json: async () => [{ number: 42, body: stored }] };
+      if (method === 'PATCH') {
+        patches++;
+        stored = JSON.parse(opts.body).body;
+        return { ok: true, status: 200, json: async () => ({ number: 42 }) };
+      }
+      if (method === 'POST') {
+        posts++;
+        if (posts === failPostNumber) throw new Error('comment POST failed (transient)');
+        return { ok: true, status: 200, json: async () => ({ id: 1 }) };
+      }
+      throw new Error(`unexpected ${method} ${url}`);
+    };
+    return { impl, posts: () => posts, patches: () => patches, stored: () => stored };
+  }
+
+  const broken = { ...GREEN_NEEDS, 'integrated-tree': { result: 'failure', outputs: {} } };
+  const t = trackerFixture(`${TRACKER_MARKER}\n<!-- nightly-state: healthy -->`);
+
+  const night1 = await run({ NEEDS_JSON: JSON.stringify(broken) }, t.impl);
+  check(
+    'night 1: a failed comment POST is CANNOT CHECK (exit 2), never a silent success',
+    night1 === EXIT_CANNOT_CHECK,
+    `exit ${night1}`,
+  );
+  check(
+    'night 1: the alerting state is NOT persisted, because the alarm never landed',
+    previousStateFrom(t.stored()) === 'healthy',
+    t.stored().slice(0, 140),
+  );
+
+  const night2 = await run({ NEEDS_JSON: JSON.stringify(broken) }, t.impl);
+  check(
+    'NIGHT 2 STILL COMMENTS — one transient POST failure must not silence the alarm forever',
+    t.posts() === 2,
+    `comment attempts: ${t.posts()}`,
+  );
+  check('night 2 succeeds once the comment lands', night2 === EXIT_OK, `exit ${night2}`);
+  check(
+    '...and only THEN is the alerting state persisted',
+    previousStateFrom(t.stored()) === 'alerting',
+    t.stored().slice(0, 140),
+  );
+
+  // The other half of the trade. Without this the "fix" could be "always
+  // comment", which is a different defect — a notification every failing night.
+  const night3 = await run({ NEEDS_JSON: JSON.stringify(broken) }, t.impl);
+  check(
+    'night 3: still alerting and now persisted — no THIRD comment',
+    night3 === EXIT_OK && t.posts() === 2,
+    `exit ${night3}, comment attempts: ${t.posts()}`,
+  );
+  check('...but the heartbeat still refreshed', t.patches() >= 2, `patches: ${t.patches()}`);
+}
+
+/* -- 12. the two exit codes are distinct ------------------------------------ */
 check('the exit codes are distinct (0 routed, 2 could-not-route)', EXIT_OK !== EXIT_CANNOT_CHECK);
 
 console.log(`\npassed: ${passed}  failed: ${failed}`);

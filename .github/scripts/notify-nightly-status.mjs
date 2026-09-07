@@ -314,20 +314,38 @@ export async function main({
     }
 
     const previous = previousStateFrom(tracker.body);
+    const transition = alerting && previous !== 'alerting';
 
-    // The heartbeat: always, green or not. Silent — body edits do not notify.
-    await api(fetchImpl, token, 'PATCH', `https://api.github.com/repos/${repo}/issues/${tracker.number}`, { body });
-    log(`updated tracking issue #${tracker.number} body (previous state: ${previous ?? 'unknown'})`);
-
-    // The alarm: only on the TRANSITION to non-green.
-    if (alerting && previous !== 'alerting') {
+    // ---- THE ALARM GOES FIRST, AND THE ORDER IS THE WHOLE CONTROL ----------
+    //
+    // The persisted `nightly-state` is what suppresses the next comment. Write
+    // it BEFORE the comment lands and a failed POST leaves a body reading
+    // "already announced" with nothing announced — so the transition never
+    // fires again. Night 1 exits 2 and notifies nobody, which is #739's premise
+    // intact; nights 2+ exit 0 and LOOK GREEN while integrated-tree is broken.
+    // That is a notifier that goes permanently silent after one transient
+    // failure while reporting success — this issue's own defect, reproduced
+    // one level up inside its fix.
+    //
+    // Posting first inverts the failure: the comment lands, and if the PATCH
+    // then fails the state stays `healthy`, so the next run comments AGAIN.
+    // A DUPLICATE comment is the safe direction; a swallowed one is not. The
+    // stale timestamp that a skipped PATCH leaves behind is exactly the
+    // heartbeat signal that says this router stopped working.
+    if (transition) {
       await api(fetchImpl, token, 'POST', `https://api.github.com/repos/${repo}/issues/${tracker.number}/comments`, {
         body: renderComment({ rows, runUrl, sha, timestamp }),
       });
       log(`posted transition comment on #${tracker.number}`);
     } else if (alerting) {
-      log('still alerting — body refreshed, no comment (a persistent failure is one problem, not one per night)');
+      log('still alerting — no comment (a persistent failure is one problem, not one per night)');
     }
+
+    // ---- THE HEARTBEAT, ONLY ONCE THE ALARM HAS ACTUALLY LANDED -----------
+    // Always on a run that gets this far, green or not. Silent: body edits do
+    // not notify.
+    await api(fetchImpl, token, 'PATCH', `https://api.github.com/repos/${repo}/issues/${tracker.number}`, { body });
+    log(`updated tracking issue #${tracker.number} body (previous state: ${previous ?? 'unknown'})`);
 
     return EXIT_OK;
   } catch (err) {

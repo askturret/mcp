@@ -734,6 +734,34 @@ jobs:
       - name: Every workflow job runs on the self-hosted pool
         run: node .github/scripts/check-runners.mjs
 
+      # #698: the guard above reads these files with a HAND-ROLLED parser, and
+      # check-guards.test.mjs greps their text. Neither asks whether a file is
+      # loadable at all — so on PR #697 a colon-space in an unquoted scalar made
+      # reliability-nightly.yml unparseable at 133:46 and both passed it. GitHub
+      # does not load an invalid workflow AT ALL: the jobs never exist, nothing
+      # reports a failure, and the board stays green while the protection is
+      # gone. That PR was simultaneously removing `push: main` and moving its
+      # replacement INTO that file.
+      #
+      # Placed immediately after the runner guard because they read the same
+      # directory and this one establishes the precondition for trusting that
+      # one: a file this step rejects is a file whose contents no other check
+      # has meaningfully read.
+      #
+      # This is the ONE script under .github/scripts that needs `npm ci` — it
+      # uses the real js-yaml parser, because a hand-rolled one is lenient
+      # exactly where YAML is strict and so cannot answer this question. That is
+      # safe HERE and only here: this job installs before any guard runs. The
+      # install-less scripts (check-readiness-matrix.mjs and its self-test, run
+      # by supply-chain.yml's readiness job and tag-readiness-advisory.yml) are
+      # untouched and must stay zero-dependency. If the parser is ever missing
+      # the guard exits 2 CANNOT CHECK rather than passing — see its header.
+      - name: Self-test the workflow-parse guard
+        run: node .github/scripts/check-workflows-parse.test.mjs
+
+      - name: Every workflow file is loadable YAML
+        run: node .github/scripts/check-workflows-parse.mjs
+
       # #687: dropping `push: main` above made reliability-nightly.yml's
       # `integrated-tree` job the SOLE proof for the tree main actually has. A
       # runner that reported success for suites it never executed would reopen

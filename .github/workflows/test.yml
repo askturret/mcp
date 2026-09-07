@@ -800,6 +800,32 @@ jobs:
       - name: Install-less scripts import only Node builtins
         run: node .github/scripts/check-install-less-deps.mjs
 
+      # #734: WIRED HERE FOR THE LANE, NOT FOR THE NEIGHBOURHOOD.
+      #
+      # These assertions used to live in `readme-quickstart.test.ts` under
+      # packages/adapters-express, so they ran only when that package's filter
+      # matched — and no filter matches the repo-root `README.md` or `docs/**`.
+      # A doc-only pull request, the exact change they guard against, scheduled
+      # them not at all.
+      #
+      # MEASURED on commit 8600c2a (README.md + docs/readiness.md):
+      #
+      #   test-adapters-express   skipped      <- the guard did not run
+      #   test-integrity          success      <- this job did
+      #
+      # `test-integrity` carries no path filter and `needs:` nothing, so it runs
+      # on every non-dependabot PR whatever the diff touches. That property is
+      # the entire reason these two steps are in THIS job, and moving them into
+      # any filtered job silently reopens #734.
+      #
+      # The assertions were MOVED, not copied — the mounting half stays in the
+      # jest test, which needs four packages built and is genuinely about code.
+      - name: Self-test the doc-surface guard
+        run: node .github/scripts/check-doc-surfaces.test.mjs
+
+      - name: Documented quick-start surfaces hold
+        run: node .github/scripts/check-doc-surfaces.mjs .
+
       # #687: dropping `push: main` above made reliability-nightly.yml's
       # `integrated-tree` job the SOLE proof for the tree main actually has. A
       # runner that reported success for suites it never executed would reopen

@@ -29,12 +29,22 @@ earning it.
 
 ## What the automated guards already cover
 
-Two guards run in the `test-integrity` job on every PR:
+Three guards run in the `test-integrity` job on every PR:
 
 | Guard | Question it answers |
 |---|---|
 | `check-test-execution.mjs` | Does this package's suite actually execute? |
 | `check-placeholder-tests.mjs` | Did anything get asserted? (no `expect(`, `expect(true).toBe(true)`, stray `.only`) |
+| `check-doc-surfaces.mjs` | Do the README's documented quick-start commands still hold — and every markdown file with them? |
+
+**"On every PR" is load-bearing for the third one, and is why it lives here
+rather than beside the code it describes** (#734). `test-integrity` carries no
+path filter and `needs:` nothing, so it is scheduled whatever the diff touches.
+Its assertions previously sat in a suite under `packages/adapters-express`,
+where no filter matched the repo-root `README.md` or `docs/**` — measured on
+commit `8600c2a`, a `README.md` + `docs/readiness.md` change: all twelve package
+suites skipped, `test-integrity` ran. A guard whose subject is documentation has
+to sit in a lane documentation schedules, and only this one does.
 
 They are worth having and they are not enough. Every antipattern below **passes
 both**. A test can execute, assert something specific and real, and still guard

@@ -22,12 +22,35 @@
  * `subpath-export.test.ts` for exactly this shape. So the command executed here
  * is PARSED OUT OF `README.md` at run time: revert the README to the GET form
  * and the parse finds no POST and no JSON-RPC body, and this goes red.
+ *
+ * ## What lives here, and what deliberately does not (#734)
+ *
+ * This file holds ONLY the assertions that need a real mounted adapter. The
+ * text-only ones — the shape of the documented command, the server snippet, and
+ * the repo-wide sweeps over every markdown file — moved to
+ * `.github/scripts/check-doc-surfaces.mjs`.
+ *
+ * They moved because of WHERE this file runs, not because of what it asserted.
+ * It sits under `packages/adapters-express`, so it is scheduled only when that
+ * package's path filter matches — and no filter matches the repo-root
+ * `README.md` or `docs/**`. Measured on commit `8600c2a`, a doc-only change:
+ * all twelve package suites skipped, `test-integrity` ran. So a doc-only edit
+ * — the exact change these assertions guard against — did not schedule them.
+ *
+ * The guard runs in `test-integrity`, which carries no path filter, so those
+ * assertions now run on EVERY pull request rather than only on this package's.
+ * They were MOVED rather than copied: a second copy that can disagree with the
+ * first is the drift this repository keeps filing issues about.
+ *
+ * The three below stayed because they mount the adapter, which needs four
+ * workspace packages built before it can run at all — genuinely expensive, and
+ * genuinely about code rather than prose.
  */
 
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import express, { type Express } from 'express';
 import request from 'supertest';
-import { readFileSync, readdirSync, statSync, mkdtempSync, writeFileSync } from 'fs';
+import { readFileSync, mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { dirname, join, resolve as resolvePath } from 'path';
 import { fileURLToPath } from 'url';
@@ -54,9 +77,6 @@ const PROOF_MARKER = 'Your API now exposes tools over MCP';
 /** The heredoc that writes the quick start's spec (#719). */
 const SPEC_HEREDOC_OPEN = "cat > petstore.yaml <<'YAML'";
 
-/** The prose marker the quick start's server file sits under (#719). */
-const SERVER_MARKER = 'Save this as `server.mjs`';
-
 /**
  * The OpenAPI document the quick start tells the reader to write.
  *
@@ -82,24 +102,6 @@ function inlinedSpec(): string {
     throw new Error('README.md quick-start spec heredoc is not terminated by YAML.');
   }
   return readme.slice(bodyStart, end);
-}
-
-/** The fenced javascript block holding the quick start's server file (#719). */
-function serverSnippet(): string {
-  const readme = readFileSync(README_PATH, 'utf8');
-  const markerAt = readme.indexOf(SERVER_MARKER);
-  if (markerAt === -1) {
-    throw new Error(
-      `README.md no longer contains the quick-start server marker ${JSON.stringify(SERVER_MARKER)}. ` +
-        'If it was reworded, update SERVER_MARKER here in the same change.',
-    );
-  }
-  const fenceStart = readme.indexOf('```javascript', markerAt);
-  const fenceEnd = readme.indexOf('```', fenceStart + 3);
-  if (fenceStart === -1 || fenceEnd === -1) {
-    throw new Error('README.md quick-start server block is not a closed javascript fence.');
-  }
-  return readme.slice(fenceStart, fenceEnd);
 }
 
 /**
@@ -139,25 +141,6 @@ function documentedRequestBody(block: string): unknown | undefined {
   return JSON.parse(match[1] as string);
 }
 
-/** Every markdown file that is ours — node_modules and build output excluded. */
-function markdownFiles(root: string): string[] {
-  const skip = new Set(['node_modules', '.git', 'dist', 'coverage', 'build']);
-  const found: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      if (skip.has(entry)) continue;
-      const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
-        walk(full);
-      } else if (entry.endsWith('.md')) {
-        found.push(full);
-      }
-    }
-  };
-  walk(root);
-  return found;
-}
-
 let app: Express;
 
 beforeAll(() => {
@@ -174,21 +157,11 @@ afterAll(() => {
 });
 
 describe("the README's quick-start proof command (#716)", () => {
-  it('documents a POST to the mounted endpoint, not a GET path', () => {
-    const block = proofBlock();
-    expect(block).toContain('-X POST');
-    expect(block).toContain('/mcp');
-    // The defect itself: `tools/list` presented as a URL path segment.
-    expect(block).not.toContain('/mcp/tools/list');
-  });
-
-  it('documents a well-formed JSON-RPC 2.0 tools/list request', () => {
-    const body = documentedRequestBody(proofBlock()) as Record<string, unknown> | undefined;
-    expect(body).toBeDefined();
-    expect(body?.['jsonrpc']).toBe('2.0');
-    expect(body?.['method']).toBe('tools/list');
-  });
-
+  // The SHAPE of the documented command — POST, the /mcp endpoint, a
+  // well-formed JSON-RPC body — is asserted by check-doc-surfaces.mjs, which
+  // runs on every PR rather than only this package's (#734). What is left here
+  // is the part that needs a server: that the documented command actually
+  // WORKS, which no amount of reading the text can establish.
   it('succeeds against a real server, returning the tool list', async () => {
     const body = documentedRequestBody(proofBlock());
     const response = await request(app)
@@ -232,57 +205,8 @@ describe('the quick start can be followed from a cold start (#719)', () => {
     expect(names).toContain('getPetById');
   });
 
-  it('declares a servers entry, so calls resolve an upstream instead of warning', () => {
-    // Without this the runtime logs "Could not resolve an upstream base URL"
-    // and every tools/call fails — tools/list alone passing is not enough to
-    // call the quick start followable.
-    expect(inlinedSpec()).toContain('servers:');
-  });
-
-  it('documents a listen that names a port collision instead of throwing a stack trace', () => {
-    const snippet = serverSnippet();
-    // The defect: a bare `app.listen(port)` surfaces EADDRINUSE as an unhandled
-    // 'error' event and a raw stack trace on the reader's FIRST command.
-    expect(snippet).toContain('EADDRINUSE');
-    expect(snippet).toContain("server.on('error'");
-    // And an override, so the fix does not depend on the chosen default alone.
-    expect(snippet).toContain('process.env.PORT');
-  });
-
-  it('does not log success from the listen callback, which express 5 also calls on error', () => {
-    // express 5's `app.listen(port, cb)` does `server.once('error', cb)`, so a
-    // callback that logs "listening" prints on a FAILED bind too — measured on
-    // express 5.2.1. The documented snippet must not take that shortcut.
-    expect(serverSnippet()).not.toMatch(/app\.listen\([^)]*,\s*\(/);
-  });
-});
-
-describe('no doc surface documents a demo server on macOS-occupied port 7000 (#719)', () => {
-  it('leaves no copy of the port-7000 form behind', () => {
-    const offenders: string[] = [];
-    for (const file of markdownFiles(repoRoot())) {
-      const text = readFileSync(file, 'utf8');
-      // The runnable forms only. Prose ABOUT port 7000 is legitimate and is
-      // exactly what the README now uses to explain why the default moved.
-      if (text.includes('localhost:7000') || text.includes('--port 7000') || text.includes('port: 7000')) {
-        offenders.push(file.slice(repoRoot().length + 1));
-      }
-    }
-    expect(offenders).toEqual([]);
-  });
-});
-
-describe('no doc surface presents an MCP method as a URL path (#716, #103)', () => {
-  it('leaves no copy of the GET-path form behind', () => {
-    const offenders: string[] = [];
-    for (const file of markdownFiles(repoRoot())) {
-      const text = readFileSync(file, 'utf8');
-      // The URL-path form specifically. A bare `tools/list` is the legitimate
-      // JSON-RPC method name and appears throughout the docs on purpose.
-      if (text.includes('/mcp/tools/list') || text.includes('/mcp/tools/call')) {
-        offenders.push(file.slice(repoRoot().length + 1));
-      }
-    }
-    expect(offenders).toEqual([]);
-  });
+  // The `servers:` entry, the server snippet's EADDRINUSE handling, and the
+  // repo-wide sweeps for the port-7000 and URL-path forms are all pure text, so
+  // they are asserted by check-doc-surfaces.mjs on every PR (#734). Only the
+  // mounting assertion above needs to be here.
 });

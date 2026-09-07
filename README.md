@@ -40,9 +40,16 @@ app.listen(7000);
 ```
 
 ```bash
-# Your API now exposes tools over MCP
-curl http://localhost:7000/mcp/tools/list
-# Returns: [{"name": "listPets", ...}, {"name": "createPet", ...}, ...]
+# Your API now exposes tools over MCP.
+# MCP speaks JSON-RPC 2.0 over POST to the single endpoint you mounted above —
+# `tools/list` is a method name, not a URL path.
+curl -X POST http://localhost:7000/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+# Returns: {"jsonrpc":"2.0","id":1,"result":{"tools":[
+#   {"name":"listPets","description":"...","inputSchema":{...}},
+#   {"name":"getPetById","description":"...","inputSchema":{...}}
+# ]}}
 ```
 
 **Explorer UI.** Visit `http://localhost:7000/mcp/explorer` to browse, test, and inspect all tools with a live UI.

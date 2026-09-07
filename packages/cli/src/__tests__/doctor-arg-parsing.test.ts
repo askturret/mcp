@@ -199,7 +199,7 @@ describe('what must keep working (#256)', () => {
     const { status, stdout } = doctor(flag);
 
     expect(status).toBe(0);
-    expect(stdout).toContain('Usage: npx @askturret/mcp doctor');
+    expect(stdout).toContain('Usage: npx @askturret/mcp-cli doctor');
     expect(stdout).toContain('--preset');
   });
 

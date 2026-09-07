@@ -60,7 +60,7 @@ function printHelp() {
   console.log('AskTurret MCP CLI');
   console.log('');
   console.log('Usage:');
-  console.log('  npx @askturret/mcp <command> [options]');
+  console.log('  npx @askturret/mcp-cli <command> [options]');
   console.log('');
   console.log('Commands:');
   console.log('  doctor <spec>           Analyze OpenAPI spec for MCP readiness (offline)');
@@ -82,14 +82,14 @@ function printHelp() {
   console.log('                          regulated are refused with the reason why');
   console.log('');
   console.log('Examples:');
-  console.log('  npx @askturret/mcp doctor ./openapi.yaml');
-  console.log('  npx @askturret/mcp doctor ./openapi.yaml --preset production');
-  console.log('  npx @askturret/mcp doctor --url http://localhost:7000/mcp');
-  console.log('  npx @askturret/mcp inspect --url http://localhost:7000/mcp');
-  console.log('  npx @askturret/mcp inspect --url ... --tool createOrder --dry-run');
-  console.log('  npx @askturret/mcp diff --before before.json --after after.json');
-  console.log('  npx @askturret/mcp diff --help    (classification rubric)');
-  console.log('  npx @askturret/mcp diagnostics --url http://localhost:7000/mcp --out ./bundle.tar.gz');
+  console.log('  npx @askturret/mcp-cli doctor ./openapi.yaml');
+  console.log('  npx @askturret/mcp-cli doctor ./openapi.yaml --preset production');
+  console.log('  npx @askturret/mcp-cli doctor --url http://localhost:7000/mcp');
+  console.log('  npx @askturret/mcp-cli inspect --url http://localhost:7000/mcp');
+  console.log('  npx @askturret/mcp-cli inspect --url ... --tool createOrder --dry-run');
+  console.log('  npx @askturret/mcp-cli diff --before before.json --after after.json');
+  console.log('  npx @askturret/mcp-cli diff --help    (classification rubric)');
+  console.log('  npx @askturret/mcp-cli diagnostics --url http://localhost:7000/mcp --out ./bundle.tar.gz');
   console.log('');
 }
 

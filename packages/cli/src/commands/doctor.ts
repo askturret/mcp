@@ -142,8 +142,8 @@ export async function doctorCommand(args: string[]): Promise<void> {
 
   if (!flags.input) {
     console.error('Error: Missing required argument');
-    console.error('Usage: npx @askturret/mcp doctor <path-to-spec>');
-    console.error('       npx @askturret/mcp doctor --url <endpoint>');
+    console.error('Usage: npx @askturret/mcp-cli doctor <path-to-spec>');
+    console.error('       npx @askturret/mcp-cli doctor --url <endpoint>');
     process.exit(1);
   }
 
@@ -329,8 +329,8 @@ function parseArgs(args: string[]): {
 
 /** Usage for `doctor --help`. */
 function printDoctorHelp(): void {
-  console.log('Usage: npx @askturret/mcp doctor <path-to-spec> [options]');
-  console.log('       npx @askturret/mcp doctor --url <endpoint> [options]');
+  console.log('Usage: npx @askturret/mcp-cli doctor <path-to-spec> [options]');
+  console.log('       npx @askturret/mcp-cli doctor --url <endpoint> [options]');
   console.log('');
   console.log('Options:');
   console.log('  --url <endpoint>     Analyze a live MCP server instead of a spec file');

@@ -546,8 +546,8 @@ function printDiagnosticsHelp(): void {
   console.log('Produce a redacted support bundle.');
   console.log('');
   console.log('Usage:');
-  console.log('  npx @askturret/mcp diagnostics --url <url> --out ./bundle.tar.gz');
-  console.log('  npx @askturret/mcp diagnostics --config ./askturret.config.ts --out ./bundle.tar.gz');
+  console.log('  npx @askturret/mcp-cli diagnostics --url <url> --out ./bundle.tar.gz');
+  console.log('  npx @askturret/mcp-cli diagnostics --config ./askturret.config.ts --out ./bundle.tar.gz');
   console.log('');
   console.log('Options:');
   // Derived from DIAGNOSTICS_FLAGS (#264), never restated. The hand-maintained

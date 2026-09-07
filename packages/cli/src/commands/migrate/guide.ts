@@ -88,7 +88,7 @@ export function renderSnippet(migration: Migration): string {
   lines.push(automation(migration));
   lines.push('');
   lines.push('```bash');
-  lines.push(`npx @askturret/mcp migrate --from ${migration.from} --to ${migration.to} --check`);
+  lines.push(`npx @askturret/mcp-cli migrate --from ${migration.from} --to ${migration.to} --check`);
   lines.push('```');
 
   return lines.join('\n');
@@ -115,8 +115,8 @@ export function renderIndex(migrations: readonly Migration[] = MIGRATIONS): stri
   );
   lines.push('');
   lines.push('```bash');
-  lines.push('npx @askturret/mcp migrate --check              # what would change, changes nothing');
-  lines.push('npx @askturret/mcp migrate --from 0.9 --to 1.0  # apply');
+  lines.push('npx @askturret/mcp-cli migrate --check              # what would change, changes nothing');
+  lines.push('npx @askturret/mcp-cli migrate --from 0.9 --to 1.0  # apply');
   lines.push('```');
   lines.push('');
 

@@ -1100,6 +1100,23 @@ jobs:
       - name: README imports work for a reader, not just in this repo
         run: node .github/scripts/check-readme-imports.mjs .
 
+      # #738/#755: `@askturret/mcp` does not exist and returns 404, yet it was
+      # named in 33 places — including the shipped CLI's own --help, so a user who
+      # correctly ran `npx @askturret/mcp-cli doctor` was told BY THE WORKING TOOL
+      # to fetch a package that is not there. Nothing caught it: the string is
+      # well-formed, the docs build, the tests pass, and only running the command
+      # reveals it.
+      #
+      # OFFLINE BY CONSTRUCTION, which is why it can block a PR. The authority is
+      # the non-private set in the workspace manifests, not the registry — a
+      # networked check here has no good failure mode, which is exactly why
+      # check-release-registry-reconcile is a scheduled observer instead.
+      - name: Self-test the npx-invocation guard
+        run: node .github/scripts/check-npx-invocations.test.mjs
+
+      - name: Every npx invocation names a package we publish
+        run: node .github/scripts/check-npx-invocations.mjs .
+
       # #62: docs/migrations/README.md is GENERATED from the migration registry.
       # A migration added without regenerating it would ship an index that
       # silently omits it — the same failure docs/adapters.md is generated to

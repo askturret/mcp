@@ -100,8 +100,8 @@ export async function diffCommand(args: string[]): Promise<void> {
   if (!flags.before || !flags.after) {
     console.error('Error: diff requires both --before and --after');
     console.error('');
-    console.error('Usage: npx @askturret/mcp diff --before <snapshot.json> --after <snapshot.json>');
-    console.error('Run `npx @askturret/mcp diff --help` for the classification rubric.');
+    console.error('Usage: npx @askturret/mcp-cli diff --before <snapshot.json> --after <snapshot.json>');
+    console.error('Run `npx @askturret/mcp-cli diff --help` for the classification rubric.');
     process.exit(EXIT_USAGE);
   }
 
@@ -344,7 +344,7 @@ export function printDiffHelp(): void {
 Compare two registry snapshots and classify what changed.
 
 Usage:
-  npx @askturret/mcp diff --before <snapshot.json> --after <snapshot.json> [options]
+  npx @askturret/mcp-cli diff --before <snapshot.json> --after <snapshot.json> [options]
 
 Options:
 ${renderOptions(DIFF_FLAGS).join('\n')}

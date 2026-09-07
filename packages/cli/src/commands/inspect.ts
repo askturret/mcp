@@ -87,8 +87,8 @@ export async function inspectCommand(args: string[]): Promise<void> {
 
   if (!flags.url) {
     console.error('Error: Missing required --url argument');
-    console.error('Usage: npx @askturret/mcp inspect --url <endpoint>');
-    console.error('       npx @askturret/mcp inspect --url <endpoint> --tool <name> --dry-run');
+    console.error('Usage: npx @askturret/mcp-cli inspect --url <endpoint>');
+    console.error('       npx @askturret/mcp-cli inspect --url <endpoint> --tool <name> --dry-run');
     // 2, not 1: a missing argument is a fatal usage error. Exit code 1 is
     // reserved for a server that was reached but is unreachable/unhealthy,
     // so callers can tell "you invoked me wrong" from "the server is down".
@@ -139,7 +139,7 @@ export const INSPECT_FLAGS: FlagSpec = {
 
 /** Usage for `inspect --help`. Options are DERIVED (#264), never restated. */
 function printInspectHelp(): void {
-  console.log('Usage: npx @askturret/mcp inspect --url <endpoint> [options]');
+  console.log('Usage: npx @askturret/mcp-cli inspect --url <endpoint> [options]');
   console.log('');
   console.log('Options:');
   for (const line of renderOptions(INSPECT_FLAGS)) console.log(line);

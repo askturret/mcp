@@ -234,5 +234,41 @@ function job(created, started, completed, stepMins = 1) {
   check('the spawned output carries the predicate', /PREDICATE/.test(out), out.slice(0, 200));
 }
 
+// --- 7. the outcome TOKEN is surfaced as a step output (#739) ---------------
+//
+// The nightly router reads this token to tell NO_DATA (a quiet window, stay
+// silent) from CANNOT_CHECK (page). Both exit 2, so if this surfacing silently
+// stopped working the router would fail closed and page on every quiet
+// weekend — the alert-fatigue outcome #739 exists to prevent. Asserted against
+// the FILE the script writes, not against the value it computed.
+{
+  const { mkdtempSync, readFileSync, writeFileSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+
+  const dir = mkdtempSync(join(tmpdir(), 'ci-throughput-output-'));
+  const outFile = join(dir, 'github_output');
+  writeFileSync(outFile, '');
+
+  const previous = process.env['GITHUB_OUTPUT'];
+  process.env['GITHUB_OUTPUT'] = outFile;
+
+  // Empty pages -> nothing merged, nothing measured -> NO_DATA.
+  const emptyApi = async () => ({ ok: true, status: 200, json: async () => [] });
+  const exit = await mod.main(['--days', '7'], { token: 'x', fetchImpl: emptyApi, now: NOW });
+
+  if (previous === undefined) delete process.env['GITHUB_OUTPUT'];
+  else process.env['GITHUB_OUTPUT'] = previous;
+
+  const written = readFileSync(outFile, 'utf-8');
+  check('an empty window still writes a step output', written.includes('outcome='), JSON.stringify(written));
+  check(
+    'the surfaced token is NO_DATA — the router needs the CAUSE, which exit 2 cannot carry',
+    written.includes('outcome=NO_DATA'),
+    JSON.stringify(written),
+  );
+  check('surfacing the token does NOT change the exit code (still 2)', exit === CANNOT_CHECK, `got ${exit}`);
+}
+
 console.log(`\npassed: ${passed}  failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

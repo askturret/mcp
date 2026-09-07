@@ -589,6 +589,30 @@ export async function main(args, deps = {}) {
     }
   }
 
+  // #739: publish the OUTCOME TOKEN as a step output so a router can read the
+  // CAUSE instead of inferring it from severity.
+  //
+  // NO_DATA and CANNOT_CHECK both exit 2, because "I could not check" is never
+  // "it passed" — but they are NOT alike for notification: a quiet window is
+  // the system working and having nothing to say, while an unreadable API is a
+  // real problem. An exit code is one channel carrying two dimensions, so it
+  // cannot express both; this line is the second dimension.
+  //
+  // NOTHING about the outcome logic or the exit code changes here. The token is
+  // computed by run() either way; this only publishes it. That is what keeps
+  // the router independent of the open exit-contract ruling.
+  const output = env['GITHUB_OUTPUT'];
+  if (output) {
+    const { appendFileSync } = await import('node:fs');
+    try {
+      appendFileSync(output, `outcome=${result.outcome}\n`);
+    } catch {
+      // A step output that cannot be written must not change the verdict.
+      // The router fails CLOSED on a missing token, so this degrades to a page
+      // rather than to silence.
+    }
+  }
+
   return result.exit;
 }
 

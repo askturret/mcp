@@ -245,10 +245,11 @@ jobs:
   # job too. That is the honest trade, because the failure this metric exists to
   # prevent is a blank number being read as "no change".
   #
-  # No `npm ci` — Node builtins and `fetch` only. FIVE jobs run .github/scripts
-  # code without an install and this is one of them. PR #742's `js-yaml`
-  # devDependency was argued for a guard in a job that installs; it is not
-  # permission for this one.
+  # No `npm ci` — Node builtins and `fetch` only. This is one of the install-less
+  # jobs; the set is DERIVED and enforced by check-install-less-deps.mjs (#743),
+  # so no count is written here — the number that used to be was wrong twice.
+  # PR #742's `js-yaml` devDependency was argued for a guard in a job that
+  # installs; it is not permission for this one.
   ci-throughput:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64, askturret]
@@ -257,6 +258,14 @@ jobs:
       contents: read
       # Reading workflow runs and their jobs IS the measurement.
       actions: read
+    # #739: the OUTCOME TOKEN, exposed to the `notify` job below.
+    #
+    # NO_DATA (a quiet window) and CANNOT_CHECK (an unreadable API) BOTH exit 2,
+    # so both arrive at the router as `failure`. It must page on one and stay
+    # silent on the other, and an exit code cannot carry that distinction. This
+    # output is what does.
+    outputs:
+      outcome: ${{ steps.throughput.outputs.outcome }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -270,6 +279,63 @@ jobs:
         run: node .github/scripts/ci-throughput-metric.test.mjs
 
       - name: Publish CI throughput
+        id: throughput
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/ci-throughput-metric.mjs --days 7
+
+  # ---------------------------------------------------------------------------
+  # #739: route this workflow's outcomes to a tracking issue.
+  #
+  # Until this shipped, a red run notified NOBODY — no `if: failure()`, no
+  # `gh issue`, and no workflow listening for this one's completion. The run went
+  # red and the exposure lasted until a human opened the Actions tab. That is
+  # load-bearing rather than cosmetic: `integrated-tree` is the ONLY assertion in
+  # this repository over the merged tree, and #687 dropped `push: main` on the
+  # explicit condition that this nightly would catch an integration failure.
+  #
+  # `if: always()` is what makes it run when its dependencies FAILED — the whole
+  # point. Without it the router would be skipped by exactly the runs it exists
+  # to report on.
+  #
+  # `needs:` names every job in this workflow. It is passed whole as
+  # `toJSON(needs)`, so the script reads results AND outcome tokens from one
+  # blob, and a sixth job added later is picked up without editing the script.
+  #
+  # THE ROUTER READS TOKENS, NOT EXIT CODES, and treats `skipped` as neither
+  # success nor failure — `integrated-tree` and `ci-throughput` skip on
+  # `push: main` by design, and reading that as failure would page on every
+  # qualifying push. See the script header for why both properties are
+  # load-bearing.
+  #
+  # No `npm ci`: Node builtins and `fetch` only, like the jobs above.
+  # ---------------------------------------------------------------------------
+  notify:
+    if: always()
+    needs: [reliability, integrated-tree, platform-claims, release-registry-reconcile, ci-throughput]
+    runs-on: [self-hosted, Linux, X64, askturret]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Writing the tracking issue — its body every run, a comment on transition.
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Self-tested here as well as on the PR path. A router that silently fails
+      # to route is this issue's own defect one level up, so it does not get to
+      # be the one job that runs unverified.
+      - name: Self-test the nightly status router
+        run: node .github/scripts/notify-nightly-status.test.mjs
+
+      - name: Route nightly outcomes to the tracking issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          TREE_SHA: ${{ github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .github/scripts/notify-nightly-status.mjs

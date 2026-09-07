@@ -716,6 +716,21 @@ jobs:
       - name: Self-test the release/registry reconciler
         run: node .github/scripts/check-release-registry-reconcile.test.mjs
 
+      # #739: the router that makes every OTHER nightly control audible. Split
+      # exactly like the two above — this self-test is OFFLINE BY CONSTRUCTION
+      # (every API interaction drives an injected `fetchImpl`), so it can block a
+      # PR; the live routing runs in reliability-nightly.yml's `notify` job.
+      #
+      # It runs HERE as well as there on purpose. A router that silently stops
+      # routing is #739's own defect one level up, and if its only check were in
+      # the nightly, a PR that broke it would be caught at 03:00 UTC by the
+      # mechanism it just broke. What it pins is the pair of distinctions a
+      # naive router gets wrong: NO_DATA (silent) versus CANNOT_CHECK (page)
+      # though both exit 2, and `skipped` versus failed — two jobs skip on
+      # `push: main` by design.
+      - name: Self-test the nightly status router
+        run: node .github/scripts/notify-nightly-status.test.mjs
+
       # #280: the Actions budget is exhausted, so a job on a GitHub-hosted
       # runner is refused at "Set up job" with an EMPTY LOG — no error, nothing
       # naming the cause. That shape cost a full investigation cycle on #278

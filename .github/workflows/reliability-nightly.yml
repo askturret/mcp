@@ -225,3 +225,51 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node .github/scripts/check-release-registry-reconcile.mjs . --live
+
+  # CI throughput, published rather than asserted (#687 change 4).
+  #
+  # A NEW JOB RATHER THAN A STEP IN ONE ABOVE. `platform-claims` and
+  # `release-registry-reconcile` are each named for the single assertion they
+  # make, and a job quietly carrying a second, unrelated measurement is how a
+  # job name stops being true. The cost is bounded: it rides the schedule that
+  # already exists, runs once a day OFF the PR path, and is capped at 5 minutes.
+  #
+  # `if:` matches `integrated-tree` — schedule and manual only. This workflow
+  # also fires on `push`, and a throughput metric on every push would be both
+  # noise and a contribution to the contention it is measuring.
+  #
+  # EXIT 2 IS EXPECTED AND CORRECT when the API cannot be read, when the data is
+  # truncated, or when the window is empty. It reddens this nightly job and gates
+  # nothing — the same ruling as the two jobs above. NOTE the consequence, which
+  # is deliberate rather than overlooked: a genuinely quiet window reddens this
+  # job too. That is the honest trade, because the failure this metric exists to
+  # prevent is a blank number being read as "no change".
+  #
+  # No `npm ci` — Node builtins and `fetch` only. FIVE jobs run .github/scripts
+  # code without an install and this is one of them. PR #742's `js-yaml`
+  # devDependency was argued for a guard in a job that installs; it is not
+  # permission for this one.
+  ci-throughput:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Linux, X64, askturret]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # Reading workflow runs and their jobs IS the measurement.
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Self-tested first, like every guard here. What it pins is the property a
+      # metric loses silently: that NO DATA and CANNOT CHECK stay
+      # distinguishable, and that the numbers can move in BOTH directions.
+      - name: Self-test the throughput metric
+        run: node .github/scripts/ci-throughput-metric.test.mjs
+
+      - name: Publish CI throughput
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node .github/scripts/ci-throughput-metric.mjs --days 7

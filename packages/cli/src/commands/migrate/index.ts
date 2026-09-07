@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 /**
- * `npx @askturret/mcp migrate` (#62, §16).
+ * `npx @askturret/mcp-cli migrate` (#62, §16).
  *
  * The process shell: parse flags, read files, call the engine, print, exit.
  * Every decision lives in `registry.ts` (what changed), `engine.ts` (how to
@@ -295,7 +295,7 @@ export async function migrateCommand(args: readonly string[]): Promise<void> {
 
 function printHelp(): void {
   console.log('');
-  console.log('  npx @askturret/mcp migrate [options]');
+  console.log('  npx @askturret/mcp-cli migrate [options]');
   console.log('');
   console.log('  --from <version>          Migrate from this version');
   console.log('  --to <version>            Migrate to this version');

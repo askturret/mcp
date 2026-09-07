@@ -44,7 +44,7 @@ the first time in the release that removes it.
 **3. A breaking entry links its migration.** Every `Removed` entry, and every
 `Changed` entry that breaks a covered surface, links the corresponding snippet
 in [`docs/migrations/`](docs/migrations/README.md) — which is generated from the
-rules `npx @askturret/mcp migrate` actually executes, so the link cannot point
+rules `npx @askturret/mcp-cli migrate` actually executes, so the link cannot point
 at a guide describing a change the tool does not make.
 
 ```markdown
@@ -52,7 +52,7 @@ at a guide describing a change the tool does not make.
 - `audit.durability` on `PresetConfiguration`, replaced by `audit.sink.durable`.
   **Breaking — core public types** (compatibility-policy §1).
   Migration: [0.x → 1.0](docs/migrations/README.md#0x--10) —
-  `npx @askturret/mcp migrate --from 0.x --to 1.0`
+  `npx @askturret/mcp-cli migrate --from 0.x --to 1.0`
 ```
 
 ---
@@ -128,7 +128,7 @@ written and had no way to notice it had stopped being true.
   change: it publishes the rules that will govern them.
 - `docs/ownership.md` and `.github/CODEOWNERS` — repository ownership boundaries.
 - `.gitattributes` — `merge=union` for append-only audit logs.
-- `npx @askturret/mcp migrate` and `docs/migrations/` — version-to-version
+- `npx @askturret/mcp-cli migrate` and `docs/migrations/` — version-to-version
   migration tooling. No published migration exists yet, because no release has
   broken a published surface; the tooling ships first so the first breaking
   change arrives with its migration rather than after it.

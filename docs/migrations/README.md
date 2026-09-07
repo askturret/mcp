@@ -6,8 +6,8 @@
 Every entry here is generated from the same rules `migrate` executes, so a guide cannot describe a change the tool does not make.
 
 ```bash
-npx @askturret/mcp migrate --check              # what would change, changes nothing
-npx @askturret/mcp migrate --from 0.9 --to 1.0  # apply
+npx @askturret/mcp-cli migrate --check              # what would change, changes nothing
+npx @askturret/mcp-cli migrate --from 0.9 --to 1.0  # apply
 ```
 
 ## Published
@@ -35,5 +35,5 @@ Reference: https://github.com/askturret/mcp/issues/59
 `migrate` applies 1 of these; the other 2 are reported for you to handle, because they touch code or config that is yours rather than ours.
 
 ```bash
-npx @askturret/mcp migrate --from 0.x --to 1.0 --check
+npx @askturret/mcp-cli migrate --from 0.x --to 1.0 --check
 ```

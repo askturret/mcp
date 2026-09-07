@@ -39,6 +39,34 @@
  * Both are real. Neither implies the other, and dropping either leaves a whole
  * class of divergence unobserved.
  *
+ * ## The TAG axis is DELIBERATELY UNMONITORED (#660, recorded by #747)
+ *
+ * TAG -> RELEASE — a tag with no Release — is NORMAL and must not be reported.
+ * `docs/releasing.md` sequences a release as: tag the merge commit, THEN publish
+ * a Release from that tag. So that state is one the release process CREATES ON
+ * EVERY RELEASE, in the window between those two acts, and a monitor on the pair
+ * would fire mid-release, every release. It is ordinary outside releases too —
+ * anyone who can push can tag, and a tag triggers nothing that ships.
+ *
+ * RELEASE -> TAG is degenerate rather than declined: a Release is created FROM a
+ * tag and GitHub creates the tag when absent, so there is no state to observe.
+ * TAG -> REGISTRY is covered transitively by the two directions above.
+ *
+ * The axis is not unwatched, only not watched HERE: `tag-readiness-advisory.yml`
+ * runs the readiness matrix on `v*` tags and writes its verdict to the job
+ * summary — advisory by necessity, since Actions runs after the ref exists and
+ * cannot un-create a tag.
+ *
+ * An "old tag with no Release" heuristic was considered and rejected: it needs a
+ * time threshold, which is a tunable that decays, to detect an abandoned release
+ * attempt that costs nothing.
+ *
+ * This paragraph exists because the decision lived only in a #660 comment and in
+ * no file — so the next reader looking at two directions here would see an
+ * obvious third and re-propose it, having no way to know it was already ruled
+ * on. It constrains this reconciler alone, which is why it is a header comment
+ * and not an ADR.
+ *
  * ## The baseline, and why it is entries rather than a cutoff
  *
  * `0.1.0` sits on the registry for every public package and no `v0.1.0` Release

@@ -1025,6 +1025,100 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
 }
 
 
+// ---------------------------------------------------------------------------
+// The agent-facing copy names every required-on-added field (#666).
+//
+// The gap this pins is not a bad row — it is an instruction set that is
+// complete-looking and wrong, which produced three rejected PRs (#665, #667,
+// #715) from three agents who each followed it exactly. The check exists so the
+// copy cannot drift from REQUIRED_ON_ADDED_FIELDS; these arms are what stop the
+// check itself becoming decoration.
+//
+// The pair is the point. A one-sided assertion is satisfied by a validator that
+// flags every agent file unconditionally, which would be a different and wrong
+// check.
+// ---------------------------------------------------------------------------
+{
+  /** A fixture root carrying a corpus AND an agent-instruction surface. */
+  const withAgents = (agentFiles) => {
+    const dir = withCorpus({ 'a.jsonl': line(row()) });
+    if (agentFiles !== null) {
+      mkdirSync(join(dir, '.operum', 'agents'), { recursive: true });
+      for (const [name, text] of Object.entries(agentFiles)) {
+        writeFileSync(join(dir, '.operum', 'agents', name), text);
+      }
+    }
+    return dir;
+  };
+  const runWithAgents = (agentFiles) => {
+    const dir = withAgents(agentFiles);
+    try {
+      return check(dir, { addedFiles: new Set([rel('a.jsonl')]) });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const AGENT_GAP = /never mentions `templates_revision`/;
+
+  const silent = runWithAgents({ 'engineer.md': '# Engineer\n\nNothing about captures here.\n' });
+  is(
+    'an agent file that never names templates_revision is a PROBLEM',
+    errorsMatching(silent, AGENT_GAP).length,
+    1,
+  );
+  is(
+    '...and the message names the offending file',
+    /\.operum\/agents\/engineer\.md/.test(errorsMatching(silent, AGENT_GAP)[0] ?? ''),
+    true,
+  );
+  is(
+    '...and tells the reader how to obtain the value, not just that it is missing',
+    /git hash-object/.test(errorsMatching(silent, AGENT_GAP)[0] ?? ''),
+    true,
+  );
+
+  const stated = runWithAgents({
+    'engineer.md': '# Engineer\n\nInclude `templates_revision` on every row you add.\n',
+  });
+  is(
+    'THE PAIR: the same file NAMING the field is clean',
+    errorsMatching(stated, AGENT_GAP).length,
+    0,
+  );
+
+  const several = runWithAgents({
+    'engineer.md': 'names templates_revision\n',
+    'tester.md': 'says nothing\n',
+    'architect.md': 'also says nothing\n',
+  });
+  is(
+    'every agent file is checked, not only the first',
+    errorsMatching(several, AGENT_GAP).length,
+    2,
+  );
+
+  const none = runWithAgents(null);
+  is(
+    'a checkout with NO agent surface is not an error — there is nothing to keep in step',
+    errorsMatching(none, AGENT_GAP).length,
+    0,
+  );
+  is(
+    '...and it says so in a note rather than passing silently',
+    none.notes.some((n) => /agent-instruction check skipped/.test(n)),
+    true,
+  );
+
+  // The real repository must satisfy its own rule — the arm that would have
+  // caught this shipping half-done, with the check added and the copy not.
+  const real = check(join(here, '..', '..'), { addedFiles: new Set() });
+  is(
+    'THE REAL REPOSITORY: every .operum/agents/*.md names the field',
+    errorsMatching(real, AGENT_GAP).length,
+    0,
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
 

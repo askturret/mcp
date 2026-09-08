@@ -55,7 +55,7 @@ AskTurret MCP develops through a series of delivery slices, each focused on a sp
 
 **Goal:** Multiple sources and executors. Teams can compose OpenAPI, framework routes, custom handlers, and HTTP proxies in one server.
 
-- Additional framework adapters (Fastify, Koa, Hono)
+- Additional framework adapters (Koa, Hono)
 - HTTP proxy executor for legacy/remote APIs
 - Explicit TypeScript/Zod operation definitions
 - Overlay system for non-invasive customization
@@ -79,6 +79,38 @@ AskTurret MCP develops through a series of delivery slices, each focused on a sp
 - Production reference implementations
 
 **Timeline:** H2 2027
+
+---
+
+## Demand-driven — on the roadmap, deliberately undated
+
+**This section has no Timeline, and that is the point.** Everything above is a
+dated commitment. What follows is a direction we think is right and have chosen
+*not* to schedule: we build these when someone actually needs them, rather than
+by a date.
+
+If you are waiting on one of these, say so — that is precisely the signal that
+moves it. File an issue or join the community; demand is the scheduling
+mechanism here, not a quarter.
+
+- **GraphQL source** — discover operations from a GraphQL schema
+- **gRPC source** — discover operations from service definitions
+
+**You do not have to wait for us.** The **plugin API for custom sources and
+executors** (v0.4) is the seam these would be built on, and it is a published
+extension point rather than a private one — so either of these can be built
+against it without a change to the core. That is what makes this section honest
+rather than a parking lot: the capability is planned, and only the specific
+implementations are demand-driven.
+
+These correspond to the `📋 Roadmap (future)` rows in the README's
+[Supported Sources](../README.md#supported-sources) table, as distinct from the
+`📋 Roadmap (v0.4)` rows, which are scheduled above.
+
+> **Adding something here?** Keep it out of the dated phases and do not give
+> this section a `Timeline:`. An item placed under a phase inherits that phase's
+> date, which would turn "we will build this on demand" into "we promised this
+> by Q2 2027" — the inversion this section exists to prevent.
 
 ---
 

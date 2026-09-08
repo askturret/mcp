@@ -182,6 +182,46 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
   const realMd = readFileSync(join(REPO_ROOT, 'docs', 'compatibility.md'), 'utf-8');
   check('every declared mirror is carried by the .md', flagged.every((n) => realMd.includes(n)), true);
 
+  // --- THE INVERSE, AGAINST THE REAL TREE (#776) ----------------------------
+  //
+  // The rule itself lives in the guard — it refuses a PRESENT inconsistency, not
+  // an absent flag, so unlike #773's draft it refuses nothing valid. What belongs
+  // HERE is the fact about THIS repository: that the rule has live subjects and
+  // is green for a reason rather than because nothing exercises it.
+  const allNotes = [];
+  const walkNotes = (n, p) => {
+    if (n === null || typeof n !== 'object') return;
+    if (Array.isArray(n)) return n.forEach((x, i) => walkNotes(x, `${p}[${i}]`));
+    if (typeof n.note === 'string') allNotes.push({ path: p || 'contract', note: n.note, flag: n.mirroredInMd === true });
+    Object.entries(n).forEach(([k, v]) => walkNotes(v, p ? `${p}.${k}` : k));
+  };
+  walkNotes(realJson, '');
+
+  const verbatim = allNotes.filter((n) => realMd.includes(n.note));
+  check('#776: the real contract has notes appearing verbatim in the .md, so the inverse is not vacuous', verbatim.length > 0, true);
+  check('#776: ...and every one of them declares the mirror', verbatim.every((n) => n.flag), true);
+  // The two directions must agree: a flagged note that is NOT verbatim would
+  // already fail check E, and a verbatim note that is NOT flagged now fails the
+  // guard. Asserting the counts match is what makes it a biconditional rather
+  // than two rules that happen to point the same way.
+  check('#776: ...and the flagged set and the verbatim set are the SAME set', verbatim.length, flagged.length);
+
+  // QUESTION (b), ANSWERED IN THE TREE RATHER THAN LEFT UNSTATED.
+  //
+  // The inverse has no minimum length, and that is a decision resting on a
+  // measurement: the shortest note in this contract is 23 characters — `The
+  // version CI runs on.` — a complete sentence occurring exactly once in the .md,
+  // and itself one of the two deliberately mirrored notes. A threshold set
+  // anywhere above 23 would exclude a live subject.
+  //
+  // Collision risk belongs to FRAGMENTS, and this contract contains none. This
+  // floor is the tripwire: adding a genuinely short note reddens HERE and forces
+  // the boundary to be re-decided deliberately, rather than crossing it in
+  // silence — which is how six copies drifted in the first place (#700).
+  const shortest = Math.min(...allNotes.map((n) => n.note.length));
+  check('#776: no note is short enough for byte-identity to be plausibly coincidental', shortest >= 20, true);
+  check('#776: ...and the measured floor is still the sentence this boundary was set from', shortest, 23);
+
   // #700 finding 2: the overclaim is GONE and must not come back. "Not accepted
   // as input" was false for two of the three rows it covered — Node 18.x is
   // warned about by npm rather than refused, and the TypeScript row has no
@@ -351,6 +391,57 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
     'an UNFLAGGED note absent from the .md is NOT compared',
     run(fixture({ contract: withNote({}), md: 'Matrix version `9.9.9` >=20.0.0' })).code,
     EXIT_OK,
+  );
+
+  // -------------------------------------------------------------------------
+  // THE INVERSE — the other half of the biconditional (#776).
+  //
+  // Above, the flag is OPT-IN, so coverage is exactly as good as whoever
+  // remembered to set it: a note that OUGHT to be mirrored but is added
+  // unflagged is invisible. These four cases are the full truth table for one
+  // note, and it is the table rather than any single case that pins the rule.
+  //
+  //            in .md    flagged     verdict
+  //            yes       yes         OK          (the mirror, declared)
+  //            yes       no          DIVERGENCE  <- #776, previously silent
+  //            no        yes         DIVERGENCE  (asserted above)
+  //            no        no          OK          (paraphrase, not compared)
+  // -------------------------------------------------------------------------
+  const undeclared = run(fixture({ contract: withNote({}), md: `Matrix version \`9.9.9\` >=20.0.0 ${MIRROR}` }));
+  check('#776: a note ALREADY verbatim in the .md but UNFLAGGED now FAILS', undeclared.code, EXIT_DIVERGENCE);
+  check('#776: ...and names the note, not merely the file', undeclared.out.includes(MIRROR) || undeclared.out.includes('runtime.node'), true);
+  // A red is only useful if it says WHICH object. `runtime.node` is the path the
+  // reader edits; a message naming only the file would send them to scan 13
+  // notes by hand for the one that matches.
+  check('#776: ...and names the PATH to the object carrying it', undeclared.out.includes('runtime.node'), true);
+  check(
+    '#776: ...and tells the reader the flag is free because the copies already agree',
+    /already agree|already matches/.test(undeclared.out),
+    true,
+  );
+
+  // THE CONTROL, and it is what stops the case above being satisfied by a rule
+  // that simply fails any note present in the .md. Same note, same .md, flag
+  // set: the mirror is declared, so there is nothing to report.
+  check(
+    '#776: ...while the SAME note WITH the flag passes — it is the declaration that is missing, not the match',
+    run(fixture({ contract: withNote({ mirroredInMd: true }), md: `Matrix version \`9.9.9\` >=20.0.0 ${MIRROR}` })).code,
+    EXIT_OK,
+  );
+
+  // NO LENGTH THRESHOLD — asserted, because "we chose not to add one" is
+  // otherwise indistinguishable from "nobody considered it". A 23-character note
+  // is the real contract's shortest and IS mirrored, so the rule must reach it.
+  const SHORT = 'The version CI runs on.';
+  check(
+    '#776: a SHORT note is subject to the rule too — no minimum length is applied',
+    run(
+      fixture({
+        contract: { matrixVersion: '9.9.9', runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node', note: SHORT } } },
+        md: `Matrix version \`9.9.9\` >=20.0.0 ${SHORT}`,
+      }),
+    ).code,
+    EXIT_DIVERGENCE,
   );
 
   // A flag on an object with no note reads as covered and is covered by nothing.

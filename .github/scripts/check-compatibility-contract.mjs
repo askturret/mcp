@@ -418,6 +418,75 @@ export function main(argv) {
   };
   collectMisdeclared(contract, '');
 
+  // THE INVERSE: A NOTE ALREADY MIRRORED MUST SAY SO (#776).
+  //
+  // The block above compares only notes carrying the flag, and the flag is
+  // OPT-IN — so coverage is exactly as good as whoever remembered to set it.
+  // That RELOCATES the #700 class rather than closing it: from "nobody compares
+  // the copies" to "nobody flags the copies". The relocation was monotone and
+  // honest, but the second half of the biconditional is what closes it.
+  //
+  // WHAT THIS COMPARES, AND WHY IT CAN BE EXACT WHERE BYTE-EQUALITY OF NOTES
+  // CANNOT. It does not compare PROSE — the block above explains why that would
+  // be wrong, since most pairs are paraphrase by design and eleven of thirteen
+  // would redden a correct tree. It compares THE RELATIONSHIP between a fact and
+  // its declaration: if the two documents ALREADY agree byte-for-byte, then the
+  // relationship exists whether or not anyone declared it, and an undeclared one
+  // is a mirror nothing is watching.
+  //
+  // WHY IT IS SAFE HERE IN THE GUARD, RATHER THAN IN THE SELF-TEST — and the
+  // #773 precedent immediately above genuinely does not transfer, though it
+  // looks like it should. #773's first draft refused a contract with NO mirrored
+  // note. Absence is a LEGITIMATE STATE that most contracts are in, so refusing
+  // it refused valid inputs, and ten fixtures went to cannot-check. This refuses
+  // an INCONSISTENCY that is PRESENT: two documents that already agree while the
+  // contract says nothing about it. No contract needs to be in that state, so
+  // nothing valid is refused by forbidding it.
+  //
+  // Measured before choosing, the same way #773's draft was caught: with this in
+  // the guard the self-test is 98/0 and the real tree is green. Zero fixtures are
+  // affected, because no fixture's `.md` carries a fixture note verbatim.
+  //
+  // NO MINIMUM LENGTH, AND THE BOUNDARY IS MEASURED RATHER THAN ASSUMED (#776
+  // question b). The worry is that a SHORT shared phrase collides innocently and
+  // this demands a flag for a mirror nobody intended. Measured 2026-09-08 over
+  // all 13 notes: the shortest is 23 characters — `The version CI runs on.` —
+  // which is a complete sentence, occurs exactly once in the .md, and is itself
+  // one of the two deliberately mirrored notes.
+  //
+  // So the "100+ character sentence" intuition this rule was proposed under is
+  // NOT true of the tree it runs on, and a threshold set anywhere above 23 would
+  // exclude a live subject and halve the rule's coverage. Collision risk belongs
+  // to FRAGMENTS — `LTS` occurs twice in the .md, `supported` fourteen times —
+  // and no note is a fragment. The floor is asserted against the real contract in
+  // the self-test, so adding a genuinely short note re-opens this question
+  // instead of silently crossing the boundary.
+  //
+  // And if a collision ever did occur, the remedy is free and correct: the note
+  // already matches, so setting the flag costs nothing and states a true thing.
+  const collectUndeclaredMirror = (node, path) => {
+    if (node === null || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => collectUndeclaredMirror(item, `${path}[${i}]`));
+      return;
+    }
+    if (typeof node.note === 'string' && node.mirroredInMd !== true && md.includes(node.note)) {
+      // NAMES THE NOTE, not just the path. The path is what a reader edits, but
+      // notes here run to 736 characters, so quote a bounded excerpt: enough to
+      // identify WHICH sentence without pasting a paragraph into a CI log.
+      const excerpt = node.note.length > 60 ? `${node.note.slice(0, 60)}…` : node.note;
+      divergences.push(
+        `${path || 'contract'}: its \`note\` ("${excerpt}") appears VERBATIM in docs/compatibility.md but ` +
+          `does not carry \`mirroredInMd: true\`. The two copies already agree, so the mirror exists — it ` +
+          `is just not declared, which means nothing compares them and the next edit to either can ` +
+          `separate them silently. Add the flag (it is free: the note already matches), or reword one ` +
+          `copy if the match was not intended.`,
+      );
+    }
+    for (const [k, v] of Object.entries(node)) collectUndeclaredMirror(v, path ? `${path}.${k}` : k);
+  };
+  collectUndeclaredMirror(contract, '');
+
   // NO VACUITY REFUSAL HERE, and the first draft had one. A contract with no
   // mirrored note is legitimate — every synthetic fixture in the self-test is
   // one, and refusing them turned ten passing cases into cannot-check. The

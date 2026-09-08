@@ -592,11 +592,43 @@ function runGuard(repoRoot, binDir) {
 // witness that it can now fail on the condition it exists to detect — the thing
 // the presence check never had, and the reason this issue exists at all.
 //
-// Every arm below was confirmed to redden when the currency block is removed;
-// nothing here passes for the reason the OLD guard would have passed.
+// WHAT REDDENS, AND WHAT DOES NOT — corrected in #704, because the sentence
+// that stood here claimed BOTH more than was true and something that is false.
+//
+// It said: "Every arm below was confirmed to redden when the currency block is
+// removed; nothing here passes for the reason the OLD guard would have passed."
+// Both clauses fail. Measured by mutation rather than argued:
+//
+//   disabling the comparison loop only ........... 8 arms redden
+//   also disabling the root-mirror read .......... 10 arms redden
+//
+// NO COUNT IS STATED ABOVE THIS LINE ON PURPOSE, and the two figures are why:
+// "the currency block" is TWO blocks — the root-mirror read and the per-package
+// comparison — so the number depends on which you remove. A sentence asserting
+// one number was going to be wrong under some reading of its own key term.
+//
+// AND NO LIST OF ARM NAMES, which was the other candidate remedy. An enumerated
+// list of arms is a hand-maintained parallel copy that nothing compares — the
+// exact class #700 and #771 are about — and it would drift silently the first
+// time an arm is renamed. Categories survive a rename; a name list does not.
+//
+// So the arms that do NOT redden are marked WHERE THEY ARE, each with its
+// reason, and they fall into four kinds:
+//
+//   CONSTANT    asserts a constant, not behaviour
+//   OLD-PASSES  the old presence-only guard exits 0 here too — this is the
+//               clause that was outright false, and it has two members
+//   VACUOUS     the scenario cannot arise once the block is gone, so there is
+//               nothing left for the arm to observe
+//   TEST-LOCAL  computed in this file; never calls main()
+//
+// Every one of those arms is legitimate and none should be deleted. What was
+// wrong was the sentence, not the coverage.
 // ---------------------------------------------------------------------------
 {
+  // CONSTANT — asserts the constant, not behaviour. Does not redden (#704).
   check('#587: NOTICE and LICENSE are the mirrored entries', MIRRORED_ROOT_ENTRIES.join(','), 'NOTICE,LICENSE');
+  // CONSTANT — same: a fact about the list, not about what the guard does.
   check(
     '#587: README is NOT mirrored — it is per-package by design',
     MIRRORED_ROOT_ENTRIES.includes('README.md'),
@@ -607,6 +639,8 @@ function runGuard(repoRoot, binDir) {
   {
     const dir = fixture({ pkg: PUBLIC_MANIFEST });
     const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+    // OLD-PASSES — the presence-only guard exits 0 here too. This is the arm
+    // that made the old sentence's second clause false (#704).
     check('#587: copies byte-identical to the root exit 0', r.code, EXIT_OK);
   }
 
@@ -618,6 +652,23 @@ function runGuard(repoRoot, binDir) {
     check('#587: a NOTICE that ships but has DRIFTED is a divergence', r.code, EXIT_DIVERGENCE);
     check('#587: ...and the message says DRIFTED, not missing', /NOTICE ships but has DRIFTED/.test(r.out), true);
     check('#587: ...and names the package', /@scope\/pkg/.test(r.out), true);
+
+    // #704: THE FRAMING, not just the detail. Before this the operator read
+    // 'a required file is missing from the PUBLISHED tarball' about a file that
+    // is PRESENT, and was told to add it to `files` — where it already was.
+    // The detail line was always right; the two lines around it were not.
+    check('#704: a drift finding is headed DRIFT, not missing', /TARBALL DRIFT/.test(r.out), true);
+    check(
+      '#704: ...and does NOT claim the file is missing from the tarball',
+      /missing from the PUBLISHED tarball/.test(r.out),
+      false,
+    );
+    check(
+      '#704: ...and does NOT tell the operator to edit `files`, which would fix nothing',
+      /add the file to the package/.test(r.out),
+      false,
+    );
+    check('#704: ...and gives the fix that applies — copy the root file over', /Copy the root/.test(r.out), true);
   }
 
   // LICENSE gets the same treatment — different risk profile, same comparison.
@@ -674,6 +725,9 @@ function runGuard(repoRoot, binDir) {
     const dir = fixture({ pkg: PUBLIC_MANIFEST }, {}, { pkg: { NOTICE: 'STALE\n' } });
     const withoutNotice = COMPLIANT.filter((f) => f !== 'NOTICE');
     const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(withoutNotice)));
+    // VACUOUS + OLD-PASSES — with the block gone the drift scenario cannot arise,
+    // so the first has nothing left to observe; the second is what the OLD
+    // presence-only guard already reported (#704).
     check('#587: an ABSENT NOTICE reports presence only, not drift too', /NOTICE ships but has DRIFTED/.test(r.out), false);
     check('#587: ...and still reports it as not in the tarball', /NOTICE is NOT in the published tarball/.test(r.out), true);
   }
@@ -691,7 +745,9 @@ function runGuard(repoRoot, binDir) {
         return !rootNotice.equals(n) || !rootLicense.equals(l);
       })
       .map((p) => p.name);
-    check('#587: every real packaged NOTICE and LICENSE matches the root', drifted.join(', ') || 'none', 'none');
+    // TEST-LOCAL — computed in this file; never calls main(), so no mutation of
+  // the guard can reach it (#704).
+  check('#587: every real packaged NOTICE and LICENSE matches the root', drifted.join(', ') || 'none', 'none');
   }
 }
 

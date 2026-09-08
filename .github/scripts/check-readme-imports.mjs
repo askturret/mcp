@@ -122,11 +122,28 @@ export const EXIT_CANNOT_CHECK = 2;
  * parses JSX or module semantics — a fence's contents are scanned only for
  * `import { … } from` statements, so a superset tag admits no new construct.
  *
- * MEASURED BEFORE WIDENING rather than assumed safe: all 20 imports currently
- * found across this repository's markdown resolve to `@askturret/*`, and the
- * clean-room builder already installs third-party specifiers deliberately (the
- * `wanted` set below). So a ```tsx example importing someone else's package was
- * an anticipated case before this change rather than one it introduces.
+ * MEASURED BEFORE WIDENING rather than assumed safe, on the two grounds that
+ * actually hold:
+ *
+ *   - ZERO LIVE MEMBERS. All 20 imports currently found across this repository's
+ *     markdown resolve to `@askturret/*` — 7 distinct specifiers, none
+ *     third-party. Widening admits nothing that exists today.
+ *   - THE CLASS PRE-EXISTS, which is the stronger reason. A ```ts example
+ *     importing `react` fails identically on main, because ```ts was already
+ *     read and `react` is not installed into the clean room. So this change
+ *     ENLARGES that surface rather than creating it.
+ *
+ * Third-party imports resolve when the package is a WORKSPACE DEPENDENCY — the
+ * `wanted` set below is built from the workspace packages' own `dependencies`
+ * and `peerDependencies`, and is exactly five names today. It is NOT a set of
+ * third-party specifiers harvested from markdown, and an earlier draft of this
+ * paragraph said it was. A ```tsx example importing `react` would still fail the
+ * probe, since `react` is not among those five.
+ *
+ * That correction is recorded rather than quietly applied because #683 exists
+ * precisely because a header claimed a reach it did not have. A replacement
+ * claiming a MECHANISM it does not have would have been the same defect in a new
+ * costume, in the same file, in the paragraph fixing it.
  */
 export const CODE_FENCES = Object.freeze([
   'ts',

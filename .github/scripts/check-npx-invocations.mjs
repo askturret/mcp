@@ -38,6 +38,45 @@
  * It runs offline, on every PR, and cannot be reddened by anyone else's outage.
  *
  * ---------------------------------------------------------------------------
+ * WHAT IS STILL VERIFIED BY NOTHING: INSTALL, AND EXECUTE (#766)
+ * ---------------------------------------------------------------------------
+ *
+ * The section above names a SCHEDULED OBSERVER as where the networked question
+ * gets answered. It is easy to finish that paragraph believing the registry
+ * side is therefore covered. IT IS NOT — and this block is here so that a
+ * reader of this guard learns it FROM the guard, rather than from a closed
+ * issue.
+ *
+ * `check-release-registry-reconcile.mjs` asks whether a version is PRESENT: one
+ * metadata GET per package against the registry. It never runs an install, and
+ * it never executes what an install would produce. Neither does anything else
+ * in this repository. What each check actually proves:
+ *
+ *     an invocation names a package this workspace publishes  ->  this guard
+ *     a released version is PRESENT on the registry           ->  the reconciler
+ *     the README's inlined spec SERVES once mounted           ->  the quick-start guards
+ *     the documented install SUCCEEDS, and the result RUNS    ->  NOTHING
+ *
+ * The last row is the residual, and #766 retires WITHOUT it being built. This
+ * paragraph IS that record. A residual whose only home is a merged pull-request
+ * body is one no future reader ever meets — which is the failure #766 was filed
+ * about, one level up.
+ *
+ * It is not speculative. QA observed on 2026-09-08 that the CLI PUBLISHED to
+ * the registry prints a different policy-summary wording from the one
+ * `README.md` documents, under the SAME version string, because a rename merged
+ * without a version bump. The workspace half of that is verified here: the
+ * renderer and both READMEs agree with each OTHER, so the divergence is
+ * reachable ONLY by installing from the registry and running it. The renderer's
+ * own test asserts against the workspace copy, so it is green and structurally
+ * cannot see this.
+ *
+ * The missing check is install-and-execute. Its open question is CADENCE rather
+ * than mechanism: it cannot sit on the PR path, for the same reason the
+ * reconciler does not, so it belongs with whoever next touches the release
+ * schedule.
+ *
+ * ---------------------------------------------------------------------------
  * WHAT IT CHECKS, AND WHAT IT DOES NOT
  * ---------------------------------------------------------------------------
  *
@@ -97,8 +136,16 @@ const TEXT_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.cjs', '.js', '.yml', '.
  *
  * That is not a hypothetical shape. It is `README.md`'s primary quick-start
  * install line, and it was the ONLY line in the repository the old pattern
- * missed: 62 lines issue one of these commands and name an `@askturret`
- * package, the old pattern matched 61.
+ * missed. Measured on the PRE-CHANGE tree (`origin/main` at 13684c6): 61 lines
+ * issue one of these commands and name an `@askturret` package; the old pattern
+ * matched 60 of them; this one matches all 61. Exactly one line gained —
+ * `README.md:21` — and no remainder.
+ *
+ * MEASURE THIS AGAINST THE PRE-CHANGE TREE, which is what those figures are.
+ * Counting on the post-change tree gives a larger number, because the examples
+ * written in THIS comment are themselves lines containing a command and an
+ * `@askturret` specifier, and the scan reads `.mjs` files including this one.
+ * That is how the figures first committed here came to be one too high.
  *
  * So the most-read install line in the project was the one line this guard
  * could not see, and a mutation replacing its package with a name that does not

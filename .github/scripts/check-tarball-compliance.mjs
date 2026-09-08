@@ -49,6 +49,47 @@
  * check-platform-claims.mjs where an upstream outage must not redden every PR.
  * There is no network here: npm packs from the local tree.
  *
+ * WHAT IT PACKS IS A FRESH TARBALL, NOT THE PUBLISHED BYTES (#752)
+ * ---------------------------------------------------------------------------
+ * #670's second acceptance item asked for the assertion to run against "the
+ * tarballs that will actually be published, not a fresh pack that might
+ * differ", and added: "If that is impractical, say so and record why, rather
+ * than substituting a weaker check silently." This section is that record. It
+ * was substituted, and until now it was not said.
+ *
+ * IT IS IMPRACTICAL AT THIS SEAM FOR A STRUCTURAL REASON, NOT A COST ONE:
+ * ON THE RELEASE PATH THERE ARE NO PUBLISHED BYTES TO READ YET. The gate runs
+ * between `npm run build` and `npm publish`, which is the whole point of #670 —
+ * a refusal has to land before anything is live, because npm versions are
+ * immutable and the only remedy is burning the next version number nine times.
+ * So "assert the published tarball" and "assert before publishing" cannot both
+ * hold at one step, and #670 chose the second deliberately.
+ *
+ * THAT POSITION IS ASSERTED, NOT ASSUMED. `check-release-gate-wiring.test.mjs`
+ * pins `build < gate < publish` by index within the publish job, so if the gate
+ * is ever moved after the publish this justification fails LOUDLY rather than
+ * quietly becoming untrue. That assertion is what makes this paragraph safe to
+ * rely on.
+ *
+ * WHAT THE FRESH PACK THEREFORE DOES AND DOES NOT PROVE. It proves the tree
+ * about to be published packs correctly, from the same tree and the same build
+ * that `npm publish` will use moments later in the same job. It does NOT prove
+ * the registry received those bytes — nothing at this seam can, because the
+ * publish has not happened. That is a different question with its own
+ * mechanism: `check-release-registry-reconcile.mjs`, nightly, reading live
+ * registry state.
+ *
+ * A POST-PUBLISH ASSERTION AGAINST THE REAL BYTES WAS CONSIDERED AND DECLINED,
+ * on #660, and the reasoning is recorded here so it is not re-derived. It is
+ * constructible — `needs: [publish]` with `if: always()` defeats the skip — and
+ * it would cut detection latency. It was declined because it would be a second
+ * mechanism proving what the nightly reconciler already proves, because a
+ * release here is a supervised event rather than an unattended one, and because
+ * it could not replace the nightly regardless: a manual recovery publish happens
+ * off the release path entirely, where no post-publish step would observe it.
+ * If detection latency ever becomes the binding problem, that is the change to
+ * make. It is not the binding problem now.
+ *
  * ORDERING — THIS GUARD MUST RUN AFTER THE BUILD.
  * ---------------------------------------------------------------------------
  * `npm pack` reports dist/ only if the package has actually been built. An

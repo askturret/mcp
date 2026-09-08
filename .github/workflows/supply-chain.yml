@@ -290,7 +290,7 @@ jobs:
       # moved: it is the cheapest refusal available and catches a committed
       # regression before merge. This one proves the release tree, which is a
       # different tree built on a different runner.
-      - name: Published tarballs carry README, LICENSE and NOTICE
+      - name: Packed tarballs carry README, LICENSE and NOTICE
         run: node .github/scripts/check-tarball-compliance.mjs .
 
       # --provenance requires id-token: write above and a registry that accepts

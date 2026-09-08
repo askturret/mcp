@@ -151,6 +151,89 @@ try {
     const badVersioned = fixture('bad-versioned', { docs: { 'a.md': `npx ${UNPUBLISHED}@0.1.2 migrate\n` } });
     check('...and a versioned UNPUBLISHED name is still caught', runGuard(badVersioned).status === EXIT_UNKNOWN_PACKAGE);
 
+    // --- THE CO-INSTALLED DEPENDENCY (#766) ----------------------------------
+    //
+    // `npm install express @askturret/…` — the specifier is not the first
+    // argument. The pattern used to skip only FLAGS, so a bare package name
+    // ahead of ours ended the match and the invocation was never FOUND. An
+    // unfound invocation is indistinguishable from a file containing none, so
+    // this failed SILENT rather than loud.
+    //
+    // It is README.md's primary quick-start install line, and it was the only
+    // line in the repository the old pattern missed. Measured on the PRE-CHANGE
+    // tree (`origin/main` at 13684c6): 61 such lines, of which the old pattern
+    // matched 60 and this one matches all 61 — one gained, README.md:21, no
+    // remainder. The guard header carries the same figures and why they must be
+    // measured against the pre-change tree.
+    const coInstalledBad = fixture('co-installed-unpublished', {
+      docs: { 'README.md': `npm install express ${UNPUBLISHED}\n` },
+    });
+    check(
+      'a specifier AFTER a co-installed package is FOUND, and fails when unpublished',
+      runGuard(coInstalledBad).status === EXIT_UNKNOWN_PACKAGE,
+      runGuard(coInstalledBad).out.trim(),
+    );
+
+    // Without this the assertion above is also satisfied by a guard that fails
+    // on every co-installed line whatever it names — the tautology shape.
+    const coInstalledGood = fixture('co-installed-published', {
+      docs: { 'README.md': `npm install express ${PUBLISHED}\n` },
+    });
+    check(
+      '...and the SAME shape naming a PUBLISHED package passes',
+      runGuard(coInstalledGood).status === EXIT_OK,
+      runGuard(coInstalledGood).out.trim(),
+    );
+
+    // The skip admits ARGUMENTS, not arbitrary text. A `.*` here would report a
+    // package that is not being installed at all.
+    const notAnArgument = fixture('not-an-argument', {
+      docs: { 'a.md': `npm install express && echo ${UNPUBLISHED}\n` },
+    });
+    check(
+      'text after a shell operator is NOT read as an installed package',
+      runGuard(notAnArgument).status === EXIT_OK,
+      runGuard(notAnArgument).out.trim(),
+    );
+
+    // --- THE SAME RESIDUAL, FOR SCOPED AND VERSIONED NEIGHBOURS (#766) -------
+    //
+    // The skip run admits a flag, or a BARE package name. It admits neither an
+    // @-scoped name nor a versioned one, so a co-installed neighbour of either
+    // shape still ends the match and the specifier after it is never FOUND —
+    // the identical silent shape this change fixed for the plain case.
+    //
+    // That is a CONSEQUENCE OF THE DELIBERATE @-EXCLUSION documented on the
+    // pattern, not an oversight: nothing @-prefixed may be consumed by the skip,
+    // which is exactly what stops the skip swallowing the specifier itself. A
+    // widening would have to preserve that property, and there is nothing live
+    // to pay for it — on the pre-change tree the new pattern matches 61 of 61,
+    // remainder zero. So the limitation is PINNED rather than fixed, and these
+    // two cases redden the day someone widens the pattern without revisiting
+    // them, which is the point of writing them down as tests instead of prose.
+    //
+    // Exit 0 means NOT FOUND here, because the specifier names an UNPUBLISHED
+    // package — were it found, the guard would exit 1. The bare-neighbour case
+    // above is the control: same shape, neighbour written bare, exit 1. A guard
+    // that simply never fires cannot satisfy both.
+    const scopedNeighbour = fixture('scoped-neighbour', {
+      docs: { 'README.md': `npm install @types/node ${UNPUBLISHED}\n` },
+    });
+    check(
+      'KNOWN LIMITATION: an @-scoped co-installed neighbour hides the specifier — not found, so exit 0',
+      runGuard(scopedNeighbour).status === EXIT_OK,
+      runGuard(scopedNeighbour).out.trim(),
+    );
+
+    const versionedNeighbour = fixture('versioned-neighbour', {
+      docs: { 'README.md': `npm install express@^5 ${UNPUBLISHED}\n` },
+    });
+    check(
+      'KNOWN LIMITATION: a VERSIONED co-installed neighbour hides the specifier too',
+      runGuard(versionedNeighbour).status === EXIT_OK,
+      runGuard(versionedNeighbour).out.trim(),
+    );
+
     for (const cmd of ['npm install', 'npm i', 'yarn add', 'pnpm add']) {
       const root = fixture(`cmd-${cmd.replace(/\W+/g, '-')}`, { docs: { 'a.md': `${cmd} ${UNPUBLISHED}\n` } });
       check(`\`${cmd}\` is an invocation form too`, runGuard(root).status === EXIT_UNKNOWN_PACKAGE);

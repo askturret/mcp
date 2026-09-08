@@ -234,10 +234,26 @@ const TEXT_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.cjs', '.js', '.yml', '.
  * name, and closing it is what would reintroduce the false accusation above, so
  * it is accepted knowingly rather than overlooked.
  *
- * MEASURED before and after on the real tree: 61 invocations both ways, zero
- * differences. This is the status quo for every line that exists today; it
- * changes only the hazard cases, which are LATENT — no `@askturret` invocation
- * in the tree is followed by `_` or `.`.
+ * MEASURED BEFORE AND AFTER on the real tree: the two patterns match the SAME
+ * SET, with ZERO differences. That invariant is the load-bearing part and it
+ * does not move — the count under it does, and is scoped for the same reason
+ * the distribution above is: 61 both ways when this change was made, 63 both
+ * ways once this comment's own examples joined the tree. So this is the status
+ * quo for every line that exists today; it changes only the hazard cases.
+ *
+ * THOSE HAZARD CASES ARE LATENT. When this change was made, no `@askturret`
+ * invocation in the tree was followed by `_` or `.`. There is exactly ONE today
+ * and it is the unbackticked example in this comment — inert, for the reason
+ * given there: `mcp-cli` is published and the capture excludes the trailing dot.
+ *
+ * The scoping in this paragraph exists because the sentence it replaces said
+ * "no invocation in the tree is followed by `_` or `.`" in the PRESENT tense,
+ * and the paragraph 30 lines above had just made that false by adding the
+ * example. Correctly describing the observer effect in one paragraph while
+ * leaving a neighbour asserting the pre-observation state is the same reach
+ * failure one scale smaller (#805 review, second round). When scoping a figure,
+ * grep the whole comment for every other present-tense claim about the same
+ * population before pushing.
  */
 const INVOCATION =
   /\b(?:npx|npm\s+install|npm\s+i|yarn\s+add|pnpm\s+add)(?:\s+(?:--?[A-Za-z][\w-]*|[a-z0-9][\w.-]*))*\s+(@askturret\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)/g;

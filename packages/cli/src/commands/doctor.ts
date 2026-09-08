@@ -504,6 +504,45 @@ function analyzeOperation(
     }));
   }
 
+  // FIVE OF DOCTOR'S CODES ALSO EXIST IN THE COMPILER, MEANING SOMETHING ELSE:
+  //
+  //   MISSING_OPERATION_ID    MISSING_INPUT_SCHEMA   MISSING_OUTPUT_SCHEMA
+  //   MISSING_EFFECTS         DUPLICATE_OPERATION_ID
+  //
+  // Enumerated over doctor's 11 codes against the compiler's 12 — every pass
+  // under packages/core/src/compiler/passes/ that calls `warnings.warn`:
+  // `validate-invariants`, `resolve-identity` and `apply-overlays`. The set is
+  // named because the first version of this note walked only ONE of those
+  // passes and reported four; `DUPLICATE_OPERATION_ID` comes from
+  // `resolve-identity` and was missed. Re-walk rather than trusting this list.
+  //
+  // THE PATTERN: doctor models a SINGLE OpenAPI DOCUMENT, while a compiler code
+  // describes the compiled IR, which may compose several sources. Doctor's
+  // reading is the narrower one in every pair — for three of the five it is
+  // further scoped to an HTTP method, but that is a property of those three, not
+  // of the pattern. `DUPLICATE_OPERATION_ID` is the case that shows the
+  // difference: doctor means two operations in one document, the compiler means
+  // one id claimed by multiple SOURCES, which doctor has no notion of.
+  //
+  // THE SEVERITIES DISAGREE ON THREE: doctor publishes MISSING_OPERATION_ID,
+  // MISSING_OUTPUT_SCHEMA and DUPLICATE_OPERATION_ID as `error`; every compiler
+  // warning is a warning.
+  //
+  // NOTHING MERGES THE TWO TODAY — doctor builds findings from its own walk of
+  // the OpenAPI document, and compiler warnings go to the WarningCollector. This
+  // is a recorded fact, not a defect and not a prediction.
+  //
+  // IF compiler warnings are ever fed into this finding list, each of those five
+  // strings arrives with two meanings — three with two severities — and the
+  // published code table in this package's README becomes wrong for exactly
+  // those rows. Reconcile the vocabularies before merging them.
+  //
+  // Do NOT resolve it by renaming: these codes are documented in the README and
+  // appear in `--json` output, so they are a user-facing contract and renaming
+  // one is a breaking change. The same note is at the compiler's emit sites —
+  // `validate-invariants.ts` carries the full enumeration, `resolve-identity.ts`
+  // a pointer for the fifth.
+
   // Check 2: Schema quality
   const hasInputSchema = hasValidInputSchema(operation);
   const hasOutputSchema = hasValidOutputSchema(operation, method);

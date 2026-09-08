@@ -73,6 +73,25 @@ export const resolveIdentity: CompilerPass = {
 
         const losers = sorted.slice(1);
 
+        // `DUPLICATE_OPERATION_ID` ALSO EXISTS IN `turret doctor`, MEANING
+        // SOMETHING ELSE. Doctor's is an `error` for two operations colliding
+        // inside ONE document; this is a warning about a single id claimed by
+        // MULTIPLE SOURCES — a composition doctor has no notion of. It is one of
+        // five strings the two vocabularies share, and one of the three where
+        // the severities also disagree.
+        //
+        // Nothing merges the two today: doctor builds findings from its own walk
+        // of the OpenAPI document, and these go to the WarningCollector. IF they
+        // are ever merged, this string arrives with two meanings and two
+        // severities, and doctor's published code table is wrong for that row.
+        // Reconcile before merging, and do NOT resolve it by renaming — doctor's
+        // codes are a user-facing contract (its README table and `--json`).
+        //
+        // The full enumeration, and the set it was walked over, is in
+        // `validate-invariants.ts`; the same note is at doctor's emit site. This
+        // pointer exists because that enumeration originally walked only the pass
+        // being edited and missed THIS one.
+
         // Warn about duplicates
         for (const loser of losers) {
           context.warnings.warn(omitUndefined<CompilerWarning>({

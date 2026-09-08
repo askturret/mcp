@@ -318,12 +318,27 @@ function discoverOperation(
   // Build provenance chain
   const provenance = buildProvenance(location, pathPattern, method, xMcp);
 
+  // CARRY THE DROP REASON FORWARD (#768).
+  //
+  // Only attached when the input was ACTUALLY dropped: with a schema present the
+  // operation is servable and there is nothing to explain. `hints` is the
+  // declared source-to-compiler channel and is dropped at freeze-and-hash, so
+  // this is a compile-time diagnostic rather than a change to the published IR.
+  //
+  // NOTE the case this deliberately does NOT cover: parameters partially
+  // dropped, where some yielded properties and an unencodable one did not. That
+  // operation still compiles, so no warning fires and the missing parameter is
+  // silent. It is a real gap and a different one — #768 is about a drop
+  // reporting the wrong CAUSE, not about a drop reporting nothing.
+  const unencodable = rawInput === undefined ? unencodableParameters(operation) : [];
+
   // Build hints for compiler
   const hints = {
     httpMethod: method.toUpperCase(),
     pathPattern,
     operationId: operation.operationId,
     tags: operation.tags,
+    ...(unencodable.length > 0 && { unencodableParameterMediaTypes: unencodable }),
     ...xMcp,
   };
 
@@ -479,6 +494,67 @@ function parameterSchema(param: OpenAPIParameter): Record<string, unknown> | und
 
   const schema = media.schema;
   return schema && typeof schema === 'object' ? (schema as Record<string, unknown>) : undefined;
+}
+
+/**
+ * The media types a `content`-form parameter declares that we cannot encode.
+ *
+ * THE DROP SITE IS WHERE THE CAUSE IS KNOWN, AND IT USED TO THROW IT AWAY
+ * (#768). `parameterSchema` returns `undefined` for three distinct reasons — an
+ * unresolved `$ref`, a missing name, or a media type we have no encoder for —
+ * and a downstream pass observing only the ABSENCE reported the wrong one:
+ * `MISSING_INPUT_SCHEMA`, on a spec that plainly contains a schema. True in
+ * effect, false in fact, and actively misleading to someone debugging a spec.
+ *
+ * This names the third cause so it can be carried forward. It returns the
+ * DECLARED media types rather than a boolean, because the actionable part for
+ * whoever wrote the spec is WHICH type we could not encode.
+ *
+ * Empty means "not this cause" — either the parameter is servable, or it failed
+ * for one of the other two reasons, which this function deliberately does not
+ * speak for.
+ */
+function unencodableParameterMediaTypes(param: OpenAPIParameter): readonly string[] {
+  // A direct `schema` is servable, so nothing was dropped for a media type.
+  if (param.schema && typeof param.schema === 'object') return [];
+
+  const content = param.content;
+  if (!content || typeof content !== 'object') return [];
+
+  const declared = Object.keys(content);
+  if (declared.length === 0) return [];
+
+  // The servable type IS offered. If the parameter still yielded nothing, the
+  // cause is a missing or unreadable schema under it — not the media type — and
+  // claiming otherwise would replace one wrong cause with another.
+  if (Object.prototype.hasOwnProperty.call(content, SERVABLE_PARAMETER_MEDIA_TYPE)) return [];
+
+  return declared;
+}
+
+/**
+ * Every parameter dropped because its media type cannot be encoded.
+ *
+ * Walks the parameters a second time rather than restructuring
+ * `extractInputSchema`'s return type: that function has three early exits and
+ * one caller, and threading a second channel through it would touch far more
+ * than the defect needs. The walk is over an array that is already in memory.
+ */
+function unencodableParameters(
+  operation: OpenAPIOperation,
+): readonly { readonly parameter: string; readonly mediaTypes: readonly string[] }[] {
+  const parameters = operation.parameters;
+  if (!parameters || !Array.isArray(parameters)) return [];
+
+  const dropped: { parameter: string; mediaTypes: readonly string[] }[] = [];
+  for (const param of parameters) {
+    if (!param || typeof param !== 'object' || '$ref' in param) continue;
+    const mediaTypes = unencodableParameterMediaTypes(param);
+    if (mediaTypes.length > 0) {
+      dropped.push({ parameter: param.name ?? '(unnamed)', mediaTypes });
+    }
+  }
+  return dropped;
 }
 
 /**

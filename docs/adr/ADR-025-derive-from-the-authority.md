@@ -12,7 +12,7 @@ of from the authority itself.
 | | the value | where it was taken from | why the reflection was wrong |
 |---|---|---|---|
 | **#768 / #804** | the cause of a dropped parameter | the downstream **symptom** — `!op.input` at `validate-invariants.ts:80-87` | a schema dropped for an unencodable media type reported `MISSING_INPUT_SCHEMA`. True in effect, false in fact: the schema was present and readable |
-| **#804** | which codes are shared between `doctor` and the compiler | **one pass** — the file being edited | walking a subset of the four passes reported **four** shared codes; the answer is **five**. `resolve-identity` was missed |
+| **#804** | which codes are shared between `doctor` and the compiler | **one pass** — the file being edited | walking a subset of the **three** passes that call `context.warnings.warn` reported **four** shared codes; the answer is **five**. `resolve-identity` was missed |
 | **#676** | how many notices a corpus row recorded | a **count** carried in a brief | the corpus held 234 files and 239 rows. The "five" was the arithmetic surplus, not any file's contents |
 | **PR #605** | a `Signed-off-by` trailer | **memory** of an earlier commit's trailer | it named `dmitrys-mac-mini-8`; the host had been rebuilt as `-9`, so the trailer named a machine that no longer signed anything |
 | **PR #804** | a `Signed-off-by` trailer | **an earlier commit** on the same branch | same failure, different reflection: the machine's identity had changed again, and the copied trailer was a snapshot of the old one |
@@ -25,7 +25,7 @@ The forces that make this a decision rather than an obvious step:
   arithmetic performed correctly on the wrong quantity. **None of these is a
   carelessness failure**, and treating them as such is why they recur.
 - **The reflection is almost always the cheaper read**, and often the only one
-  visible from where the author is standing. Re-walking four passes costs more
+  visible from where the author is standing. Re-walking three passes costs more
   than copying a list from the file already open.
 - **They do not look alike.** A commit trailer, a compiler diagnostic, an
   enumeration in a comment and a number in a brief share no surface. Four of the
@@ -74,13 +74,22 @@ enables re-derivation are different artifacts**, and only the second is useful:
 error it is correcting:
 
 > *"THE SET THIS WAS ENUMERATED OVER, stated so the next reader can judge whether
-> [it is still complete] … this pointer exists because that enumeration
-> originally walked only the pass being edited — and reported four shared codes
-> as though that were the answer … re-walk the passes; do not assume the list
-> below is still complete."*
+> it was **closed over the right thing**: every pass under
+> `packages/core/src/compiler/passes/` that calls `context.warnings.warn` —
+> `apply-overlays`, `resolve-identity` and this file … THAT SCOPE IS THE
+> CORRECTION. The first version of this note walked only THIS pass — the one
+> being edited — and reported four shared codes **as though that were the whole
+> set**."*
+>
+> — `validate-invariants.ts:74-82`, quoted from one file rather than spliced.
 
 **State the set, not the doubt.** A reader who knows what you walked can re-walk
 it; a reader told only that you might be wrong can do nothing but distrust you.
+
+Note what the source asks, because an earlier draft of this record paraphrased it
+away: *"closed over the **right thing**"* — not *"long enough"*. **The question
+is whether the predicate was right, not whether the list was complete.** A list
+can be exhaustive over the wrong set, which is exactly what happened there.
 
 ## Why this is not ADR-023 or ADR-024
 
@@ -125,7 +134,7 @@ statement of what it is disclosing about.
 it applies to a commit trailer, a comment, a count and a compiler diagnostic
 without adaptation.
 
-**Good.** It gives the four instances a shared name, so the next one is
+**Good.** It gives the five instances a shared name, so the next one is
 recognisable as a recurrence rather than a novelty.
 
 **Bad, and accepted.** Re-deriving costs more than copying, every time. This
@@ -151,10 +160,16 @@ record's subject is values taken from sources that were not checked.
   #762. `validate-invariants.ts:80-87` warns on `!op.input` and `continue`s,
   with no access to why `input` is absent; the construction-time drop sites in
   `from-openapi.ts` return `undefined` silently.
-- **#804's enumeration** — read from the merged commit `3570bd7`. The comment
-  states that the original walk covered only the pass being edited and reported
-  four codes where five exist.
-- **#676's counts** — measured directly: 234 files, 239 rows, surplus 5.
+- **#804's enumeration** — the comment states that the original walk covered only
+  the pass being edited and reported four codes where five exist. **The passes
+  were counted from the source directory on review** (nine files under
+  `packages/core/src/compiler/passes/`, of which three call
+  `context.warnings.warn`), not from the commit comment.
+- **#676's counts** — measured directly **on 2026-09-08 at the time of that
+  ruling**: 234 files, 239 rows. **The absolute pair is dated and drifts daily;
+  the surplus of 5 is the load-bearing part** and has held at every commit
+  sampled since (253/258, 255/260, 257/262, 262/267). Recount rather than citing
+  these.
 - **The PR #605 trailer** — its own DCO check refused the commit, naming the
   mismatch between the remembered value and the actual author.
 
@@ -162,6 +177,22 @@ record's subject is values taken from sources that were not checked.
 is QA's and the Engineer's observation; and a stale build artifact resolving
 through a workspace symlink, reported by QA the same day, whose subject this
 author did not read.
+
+> **A marked value is not a true one, and this record proved it against itself.**
+> The first draft said the #804 walk covered *"a subset of the four passes."*
+> There is no four: nine passes exist and three call `context.warnings.warn`, and
+> the merged comment this record cites says *"`apply-overlays`, `resolve-identity`
+> and this file"* — three. **The four was introduced here.**
+>
+> The Provenance above had already flagged that row as derived from the commit
+> comment rather than from the passes. **The flag was correct and the value it
+> produced was still wrong**, because a disclosure records where you looked, not
+> whether what you found is true. It was caught by review, not by the marking.
+>
+> So: **stating your source is necessary and is not sufficient.** Where the value
+> is load-bearing, derive it from the authority as well as saying that you did
+> not — and note that this defect was a wrong count *inside the row describing a
+> wrong count*, in a record about counting. That is where this class hides.
 
 > **This record was itself written under its own rule, and the rule fired.** The
 > `Signed-off-by` trailer on its commit was derived by reading the commit

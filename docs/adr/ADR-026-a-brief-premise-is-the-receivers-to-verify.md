@@ -128,10 +128,22 @@ recorded on its issue. #696's, #676's, #741's and #780's corrections were
 re-derived from source during this session; **#747's, #687's and #739's are
 this author's own earlier reports and were not re-read while writing this.**
 
-**Reported and NOT reproduced here:** the Engineer's refutations on #726, #795
-and #784, and the closure of #726 as a non-defect. These are PM-relayed agent
-reports; this author did not read those issues, so the count of ten rests on
-three claims taken on report.
+**Verified by QA, from its own work, during review of this record:**
+
+- **#795** — the brief said GraphQL and gRPC *"appear nowhere in the
+  repository."* They are at `README.md:275-276`. Confirmed while QA-ing PR #796.
+- **#784** — the brief hypothesised an admin-credentialled read; the read was
+  **unauthenticated**. Confirmed against `origin/main` while QA-ing PR #802.
+
+**Reported and NOT reproduced here:** the Engineer's refutation on **#726** and
+its closure as a non-defect. That is **one** claim taken on report, not three, so
+the count of ten rests on a single unverified input.
+
+> An earlier draft said three. **That overstated the record's own uncertainty** —
+> a smaller fault than understating it, but still a wrong value, and it undersold
+> the claim. Corrected from QA's verification rather than from a re-reading of
+> the issues, which is itself this record's thesis running the other way: the
+> reviewer held the evidence the author did not.
 
 > **#780 — the task that produced this record — was itself an instance.** Its
 > brief specified the protected-file lane for a file that does not exist in this

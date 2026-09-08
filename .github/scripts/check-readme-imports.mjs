@@ -54,8 +54,15 @@
  * ## THE BOUND: THIS CHECKS IMPORTS. IT DOES NOT CHECK USE-WITHOUT-IMPORT (#608)
  *
  * The unit of work is an import statement. `parseImports` finds them, and every
- * one it finds is probed in the clean room — that half is exhaustive. But a
- * document that names a symbol WITHOUT importing it contributes nothing to
+ * one it finds is probed in the clean room — that half is exhaustive.
+ *
+ * READ THAT PRECISELY: PROBING is exhaustive over what is FOUND. Finding has its
+ * own bounds, and they are enumerated and asserted on `parseImports` itself
+ * (#683). A sentence that stops here invites the reading that finding is
+ * exhaustive too — which is the third shape sitting between the two this
+ * paragraph enumerates: an import that EXISTS but is NOT FOUND.
+ *
+ * But a document that names a symbol WITHOUT importing it contributes nothing to
  * parse, so it is never probed. THAT IS NOT A FAILURE MODE, IT IS AN INPUT
  * SHAPE THIS GUARD DOES NOT REACH, and the difference matters: a file with no
  * imports is not "checked and found clean", it is NOT CHECKED.
@@ -108,16 +115,62 @@ export const EXIT_CANNOT_CHECK = 2;
  * `javascript` and `js` are here because the Quick Demo — the first code a
  * reader meets — is fenced ```javascript. A scanner that only read ```ts would
  * skip the single most-copied block in the file while reporting full coverage.
+ *
+ * `tsx`, `jsx`, `mjs` and `cjs` were added by #683: the same language under a
+ * different tag. A contributor reaches for ```tsx without thinking, and a block
+ * that is never read is indistinguishable from one that is clean. Nothing here
+ * parses JSX or module semantics — a fence's contents are scanned only for
+ * `import { … } from` statements, so a superset tag admits no new construct.
+ *
+ * MEASURED BEFORE WIDENING rather than assumed safe: all 20 imports currently
+ * found across this repository's markdown resolve to `@askturret/*`, and the
+ * clean-room builder already installs third-party specifiers deliberately (the
+ * `wanted` set below). So a ```tsx example importing someone else's package was
+ * an anticipated case before this change rather than one it introduces.
  */
-const CODE_FENCES = ['ts', 'typescript', 'js', 'javascript'];
+export const CODE_FENCES = Object.freeze([
+  'ts',
+  'typescript',
+  'js',
+  'javascript',
+  'tsx',
+  'jsx',
+  'mjs',
+  'cjs',
+]);
 
 /**
  * Named-binding imports (`import { a, b as c } from 'x'`) from code fences.
  *
- * Default and namespace imports are deliberately out of scope: `import express
- * from 'express'` names a dependency the READER owns, not one this repository
- * publishes, and asserting on it would redden this guard for someone else's
- * package. Named imports are where all four rounds of this bug have lived.
+ * ## WHAT THIS DOES NOT FIND — all of it, in one place (#683)
+ *
+ * The header above says every import this FINDS is probed, and that half is
+ * exhaustive. Finding is not, and the limits were previously split between a
+ * stated pair and an unstated pair. A reader had to infer that split from the
+ * regex. All four now live here:
+ *
+ *   - DEFAULT imports (`import express from 'x'`) — deliberate. It names a
+ *     dependency the READER owns, not one this repository publishes, so
+ *     asserting on it would redden this guard for someone else's package.
+ *   - NAMESPACE imports (`import * as x from 'x'`) — deliberate, same reason.
+ *   - A fence tag outside `CODE_FENCES` — deliberate. ```bash and ```json are
+ *     not executable JavaScript, and reading them would probe prose.
+ *   - A specifier that is not a quoted string literal — a TEMPLATE literal, say.
+ *     Deliberate, and it costs nothing: `import { a } from \`x\`` is a
+ *     SyntaxError in every JavaScript engine, so a reader could not run it
+ *     either. There is no valid construct in this class to miss.
+ *
+ * BOTH QUOTE FORMS ARE READ since #683. A double-quoted specifier is the same
+ * construct in a different spelling, so admitting it widens no concept and has
+ * no false-positive surface — unlike the use-without-import detector PR #681
+ * measured at 0-for-41 and correctly declined to ship.
+ *
+ * EVERY ITEM ABOVE IS ASSERTED in `check-readme-imports.test.mjs`, positively
+ * and negatively, against a control that proves the negatives are not vacuous.
+ * Widening the parser reddens those assertions and forces this list to be
+ * corrected in the same change — a described bound is what went stale in #593.
+ *
+ * Named imports are where all four rounds of this bug have lived.
  */
 export function parseImports(markdown) {
   const out = [];
@@ -125,7 +178,9 @@ export function parseImports(markdown) {
 
   for (const block of markdown.matchAll(fence)) {
     const code = block[2] ?? '';
-    for (const m of code.matchAll(/import\s*\{([^}]+)\}\s*from\s*'([^']+)'/g)) {
+    // `(['"])…\1` — a BACKREFERENCE, so the closing quote must match the opener.
+    // A `['"]` class on both ends would accept `'x"`, which is not a string.
+    for (const m of code.matchAll(/import\s*\{([^}]+)\}\s*from\s*(['"])([^'"]+)\2/g)) {
       const entries = (m[1] ?? '')
         .split(',')
         .map((s) => s.trim())
@@ -140,7 +195,9 @@ export function parseImports(markdown) {
         .map((s) => s.split(/\s+as\s+/)[0]?.trim() ?? '')
         .filter((s) => s.length > 0);
 
-      const specifier = m[2] ?? '';
+      // m[3], NOT m[2] — the quote is now its own capture group for the
+      // backreference above, which shifted the specifier along by one.
+      const specifier = m[3] ?? '';
       // With no value bindings left there is nothing to destructure, but the
       // specifier must still resolve — a type-only import from a package that
       // does not exist is still a broken instruction to a reader.

@@ -158,6 +158,45 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
 
   check('a contract with no declared entries yields none', declaredEntries({ a: { b: 1 } }).length, 0);
   check('nested declared entries are found', declaredEntries({ x: { y: { declared: '^1', source: 's' } } })[0].path, 'x.y');
+
+  // --- THE REAL CONTRACT, on the two things #700 changed --------------------
+  const realJson = JSON.parse(readFileSync(join(REPO_ROOT, 'docs', 'compatibility.json'), 'utf-8'));
+
+  // VACUITY, ASSERTED HERE RATHER THAN REFUSED IN THE GUARD. A contract with no
+  // mirrored note is legitimate — every fixture above is one — so the guard must
+  // accept it. What must not happen is THIS repository's contract losing its
+  // flags, leaving check E reading three field kinds again with nothing saying
+  // so. That is a fact about this tree, so it is asserted against this tree.
+  const flagged = [];
+  const walk = (n) => {
+    if (n === null || typeof n !== 'object') return;
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (n.mirroredInMd === true && typeof n.note === 'string') flagged.push(n.note);
+    Object.values(n).forEach(walk);
+  };
+  walk(realJson);
+  check('the real contract declares at least one mirrored note, so check E is not vacuous', flagged.length > 0, true);
+
+  // ...and every one of them is actually in the .md, which is what makes the
+  // guard green for a reason rather than by luck.
+  const realMd = readFileSync(join(REPO_ROOT, 'docs', 'compatibility.md'), 'utf-8');
+  check('every declared mirror is carried by the .md', flagged.every((n) => realMd.includes(n)), true);
+
+  // #700 finding 2: the overclaim is GONE and must not come back. "Not accepted
+  // as input" was false for two of the three rows it covered — Node 18.x is
+  // warned about by npm rather than refused, and the TypeScript row has no
+  // runtime mechanism at all. The remedy was subtractive, so this pins the
+  // absence rather than a replacement.
+  check(
+    'the unsupported legend states no acceptance mechanism',
+    realJson.statusLegend.unsupported,
+    'Explicitly rejected. Not planned.',
+  );
+  check(
+    '...and specifically not the "not accepted as input" overclaim',
+    /not accepted as input/i.test(realJson.statusLegend.unsupported),
+    false,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -269,6 +308,63 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
     run(fixture({ contract, md: 'Matrix version `9.9.9` >=20.0.0' })).code,
     EXIT_OK,
   );
+
+  // -------------------------------------------------------------------------
+  // DECLARED NOTE MIRRORS (#700).
+  //
+  // `comparable` read only `declared`, `tested` and `entryPoint`, so no check
+  // anywhere compared a `note`. #625 aligned six note copies by hand and the
+  // guard could not have noticed the next edit separating them.
+  //
+  // THE BOUNDARY IS THE POINT, and it is asserted from BOTH sides: a flagged
+  // note absent from the .md fails, and an UNFLAGGED note absent from the .md
+  // passes. Without the second, this would be a guard that quietly demands
+  // byte-equality of prose that is paraphrase by design — 11 of the 13 real
+  // notes are, because the .md is formatted markdown and the .json is plain
+  // text.
+  // -------------------------------------------------------------------------
+  const MIRROR = 'Refusal surfaces as zero operations and a logged error.';
+  const withNote = (extra) => ({
+    matrixVersion: '9.9.9',
+    runtime: {
+      node: { declared: '>=20.0.0', source: 'package.json#engines.node', note: MIRROR, ...extra },
+    },
+  });
+
+  check(
+    'a MIRRORED note carried by both copies passes',
+    run(fixture({ contract: withNote({ mirroredInMd: true }), md: `Matrix version \`9.9.9\` >=20.0.0 ${MIRROR}` })).code,
+    EXIT_OK,
+  );
+
+  const separated = run(fixture({ contract: withNote({ mirroredInMd: true }), md: 'Matrix version `9.9.9` >=20.0.0' }));
+  check('a MIRRORED note the .md does not carry FAILS', separated.code, EXIT_DIVERGENCE);
+  check('...and names the note that diverged', separated.out.includes(MIRROR), true);
+  check(
+    '...and names both files, so a reader knows which pair to reconcile',
+    separated.out.includes('docs/compatibility.md') && separated.out.includes('docs/compatibility.json'),
+    true,
+  );
+
+  // THE OTHER SIDE OF THE BOUNDARY. Same note, same absent .md, no flag.
+  check(
+    'an UNFLAGGED note absent from the .md is NOT compared',
+    run(fixture({ contract: withNote({}), md: 'Matrix version `9.9.9` >=20.0.0' })).code,
+    EXIT_OK,
+  );
+
+  // A flag on an object with no note reads as covered and is covered by nothing.
+  const misdeclared = run(
+    fixture({
+      contract: {
+        matrixVersion: '9.9.9',
+        runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node', mirroredInMd: true } },
+      },
+      md: 'Matrix version `9.9.9` >=20.0.0',
+    }),
+  );
+  check('`mirroredInMd` on an object with no note FAILS', misdeclared.code, EXIT_DIVERGENCE);
+  check('...and says the flag covers nothing', misdeclared.out.includes('covered by nothing'), true);
 
   // -------------------------------------------------------------------------
   // #629 — THE AUTHORITATIVE POSITION, NOT MERE PRESENCE.

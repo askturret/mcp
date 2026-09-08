@@ -32,7 +32,7 @@
  *
  * ## The mutation traps, and the one that INVERTS here
  *
- * `docs/TESTING.md` catalogues five. Applied to an automated runner:
+ * `docs/TESTING.md` catalogues six. Applied to an automated runner:
  *
  *   1  edit breaks the file    THE DANGEROUS ONE. Here RED = PASS, so a
  *                              syntax-broken mutation reddens the self-test and
@@ -52,6 +52,15 @@
  *                              failing assertion NAMES are reported alongside it.
  *   5  vacuous green           A non-green baseline is CANNOT CHECK, never
  *                              "witnessed".
+ *   6  mutation never applied  Structurally impossible here, and worth stating
+ *                              because it is the trap the MANUAL procedure is
+ *                              most exposed to. Splicing is by byte offset after
+ *                              asserting the exact original text at that offset,
+ *                              so a mutation cannot no-op: a site whose text
+ *                              does not match is an audit error, never a silent
+ *                              pass. The hazard lives in ad-hoc `sed`/`replace`
+ *                              mutation, which leaves no artifact in the tree
+ *                              for any guard to inspect (#761).
  *
  * ## Usage
  *

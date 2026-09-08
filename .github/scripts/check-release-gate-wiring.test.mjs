@@ -186,5 +186,38 @@ check(
   'the PR lane is the cheapest refusal available; the release gate is additional to it, not a relocation of it',
 );
 
+// --- the gateway suite's dist/ precondition (#702) ----------------------------
+// packages/gateway/src/__tests__/cli.test.ts spawns the BUILT dist/cli.js — the
+// artifact `npx` and the Dockerfile ENTRYPOINT actually execute, and the only
+// assertion that can see a stale or mis-built dist/ at all. When dist/ is
+// absent those cases now report as SKIPPED rather than passing silently (#702).
+//
+// THAT MAKES THE FAILURE VISIBLE. It does not PREVENT it: a CI run that stopped
+// building the gateway would report three permanent skips that nobody is
+// watching for, and the most valuable check in that file would cover nothing.
+// The protection is POSITIONAL — one build step ahead of one test step — and it
+// can be removed three ways that leave every other test green: drop the `-w
+// packages/gateway` flag, reorder the steps, or split the job. This block is
+// what makes each of those fail.
+//
+// Same technique as the tarball gate above, for the same reason: compare
+// INDICES within the job's own block, so "same job" and "correct order" are one
+// assertion rather than two that can drift apart.
+const gatewayJob = jobBlock(testWorkflow, 'test-gateway') ?? '';
+check(
+  'test.yml declares a test-gateway job',
+  gatewayJob !== '',
+  'the block below asserts nothing if the job name changed and this lookup silently returned empty',
+);
+
+const gwBuildAt = gatewayJob.search(/npm run build[^\n]*-w packages\/gateway\b/);
+const gwTestAt = gatewayJob.indexOf('npm test --workspace=packages/gateway');
+check(
+  'the gateway suite is built before it is run',
+  gwBuildAt !== -1 && gwTestAt !== -1 && gwBuildAt < gwTestAt,
+  `build@${gwBuildAt} test@${gwTestAt} — cli.test.ts spawns packages/gateway/dist/cli.js, so without ` +
+    'that build the three spawned cases skip and the built artifact is covered by nothing (#702)',
+);
+
 console.log(`\npassed: ${passed}  failed: ${failed}`);
 process.exit(failed === 0 ? 0 : 1);

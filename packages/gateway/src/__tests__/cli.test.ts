@@ -256,8 +256,31 @@ describe('the built binary, invoked as a process', () => {
    * actually do. They need `dist/`, and skip rather than fail when it is absent
    * — a missing build is a different problem, and failing here would report it
    * as this one.
+   *
+   * THE SKIP IS NOW VISIBLE, AND UNTIL #702 IT WAS NOT. Each of these bodies
+   * opened `if (!existsSync(DIST_CLI)) return;`, which is a SILENT PASS: the
+   * assertions did not run, nothing was reported as skipped, and the suite went
+   * green. The paragraph above already said "skip"; the code did something else,
+   * and the difference is invisible in exactly the case it matters.
+   *
+   * That matters most for the version assertion below, which PR #701 argues is
+   * the most valuable of the three because it runs the built `dist/` as a real
+   * process. So the check covering the real artifact was the one that could
+   * quietly not run.
+   *
+   * `it.skip` is chosen over failing DELIBERATELY, and the reason is the
+   * paragraph above rather than convenience: a missing build reported as a
+   * version mismatch misdirects whoever reads it. Making that skip legible is
+   * the honest fix; it is not, on its own, a guarantee that CI builds first.
+   * `check-release-gate-wiring.test.mjs` asserts that separately, because only
+   * asserting the workflow prevents the silence rather than reporting it.
    */
   const DIST_CLI = join(__dirname, '../../dist/cli.js');
+
+  // Resolved ONCE, at collection time. A per-body check cannot produce a
+  // "skipped" result — by the time the body runs, the case has already been
+  // counted as executing.
+  const itBuilt = existsSync(DIST_CLI) ? it : it.skip;
 
   function runBuilt(args: string[], cwd: string) {
     return spawnSync(process.execPath, [args[0] as string, ...args.slice(1)], {
@@ -266,9 +289,7 @@ describe('the built binary, invoked as a process', () => {
     });
   }
 
-  it('prints its version when invoked by RELATIVE path, as the Dockerfile does', () => {
-    if (!existsSync(DIST_CLI)) return;
-
+  itBuilt('prints its version when invoked by RELATIVE path, as the Dockerfile does', () => {
     // `node packages/gateway/dist/cli.js --version`, run from the repo root —
     // byte for byte the ENTRYPOINT's shape.
     const repoRoot = join(__dirname, '../../../..');
@@ -293,18 +314,14 @@ describe('the built binary, invoked as a process', () => {
     expect(result.stdout.trim()).toBe(MANIFEST_VERSION);
   });
 
-  it('prints help when invoked by ABSOLUTE path', () => {
-    if (!existsSync(DIST_CLI)) return;
-
+  itBuilt('prints help when invoked by ABSOLUTE path', () => {
     const result = runBuilt([DIST_CLI, '--help'], tmpdir());
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('--spec');
   });
 
-  it('exits non-zero with a message when given no spec', () => {
-    if (!existsSync(DIST_CLI)) return;
-
+  itBuilt('exits non-zero with a message when given no spec', () => {
     const result = runBuilt([DIST_CLI], tmpdir());
 
     // A dead entrypoint exits 0 silently, so this pins that failures are real.

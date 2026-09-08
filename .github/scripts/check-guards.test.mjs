@@ -2541,6 +2541,63 @@ function probeSpawnSafety(scriptPath, cwd) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// The mutation-application trap catalogue is MIRRORED, so it can drift (#761)
+//
+// `docs/TESTING.md` is the only control this repository has over the MANUAL
+// RED-on-revert procedure: an ad-hoc `sed`/`replace` mutation leaves NO artifact
+// in the tree, so no guard can inspect whether it applied. When the sole control
+// is prose, prose going stale IS the failure — and there are four copies of the
+// count available to disagree with each other:
+//
+//   1. the doc's own heading         "### The six variants"
+//   2. the doc's actual table rows   | 6 | ... |
+//   3. the harness's claim about it  "`docs/TESTING.md` catalogues six."
+//   4. the harness's own trap list    *   6  mutation never applied
+//
+// Adding a variant means touching all four. Missing one leaves a confidently
+// worded false claim in the file the next author reads — the same defect class
+// the catalogue documents, one level up.
+//
+// Ids are pinned BY MEMBERSHIP, not by count. A count is satisfied by any six
+// rows, including a duplicated `3` with `6` missing, so it cannot hold the
+// numbering contiguous — and contiguity is what the `variant N` cross-references
+// elsewhere in TESTING.md and in check-doc-surfaces.test.mjs depend on.
+// Renumbering silently repoints every one of them, so appending is the only safe
+// way to extend the table.
+{
+  const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+
+  const testingDoc = readFileSync(resolve(here, '..', '..', 'docs', 'TESTING.md'), 'utf-8');
+  const auditSource = readFileSync(join(here, 'check-mutation-audit.mjs'), 'utf-8');
+
+  // Scoped to the traps section so a numbered table elsewhere in the document
+  // cannot satisfy this by accident.
+  const sectionIdx = testingDoc.indexOf('## Mutation-application traps');
+  check('TESTING.md still has a "Mutation-application traps" section', sectionIdx !== -1, true);
+
+  const section = testingDoc.slice(sectionIdx === -1 ? 0 : sectionIdx);
+  const heading = /^### The (\w+) variants$/m.exec(section);
+  check('TESTING.md declares a "### The <word> variants" heading', heading === null ? 'ABSENT' : 'present', 'present');
+
+  if (heading !== null) {
+    // The table follows the heading and ends at the next `###`.
+    const table = section.slice(heading.index).split(/^### /m)[1] ?? '';
+    const rowIds = [...table.matchAll(/^\| (\d+) \|/gm)].map((m) => Number(m[1]));
+    const auditIds = [...auditSource.matchAll(/^ \* {3}(\d+) {2}\S/gm)].map((m) => Number(m[1]));
+    const auditClaim = /catalogues (\w+)\./.exec(auditSource);
+    const word = NUMBER_WORDS[rowIds.length] ?? `<${rowIds.length}>`;
+
+    // Non-vacuity: an empty table would make every membership assertion below
+    // trivially true, which is variant 5 applied to this very check.
+    check('TESTING.md trap table is non-empty', rowIds.length > 0, true);
+    check('TESTING.md trap ids are contiguous from 1', rowIds.join(','), rowIds.map((_, i) => i + 1).join(','));
+    check('check-mutation-audit.mjs enumerates the SAME trap ids', auditIds.join(','), rowIds.join(','));
+    check('TESTING.md heading word matches its own row count', heading[1], word);
+    check('check-mutation-audit.mjs "catalogues <word>" matches', auditClaim === null ? 'ABSENT' : auditClaim[1], word);
+  }
+}
+
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
 
 console.log(`\npassed: ${passed}  failed: ${failed}`);

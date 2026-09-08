@@ -484,7 +484,7 @@ mutation that did not test what you thought.
 > who had just fallen into them. A surprising count is far more often a broken
 > mutation than a surprising codebase.
 
-### The five variants
+### The six variants
 
 Easier to recognise than to define, so this table is symptom-first — someone
 hunting a confusing result will match on what they are seeing, not on a name.
@@ -496,6 +496,7 @@ hunting a confusing result will match on what they are seeing, not on a name.
 | 3 | **more** assertions fail than expected | poor isolation between changes | the mutation changed **two things** — usually harness residue | read **which** assertions failed, by name |
 | 4 | correct exit code, case looks pinned | the branch is asserted | the fixture left via an **already-asserted** path | assert the **message**, not just the status |
 | 5 | assertion passes under the mutation | the property holds | the assertion is satisfied by the named thing being **absent** | construct the case that *should* make it fail and confirm it goes red |
+| 6 | mutation fails **nothing** | a coverage gap | the mutation **never applied at all** — the command succeeded and changed no bytes | assert the intended site **changed**, not that the command exited 0 |
 
 ### Variants 1 and 2 are duals, and that pairing is the point
 
@@ -512,6 +513,47 @@ mutation then edits **prose**, the file genuinely differs, a no-op guard passes
 it, and the suite stays green — which reads as a missing assertion. Target the
 **declaration**, and assert the mutated region is the one you meant.
 
+### Variants 2 and 6 share a symptom, and NEITHER remedy covers the other
+
+Both present as *"mutation fails nothing"*, and that is the whole difficulty:
+the obvious instrument for one is **no instrument at all** for the other.
+
+| | variant 6 | variant 2 |
+|---|---|---|
+| did the mutation apply? | **no** | **yes** |
+| did bytes change? | no | **yes** |
+| does a hash-or-diff check catch it? | **yes** | **no** |
+| conclusion reached | "the check is decorative" | "the check is decorative" |
+
+So *"diff the file to prove the mutation landed"* — the natural fix to reach for
+from variant 6 — passes variant 2 without a murmur. **Assert the intended site
+changed.** That is strictly stronger and subsumes both: a mutation that never
+applied also fails an intended-site assertion.
+
+### Prefer a mechanism that cannot silently do nothing
+
+Variant 6's cheapest defence is to choose a tool that **fails loudly when its
+anchor does not match**, rather than one that exits 0 having done nothing.
+
+**`sed` address forms are not portable, and the difference is silent.** The
+GNU-only `0,/re/` form — the usual way to replace only the *first* match — is
+ignored by BSD `sed`, which macOS ships as `/usr/bin/sed`:
+
+```
+$ printf 'alpha\nbeta\nalpha\n' > f.txt
+$ sed -i '' '0,/alpha/s/alpha/REPLACED/' f.txt ; echo "exit=$?"
+exit=0                  # no error, no stderr, and f.txt is UNCHANGED
+```
+
+Exit 0, empty stderr, zero bytes changed. There is nothing in that result to
+distinguish it from a mutation that applied against a check that does not bite.
+The same proof on a GNU host mutates the file — so **a proof recorded as valid
+on one machine can silently no-op on another**, with no one learning why.
+
+An anchored, match-or-error editor is the portable answer: it refuses when the
+anchor is absent, which converts a silent no-op into a loud failure and makes
+the "did it apply?" question unnecessary rather than merely answerable.
+
 ### Recorded instances
 
 Cited so the claims here can be checked rather than taken on trust.
@@ -523,6 +565,7 @@ Cited so the claims here can be checked rather than taken on trust.
 | 3 | A mutation conflated two changes and produced 18 collateral failures, which read as breadth rather than as a broken mutation (#348); and fault-injection scaffolding left in place during a second mutation reddened an unrelated assertion, so two failures looked like isolation and were not (#371, PR #373 review) |
 | 4 | A broken link masked a broken anchor: the exit code was `1` in **both** the masked and unmasked cases, so a status-only assertion could not see the bug at all (#337 item 2, PR #355) |
 | 5 | `indexOf(a) < indexOf(b)` ordering assertions passed **vacuously** when the guard was deleted, because `indexOf` returns `-1` and `-1` precedes any real position (#371); and a 17-character hex asserted to *survive* redaction, which passed under a widening mutation because no rule fires on it at all (#266) |
+| 6 | BSD `sed` ignored the GNU-only `0,/re/` address form while proving a test non-decorative: the command exited 0 and changed no bytes, so the green read as "the guard does not bite" when nothing had been mutated (#761, from PR #760) |
 
 ### Three habits that pay for themselves
 
@@ -615,7 +658,33 @@ reason for a right answer.
 That claim is deliberately narrow so it can be checked: each row cites the issue
 it came from, and "caught before it was acted on" is falsifiable against those.
 It is **not** a claim that this list is complete, or that the instruments here
-are sufficient — only that these five have been seen and are worth recognising.
+are sufficient — only that these six have been seen and are worth recognising.
+
+### Variant 6 is not confined to mutations
+
+The shape — **an operation reports success while having done nothing** — recurs
+in any instrumentation, and it always fails toward a false pass. Two instances
+from a single session, both in an agent's own measurement harness rather than in
+the code under test:
+
+- **A missing tool read as a verdict.** Every guard in a 14-guard sweep was
+  wrapped in `timeout`, which macOS does not ship. The shell returned `127` for
+  all of them — a uniform, confident-looking result that measured nothing.
+- **A command substitution silently reset the exit code.**
+  `printf '%s exit=%s' "$(basename "$g")" "$?"` reads `$?` **after** the
+  substitution has already run and overwritten it, so all 14 guards reported
+  `exit=0` when three of them exit `2`.
+
+Both were caught the same way, and it is the habit worth taking from this whole
+section: **cross-check one result against a value you can predict
+independently.** The second was found because a guard printed its own claim —
+*"this exits 2 rather than 0"* — which the harness contradicted. Without that
+prediction to disagree with, `exit=0` fourteen times reads as a clean sweep.
+
+So when capturing an exit status in a shell, assign it on the very next line —
+`cmd; code=$?` — before any pipe, substitution or other command. A pipe reports
+the **last** stage's status, which is why `guard | tail` reports `tail`'s
+success no matter what the guard did.
 
 ---
 

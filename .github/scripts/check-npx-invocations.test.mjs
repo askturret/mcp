@@ -151,6 +151,48 @@ try {
     const badVersioned = fixture('bad-versioned', { docs: { 'a.md': `npx ${UNPUBLISHED}@0.1.2 migrate\n` } });
     check('...and a versioned UNPUBLISHED name is still caught', runGuard(badVersioned).status === EXIT_UNKNOWN_PACKAGE);
 
+    // --- THE CO-INSTALLED DEPENDENCY (#766) ----------------------------------
+    //
+    // `npm install express @askturret/…` — the specifier is not the first
+    // argument. The pattern used to skip only FLAGS, so a bare package name
+    // ahead of ours ended the match and the invocation was never FOUND. An
+    // unfound invocation is indistinguishable from a file containing none, so
+    // this failed SILENT rather than loud.
+    //
+    // It is README.md's primary quick-start install line, and it was the only
+    // line in the repository the old pattern missed: 62 lines issue one of
+    // these commands and name an `@askturret` package, and 61 were matched.
+    const coInstalledBad = fixture('co-installed-unpublished', {
+      docs: { 'README.md': `npm install express ${UNPUBLISHED}\n` },
+    });
+    check(
+      'a specifier AFTER a co-installed package is FOUND, and fails when unpublished',
+      runGuard(coInstalledBad).status === EXIT_UNKNOWN_PACKAGE,
+      runGuard(coInstalledBad).out.trim(),
+    );
+
+    // Without this the assertion above is also satisfied by a guard that fails
+    // on every co-installed line whatever it names — the tautology shape.
+    const coInstalledGood = fixture('co-installed-published', {
+      docs: { 'README.md': `npm install express ${PUBLISHED}\n` },
+    });
+    check(
+      '...and the SAME shape naming a PUBLISHED package passes',
+      runGuard(coInstalledGood).status === EXIT_OK,
+      runGuard(coInstalledGood).out.trim(),
+    );
+
+    // The skip admits ARGUMENTS, not arbitrary text. A `.*` here would report a
+    // package that is not being installed at all.
+    const notAnArgument = fixture('not-an-argument', {
+      docs: { 'a.md': `npm install express && echo ${UNPUBLISHED}\n` },
+    });
+    check(
+      'text after a shell operator is NOT read as an installed package',
+      runGuard(notAnArgument).status === EXIT_OK,
+      runGuard(notAnArgument).out.trim(),
+    );
+
     for (const cmd of ['npm install', 'npm i', 'yarn add', 'pnpm add']) {
       const root = fixture(`cmd-${cmd.replace(/\W+/g, '-')}`, { docs: { 'a.md': `${cmd} ${UNPUBLISHED}\n` } });
       check(`\`${cmd}\` is an invocation form too`, runGuard(root).status === EXIT_UNKNOWN_PACKAGE);

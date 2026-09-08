@@ -86,8 +86,36 @@ const TEXT_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.cjs', '.js', '.yml', '.
  * Flags between the command and the specifier are tolerated (`npx --yes …`),
  * because a reader copies the whole line and the flag does not change which
  * package is named.
+ *
+ * ## Other PACKAGES between the command and ours are tolerated too (#766)
+ *
+ * This used to skip only flags, so the specifier had to be the FIRST argument.
+ * A co-installed dependency ahead of it — `npm install express @askturret/…` —
+ * ended the match, and the invocation was not found at all. Not mis-checked:
+ * INVISIBLE, which is the worse failure, because an unfound invocation is
+ * indistinguishable from a file with no invocations in it.
+ *
+ * That is not a hypothetical shape. It is `README.md`'s primary quick-start
+ * install line, and it was the ONLY line in the repository the old pattern
+ * missed: 62 lines issue one of these commands and name an `@askturret`
+ * package, the old pattern matched 61.
+ *
+ * So the most-read install line in the project was the one line this guard
+ * could not see, and a mutation replacing its package with a name that does not
+ * exist passed this guard, `check-readme-imports`, `check-doc-surfaces` and
+ * `check-markdown-links` — all four at exit 0.
+ *
+ * ## Why the skip is an enumerated token run rather than `.*`
+ *
+ * `.*` would let any text on the line separate the command from the specifier,
+ * so `npm install foo && echo @askturret/whatever` would report a package that
+ * is not being installed at all. The skip therefore admits only things that can
+ * be an ARGUMENT — a flag, or a bare package name — and stops at the first
+ * token that is neither. `@`-prefixed text cannot be consumed by the skip, so
+ * the specifier itself can never be swallowed by it.
  */
-const INVOCATION = /\b(?:npx|npm\s+install|npm\s+i|yarn\s+add|pnpm\s+add)(?:\s+--?[A-Za-z][\w-]*)*\s+(@askturret\/[a-z0-9][a-z0-9-]*)/g;
+const INVOCATION =
+  /\b(?:npx|npm\s+install|npm\s+i|yarn\s+add|pnpm\s+add)(?:\s+(?:--?[A-Za-z][\w-]*|[a-z0-9][\w.-]*))*\s+(@askturret\/[a-z0-9][a-z0-9-]*)/g;
 
 /**
  * Specifiers that are UNPUBLISHED ON PURPOSE, each with a reason and the issue

@@ -184,32 +184,71 @@ describe('doctor command', () => {
     });
   });
 
+  /**
+   * These drive `analyzeSpec` and read `admittedByLightPolicy` (#762).
+   *
+   * ## They previously asserted nothing at all
+   *
+   * Both cases filtered a test-local `extractOperations` list by
+   * `method === 'GET'` (or `'POST'`) and then asserted the method was one of
+   * `GET/HEAD/OPTIONS` (or one of the mutating verbs). That is **true by
+   * construction of the filter**, and it never touched the policy decision at
+   * all — the helper returns `{path, method, operation}` and carries no policy
+   * field, so there was nothing for the block to be about.
+   *
+   * QA measured the consequence: INVERTING the Light policy left this block
+   * fully green, and only `doctor-readme.test.ts` noticed, via the whole
+   * rendered transcript. A describe block named "Light preset policy" that
+   * survives the policy being inverted is worse than no block, because the name
+   * supplies the reassurance.
+   */
   describe('Light preset policy', () => {
-    it('should expose GET operations in Light preset', async () => {
+    it('admits read-only operations', async () => {
       const spec = await loadFixture('petstore');
-      const operations = extractOperations(spec);
+      const result = await analyzeSpec(spec as never);
 
-      const getOps = operations.filter((op) => op.method === 'GET');
+      const getOps = result.operations.filter((op) => op.method === 'GET');
+      // Non-vacuity: an empty set satisfies every assertion in the loop below.
       expect(getOps.length).toBeGreaterThan(0);
 
-      // All GET operations should be read-only and auto-exposed in Light
       for (const op of getOps) {
-        expect(['GET', 'HEAD', 'OPTIONS']).toContain(op.method);
+        expect(op.admittedByLightPolicy).toBe(true);
+        expect(op.lightPolicyExclusionReason).toBeUndefined();
       }
     });
 
-    it('should not auto-expose mutations in Light preset', async () => {
+    it('excludes mutations that carry no explicit opt-in, and says why', async () => {
       const spec = await loadFixture('petstore');
-      const operations = extractOperations(spec);
+      const result = await analyzeSpec(spec as never);
 
-      const postOps = operations.filter((op) => op.method === 'POST');
+      const postOps = result.operations.filter((op) => op.method === 'POST');
       expect(postOps.length).toBeGreaterThan(0);
 
-      // POST operations should require explicit inclusion
-      // (unless they have x-mcp.expose or x-mcp.light-preset)
       for (const op of postOps) {
-        expect(['POST', 'PUT', 'PATCH', 'DELETE']).toContain(op.method);
+        expect(op.admittedByLightPolicy).toBe(false);
+        // Assert the MESSAGE, not merely the boolean: a status-only assertion
+        // cannot tell an exclusion made for policy reasons from one made for
+        // any other reason, and the message is what the user actually reads.
+        expect(op.lightPolicyExclusionReason).toContain('not admitted by Light preset policy');
       }
+    });
+
+    it('counts the two policy outcomes, and they account for every operation', async () => {
+      const spec = await loadFixture('petstore');
+      const result = await analyzeSpec(spec as never);
+
+      expect(result.summary.lightPolicyAdmitted).toBe(
+        result.operations.filter((op) => op.admittedByLightPolicy).length,
+      );
+      expect(result.summary.lightPolicyExcluded).toBe(
+        result.operations.filter((op) => !op.admittedByLightPolicy).length,
+      );
+      expect(result.summary.lightPolicyAdmitted + result.summary.lightPolicyExcluded).toBe(
+        result.summary.totalOperations,
+      );
+      // Without this the fixture could admit everything and the split would
+      // still "account for" the total, which is variant 5 applied to a count.
+      expect(result.summary.lightPolicyExcluded).toBeGreaterThan(0);
     });
   });
 

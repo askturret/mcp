@@ -31,7 +31,7 @@ npx @askturret/mcp-cli doctor ./openapi.yaml --json
 5. **Overlapping Tools** - Near-identical names or schemas across operations
 6. **Missing Effects** - Mutating operations without `x-mcp-effects` classification
 7. **Unsafe Fields** - Request bodies with obvious secret-shaped fields (password/apiKey/ssn)
-8. **Exposure Policy** - Which operations the Light preset would drop, and why
+8. **Exposure Policy** - Which operations the Light preset's *policy* admits or excludes, and why. Preset policy only: whether an operation can actually be **built** from the spec is a separate question `doctor` does not check
 
 **Output:**
 

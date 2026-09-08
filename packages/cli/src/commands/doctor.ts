@@ -98,7 +98,9 @@ export function resolvePresetFlag(value: string | undefined): PresetFlagResoluti
         'error: `doctor --preset light` is not supported.\n' +
         '  Light is applied inside the adapter rather than described as\n' +
         '  configuration, so there is no expansion to print. doctor already\n' +
-        '  reports which operations Light would drop, under "Light Preset Policy".',
+        '  reports which operations Light preset POLICY excludes, under "Light\n' +
+        '  Preset Policy". That is a policy answer, not a prediction that a tool\n' +
+        '  will appear — construction is not checked.',
     };
   }
 

@@ -98,6 +98,19 @@ describe('resolvePresetFlag (#169)', () => {
     // reintroduce the ambiguity this issue is about, one level up.
     expect(resolved.kind === 'refuse' && resolved.message).toContain('inside the adapter');
     expect(resolved.kind === 'refuse' && resolved.message).not.toContain('evidence verifier');
+
+    // #762: this message points the reader at the "Light Preset Policy" section,
+    // so it makes a claim about what that section MEANS — and it used to say
+    // doctor "reports which operations Light would drop", which is the exact
+    // policy/construction conflation #762 removed everywhere else. It survived
+    // that PR's first round because nothing asserted it: QA replaced the whole
+    // sentence with nonsense and all 585 tests still passed.
+    //
+    // Pinned positively rather than by forbidding the old wording. A negative
+    // assertion is vacuously satisfied by deleting the sentence altogether,
+    // which would lose the pointer as well as the claim.
+    expect(resolved.kind === 'refuse' && resolved.message).toContain('POLICY excludes');
+    expect(resolved.kind === 'refuse' && resolved.message).toContain('construction is not checked');
   });
 
   it('names an unknown value as unknown, and lists what is known', () => {

@@ -113,6 +113,34 @@ async function renderedTranscript(fixture: string): Promise<string> {
 const CLEAN_HEADING = '### Clean spec (`fixtures/petstore.json`):';
 const BROKEN_HEADING = '### Broken spec (`fixtures/broken.json`):';
 
+/**
+ * The README's PROSE about the Light preset, not just its transcripts (#762).
+ *
+ * The transcript assertions below pin everything doctor PRINTS, which is why the
+ * "construction is not checked" caveat is covered for free. They pin nothing the
+ * README says in its own voice — and the "What it checks" list is prose, in the
+ * NPM-PUBLISHED README, describing the same feature.
+ *
+ * That gap shipped a false claim through #762's first round: the list still
+ * advertised "Which operations the Light preset would drop", the exact
+ * policy/construction conflation the PR existed to remove, in a file the PR was
+ * already editing. QA replaced the bullet with nonsense and all 585 tests passed.
+ */
+describe('README prose about the Light preset says what doctor measures (#762)', () => {
+  it('describes the exposure check as POLICY, and disclaims construction', () => {
+    const bullet = readme
+      .split('\n')
+      .find((l) => l.includes('**Exposure Policy**'));
+
+    // Non-vacuity: every assertion below is trivially satisfied if the bullet
+    // is simply gone, which is also a way of losing the claim.
+    expect(bullet).toBeDefined();
+    expect(bullet).toMatch(/polic/i);
+    expect(bullet).toMatch(/built|construct/i);
+    expect(bullet).toMatch(/not check|does not check/i);
+  });
+});
+
 describe('README doctor examples match real output (#107)', () => {
   it('transcribes the clean fixture exactly', async () => {
     expect(documentedTranscript(CLEAN_HEADING)).toBe(await renderedTranscript('petstore'));

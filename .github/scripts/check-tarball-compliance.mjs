@@ -157,6 +157,57 @@ export const REQUIRED_TARBALL_ENTRIES = ['README.md', 'LICENSE', 'NOTICE'];
  */
 export const MIRRORED_ROOT_ENTRIES = ['NOTICE', 'LICENSE'];
 
+/**
+ * What KIND of divergence a finding is (#704).
+ *
+ * Until this, every divergence rendered under one header — *"a required file is
+ * missing from the PUBLISHED tarball"* — with one fix hint: *"add the file to
+ * the package's `files` array"*. That was written when MISSING was the only
+ * class. #587 added DRIFT, which flows through the same channel, and the result
+ * is an operator told a present file is absent and instructed to make an edit
+ * that fixes nothing.
+ *
+ * ROOT_GUARD is here for the same reason and was not in the issue: the root
+ * publish-guard errors have never been about tarball CONTENTS at all, so that
+ * header has always misdescribed them. Found while tagging the other two.
+ *
+ * The kind travels WITH the finding rather than being re-derived from its text
+ * at print time. Sniffing for 'DRIFTED' in the message would put the
+ * classification in two places — the wording and the matcher — which is the
+ * drift class this guard exists to catch, reproduced in its own reporting.
+ */
+export const KIND = Object.freeze({
+  MISSING: 'missing',
+  DRIFT: 'drift',
+  ROOT_GUARD: 'root-guard',
+});
+
+/**
+ * How each kind is announced, and what it tells the operator to DO.
+ *
+ * Co-located with the kinds on purpose: a kind added without a heading here
+ * renders as `undefined`, which is visible immediately, rather than silently
+ * inheriting a heading written for a different class — which is exactly how
+ * this defect arose.
+ */
+const DIVERGENCE_REPORT = Object.freeze({
+  [KIND.MISSING]: {
+    header: 'TARBALL DIVERGENCE — a required file is missing from the PUBLISHED tarball:',
+    fix: "Fix: add the file to the package's `files` array in package.json.",
+  },
+  [KIND.DRIFT]: {
+    header: 'TARBALL DRIFT — a required file SHIPS but its contents are stale:',
+    fix:
+      'Fix: copy the root file over the package copy. The `files` array is already correct — ' +
+      'adding to it changes nothing here, and generate-notice.mjs rewrites only the root, so the ' +
+      'per-package copies never follow it automatically.',
+  },
+  [KIND.ROOT_GUARD]: {
+    header: 'ROOT PUBLISH GUARD — the repository root is not protected from being published:',
+    fix: "Fix: restore the root package.json's publish guard; this is not about any tarball's contents.",
+  },
+});
+
 export const EXIT_OK = 0;
 export const EXIT_DIVERGENCE = 1;
 export const EXIT_CANNOT_CHECK = 2;
@@ -415,7 +466,7 @@ export function main(argv, runner = defaultPackRunner) {
   // not one of the discovered packages — it is the one that must never become
   // one — so a run that discovers nothing must still report on it (#591).
   const rootGuard = findRootPublishGuardIssues(repoRoot);
-  divergences.push(...rootGuard.errors);
+  divergences.push(...rootGuard.errors.map((text) => ({ kind: KIND.ROOT_GUARD, text })));
   cannotCheck.push(...rootGuard.cannotCheck);
 
   if (packages.length === 0) {
@@ -457,7 +508,7 @@ export function main(argv, runner = defaultPackRunner) {
     const files = new Set(packed.files);
     for (const required of REQUIRED_TARBALL_ENTRIES) {
       if (!files.has(required)) {
-        divergences.push(`${pkg.name}: ${required} is NOT in the published tarball`);
+        divergences.push({ kind: KIND.MISSING, text: `${pkg.name}: ${required} is NOT in the published tarball` });
       }
     }
 
@@ -484,12 +535,14 @@ export function main(argv, runner = defaultPackRunner) {
       }
 
       if (!rootBytes.equals(pkgBytes)) {
-        divergences.push(
-          `${pkg.name}: ${entry} ships but has DRIFTED from the root ${entry} — the tarball is ` +
+        divergences.push({
+          kind: KIND.DRIFT,
+          text:
+            `${pkg.name}: ${entry} ships but has DRIFTED from the root ${entry} — the tarball is ` +
             `compliant in FORM and its contents are stale. Copy the root ${entry} over ` +
             `${pkg.dir}/${entry}; note that generate-notice.mjs rewrites only the root, so the ` +
             'per-package copies do not follow it automatically.',
-        );
+        });
       }
     }
 
@@ -525,11 +578,13 @@ export function main(argv, runner = defaultPackRunner) {
     for (const entry of expectedEntryPoints(pkg.manifest || {})) {
       if (files.has(entry)) continue;
       if (existsSync(join(repoRoot, pkg.dir, entry))) {
-        divergences.push(
-          `${pkg.name}: ${entry} is named by the manifest and EXISTS on disk, but is NOT in the published ` +
+        divergences.push({
+          kind: KIND.MISSING,
+          text:
+            `${pkg.name}: ${entry} is named by the manifest and EXISTS on disk, but is NOT in the published ` +
             'tarball — the build ran and the tarball still carries no code. A consumer installing this ' +
             'version gets a package whose entry point is missing.',
-        );
+        });
       } else if (hasDistEntries) {
         // Not on disk, so unbuilt — but the coarse dist/ check did NOT fire,
         // because the tarball carries some OTHER dist/ path. This is the exact
@@ -590,10 +645,29 @@ export function main(argv, runner = defaultPackRunner) {
   );
 
   // BOTH categories are always printed, whichever exit code wins below.
-  if (divergences.length > 0) {
-    console.error('\n❌ TARBALL DIVERGENCE — a required file is missing from the PUBLISHED tarball:');
-    for (const d of divergences) console.error(`   ${d}`);
-    console.error('   Fix: add the file to the package\'s `files` array in package.json.');
+  //
+  // GROUPED BY KIND (#704). One header for every divergence told an operator
+  // hitting DRIFT that a present file was missing, and to make an edit that
+  // fixes nothing. Each kind now announces itself and gives the fix that
+  // actually applies to it.
+  //
+  // A kind with no heading renders `undefined` rather than borrowing another
+  // class's wording — loud, and in the direction that gets noticed.
+  for (const kind of Object.values(KIND)) {
+    const inKind = divergences.filter((d) => d.kind === kind);
+    if (inKind.length === 0) continue;
+    const report = DIVERGENCE_REPORT[kind];
+    console.error(`\n❌ ${report?.header}`);
+    for (const d of inKind) console.error(`   ${d.text}`);
+    console.error(`   ${report?.fix}`);
+  }
+
+  // A finding whose kind is not one this reporter knows would otherwise print
+  // under no header at all — counted in the total, invisible in the output.
+  const unclassified = divergences.filter((d) => !Object.values(KIND).includes(d.kind));
+  if (unclassified.length > 0) {
+    console.error('\n❌ UNCLASSIFIED DIVERGENCE — these carry no known kind and are reported without one:');
+    for (const d of unclassified) console.error(`   ${d.text ?? d}`);
   }
   if (manifestIssues.length > 0) {
     console.error('\n❌ MANIFEST:');

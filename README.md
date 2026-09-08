@@ -85,7 +85,7 @@ npx @askturret/mcp-cli doctor petstore.yaml
 #   Total Operations: 2
 #   Errors:           0
 #   Warnings:         0
-#   Light Exposed:    2
+#   Light policy admits:   2
 #
 # ✓ Analysis complete. No issues found.
 

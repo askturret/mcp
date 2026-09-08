@@ -30,7 +30,7 @@ function op(overrides: Partial<OperationAnalysis> = {}): OperationAnalysis {
     path: '/users',
     method: 'GET',
     findings: [],
-    wouldBeExposedInLight: true,
+    admittedByLightPolicy: true,
     ...overrides,
   };
 }
@@ -49,7 +49,7 @@ function mixedResult(): AnalysisResult {
         ],
       }),
       // No findings at all -> both cells render the uncoloured '-'.
-      op({ operationId: 'getUser', method: 'POST', wouldBeExposedInLight: false }),
+      op({ operationId: 'getUser', method: 'POST', admittedByLightPolicy: false }),
     ],
     globalFindings: [],
     summary: {
@@ -57,8 +57,8 @@ function mixedResult(): AnalysisResult {
       errors: 2,
       warnings: 1,
       info: 0,
-      lightExposed: 2,
-      lightDropped: 0,
+      lightPolicyAdmitted: 2,
+      lightPolicyExcluded: 0,
     },
     spec: { openApiVersion: '3.0.0' },
   };

@@ -55,8 +55,9 @@ export function formatHumanReadable(
     `  Warnings:         ${colorize(result.summary.warnings, 'yellow', color && result.summary.warnings > 0)}`,
   );
   lines.push(`  Info:             ${result.summary.info}`);
-  lines.push(`  Light Exposed:    ${result.summary.lightExposed}`);
-  lines.push(`  Light Dropped:    ${result.summary.lightDropped}`);
+  lines.push(`  Light policy admits:   ${result.summary.lightPolicyAdmitted}`);
+  lines.push(`  Light policy excludes: ${result.summary.lightPolicyExcluded}`);
+  lines.push('  (Preset policy only — whether an operation can be built from this spec is not checked.)');
   lines.push('');
 
   // Global findings
@@ -93,17 +94,17 @@ export function formatHumanReadable(
   }
 
   // Light preset policy
-  if (result.summary.lightDropped > 0) {
+  if (result.summary.lightPolicyExcluded > 0) {
     lines.push('Light Preset Policy:');
-    lines.push('  The following operations would be dropped in Light preset:');
+    lines.push('  The following operations are excluded by Light preset policy:');
     lines.push('');
 
     for (const op of result.operations) {
-      if (!op.wouldBeExposedInLight) {
+      if (!op.admittedByLightPolicy) {
         const opLabel = op.operationId || `${op.method} ${op.path}`;
         lines.push(`  • ${opLabel}`);
-        if (op.wouldBeDroppedReason) {
-          lines.push(`    ${op.wouldBeDroppedReason}`);
+        if (op.lightPolicyExclusionReason) {
+          lines.push(`    ${op.lightPolicyExclusionReason}`);
         }
       }
     }
@@ -189,7 +190,7 @@ function formatOperationsTable(operations: OperationAnalysis[], color: boolean):
     const opId = truncate(op.operationId || '-', 20).padEnd(20);
     const errors = op.findings.filter((f) => f.severity === 'error').length;
     const warnings = op.findings.filter((f) => f.severity === 'warning').length;
-    const light = op.wouldBeExposedInLight ? '✓' : '✗';
+    const light = op.admittedByLightPolicy ? '✓' : '✗';
 
     const errorStr = colorize(
       (errors > 0 ? errors.toString() : '-').padEnd(2),

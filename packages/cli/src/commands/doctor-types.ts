@@ -54,8 +54,26 @@ export interface OperationAnalysis {
   path: string;
   method: string;
   findings: Finding[];
-  wouldBeExposedInLight: boolean;
-  wouldBeDroppedReason?: string;
+
+  /**
+   * Does the Light preset's POLICY admit this operation? (#762)
+   *
+   * Read-only methods are admitted; anything else needs an explicit `x-mcp`
+   * opt-in. Those two inputs are the whole decision.
+   *
+   * **This is not a prediction that the tool will appear.** Appearing requires
+   * policy admission AND successful construction from the spec, and doctor
+   * models only the first. It was previously called `wouldBeExposedInLight`,
+   * which named the conjunction while computing one conjunct — so an operation
+   * admitted here can still fail to build, and doctor cannot see that.
+   */
+  admittedByLightPolicy: boolean;
+
+  /**
+   * Why the Light preset's policy excluded this operation, when it did.
+   * Absent for admitted operations. Never a construction failure — see above.
+   */
+  lightPolicyExclusionReason?: string;
 }
 
 /**
@@ -85,8 +103,18 @@ export interface AnalysisResult {
     errors: number;
     warnings: number;
     info: number;
-    lightExposed: number;
-    lightDropped: number;
+
+    /**
+     * Operations the Light preset's POLICY admits / excludes (#762).
+     *
+     * Renamed from `lightExposed` / `lightDropped`, which read as "will appear"
+     * / "will fail to appear" and were measured from preset policy alone.
+     * Whether an operation can actually be CONSTRUCTED from the spec is a
+     * separate question that doctor does not model at all, so `Excluded` is a
+     * floor on what goes missing, never the whole of it.
+     */
+    lightPolicyAdmitted: number;
+    lightPolicyExcluded: number;
   };
 
   /**

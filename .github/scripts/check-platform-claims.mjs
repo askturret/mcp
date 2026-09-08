@@ -119,6 +119,51 @@ export const VOCABULARY = Object.freeze({
       'The bypass-actor list needs the same admin credentials, and WHO WILL AUTHOR THE NEXT PR ' +
       'is not knowable at all — no credential makes a future fact readable.',
   }),
+  dependabot_security_updates: Object.freeze({
+    classification: 'declared-unverifiable',
+    reason:
+      'Both surfaces that expose it — `GET /repos/{owner}/{repo} -> .security_and_analysis' +
+      '.dependabot_security_updates.status` and `GET /repos/{owner}/{repo}/automated-security-fixes` ' +
+      '— require ADMIN READ ACCESS, which the Actions `GITHUB_TOKEN` cannot hold: there is no ' +
+      '`administration` scope in a workflow `permissions:` block at all.',
+    // CLASSIFIED `declared-unverifiable` DELIBERATELY, AGAINST THE FIRST READING (#677).
+    //
+    // #677 was filed expecting `verifiable`, on the ground that the property is
+    // readable from the repository payload. It IS readable — but only by an
+    // ADMIN credential, and the question this classification answers is not "can
+    // it be read?" but "can the SCHEDULED JOB read it?"
+    //
+    // MEASURED 2026-09-08, three ways:
+    //   - authenticated with an admin token: `security_and_analysis` present,
+    //     `dependabot_security_updates.status = "enabled"`;
+    //   - UNAUTHENTICATED: the `security_and_analysis` block is ABSENT ENTIRELY
+    //     while `visibility` is still present, so absence is the documented
+    //     under-privileged shape rather than a transport failure;
+    //   - GitHub's own docs on both endpoints: "must have admin read access".
+    //
+    // WHY THAT FORCES THIS CLASSIFICATION RATHER THAN `verifiable`. This file
+    // already holds both precedents, and they are distinguished by whether the
+    // credential COULD ever suffice. `organisation_plan` is `verifiable` because
+    // it MAY be readable depending on the token. `code_owner_review_required` is
+    // `declared-unverifiable` because reading it "requires admin credentials CI
+    // does not hold". This is the second case, not the first: no `permissions:`
+    // block can grant the scope, so it is not token-dependent — it is closed.
+    //
+    // AND THE COST OF GETTING IT WRONG IS NOT SYMMETRIC. `repository_visibility`
+    // is currently the ONLY declared verifiable property (`organisation_plan` is
+    // in this vocabulary but declared at no site), so the nightly's
+    // platform-claims job runs GREEN. Declaring this one `verifiable` would make
+    // it CANNOT CHECK on every run, permanently — exit 2 forever, with no path
+    // to green and no way to distinguish it from a real unreadability. That
+    // trades a working signal for a standing alarm, which is the failure mode
+    // this repository keeps naming: an alarm that is never a true positive is
+    // one the reader learns to skim.
+    //
+    // TO UPGRADE THIS TO `verifiable`, the scheduled job needs a credential with
+    // admin read — a PAT or App token in `secrets`, not the Actions token. At
+    // that point move the classification, add the read to `readLiveState`, and
+    // the divergence arm starts working. Nothing else here needs to change.
+  }),
 });
 
 /**

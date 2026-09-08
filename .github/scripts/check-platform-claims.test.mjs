@@ -21,7 +21,7 @@
  * from "the test could not reach the network".
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -275,6 +275,88 @@ const liveFixture = () => fixture({ 'docs/a.md': `# A\n\n${GOOD_BLOCK}` });
 }
 
 // ---------------------------------------------------------------------------
+// `dependabot_security_updates` — THE CLAIM, AND ITS CONTROL (#677, ADR-024)
+//
+// These run against the REAL `VOCABULARY` and the REAL shipped document, not a
+// fixture vocabulary. That is the whole point: a fixture would prove the guard
+// can classify SOME property, which is already covered above, and would stay
+// green if this property were reclassified or its declaration deleted.
+// ---------------------------------------------------------------------------
+
+check(
+  '#677: the real vocabulary carries `dependabot_security_updates`',
+  Object.prototype.hasOwnProperty.call(VOCABULARY, 'dependabot_security_updates'),
+  true,
+);
+
+// PINS THE CLASSIFICATION ITSELF, not merely that an entry exists. #677 was
+// filed expecting `verifiable`; it is `declared-unverifiable` because no
+// `permissions:` scope can give the Actions token admin read. Flipping it back
+// reddens HERE, next to the reason, rather than silently at 03:00 in a nightly.
+check(
+  '#677: ...classified `declared-unverifiable`, deliberately and against the first reading',
+  VOCABULARY['dependabot_security_updates'].classification,
+  'declared-unverifiable',
+);
+
+check(
+  '#677: ...and carries the reason a reader needs to disagree with it',
+  /admin read access/i.test(VOCABULARY['dependabot_security_updates'].reason),
+  true,
+);
+
+// THE RED ARM. A claim that cannot go red is the #621 species, so here is the
+// mutation that reddens it: tag the property `(verifiable)` and Part A refuses.
+// This is what stops a later edit quietly upgrading the tag without also giving
+// the scheduled job a credential that can read it.
+{
+  const dir = fixture({
+    'docs/a.md': '<!-- platform-claims\ndependabot_security_updates: enabled (verifiable)\n-->\n',
+  });
+  const r = checkDeclarations({ rootDir: dir, sites: ['docs/a.md'] });
+  check('#677: RED ARM — tagging it `(verifiable)` is REFUSED', r.code, 1);
+  check(
+    '#677: ...and the refusal names the property and both classifications',
+    /`dependabot_security_updates` is tagged `verifiable` but the vocabulary classifies it as `declared-unverifiable`/.test(
+      r.problems.join('\n'),
+    ),
+    true,
+  );
+}
+
+// AND THE QUIET ARM: correctly tagged, it is ANNOUNCED as declared-and-unchecked
+// rather than skipped. "Nothing verified this" has to be visible, or declaring
+// an unverifiable claim buys nothing over not declaring it.
+{
+  const dir = fixture({
+    'docs/a.md': '<!-- platform-claims\ndependabot_security_updates: enabled (declared-unverifiable)\n-->\n',
+  });
+  const r = await checkLive({
+    rootDir: dir,
+    sites: ['docs/a.md'],
+    readState: async () => ({ values: {}, unreadable: [] }),
+  });
+  check(
+    '#677: correctly tagged, it is announced as declared-and-unchecked',
+    /`dependabot_security_updates` = enabled — declared, not verified/.test(r.declaredUnverifiable.join('\n')),
+    true,
+  );
+  check('#677: ...and does not redden the run on its own', r.code, 0);
+}
+
+// THE DECLARATION ITSELF IS THE DELIVERABLE, so it gets an assertion. Part A's
+// bidirectional check catches a registered file with NO block; it does not catch
+// a block that quietly loses one claim line. Deleting the declaration reddens
+// here and nowhere else.
+check(
+  '#677: the shipped docs/ownership.md actually declares the claim',
+  /^dependabot_security_updates: enabled \(declared-unverifiable\)$/m.test(
+    readFileSync(join(dirname(GUARD), '..', '..', 'docs', 'ownership.md'), 'utf-8'),
+  ),
+  true,
+);
+
+// ---------------------------------------------------------------------------
 // THE ENTRY POINT AND main()'s RETURN CODES — #110's shape
 //
 // Every case above calls an exported function directly, so `main()` and the
@@ -371,7 +453,22 @@ check(
     .every((v) => typeof v.reason === 'string' && v.reason.length > 0),
   true,
 );
-check('vocabulary: the two unverifiable members are named', Object.entries(VOCABULARY).filter(([, v]) => v.classification === 'declared-unverifiable').length, 2);
+// ASSERTS THE MEMBERSHIP, NOT THE COUNT. This read `.length === 2` under the
+// same name — but a count cannot say WHICH members, so swapping one property for
+// another left it green, and it could not force this comment to be corrected
+// when the set changed. Adding `dependabot_security_updates` (#677) is what
+// surfaced the gap: the count went red, which was right, while the name it went
+// red under was already inaccurate. Comparing the sorted list is what the
+// description always claimed.
+check(
+  'vocabulary: the declared-unverifiable members are named, exactly',
+  Object.entries(VOCABULARY)
+    .filter(([, v]) => v.classification === 'declared-unverifiable')
+    .map(([k]) => k)
+    .sort()
+    .join(','),
+  'author_is_bypass_actor,code_owner_review_required,dependabot_security_updates',
+);
 check('registry: the #330 sites are registered', REGISTERED_SITES.includes('docs/ownership.md'), true);
 
 // The parser, on the shape the documents actually carry.

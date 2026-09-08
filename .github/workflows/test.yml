@@ -1124,7 +1124,7 @@ jobs:
       - name: Self-test the tarball compliance guard
         run: node .github/scripts/check-tarball-compliance.test.mjs
 
-      - name: Published tarballs carry README, LICENSE and NOTICE
+      - name: Packed tarballs carry README, LICENSE and NOTICE
         run: node .github/scripts/check-tarball-compliance.mjs .
 
       # #598: the README's imports resolved for three rounds of fixes and for no

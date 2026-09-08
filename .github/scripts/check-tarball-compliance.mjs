@@ -49,6 +49,71 @@
  * check-platform-claims.mjs where an upstream outage must not redden every PR.
  * There is no network here: npm packs from the local tree.
  *
+ * WHAT IT PACKS IS A FRESH TARBALL, NOT THE PUBLISHED BYTES (#752)
+ * ---------------------------------------------------------------------------
+ * #670's second acceptance item asked for the assertion to run against "the
+ * tarballs that will actually be published, not a fresh pack that might
+ * differ", and added: "If that is impractical, say so and record why, rather
+ * than substituting a weaker check silently." This section is that record. It
+ * was substituted, and until now it was not said.
+ *
+ * IT IS IMPRACTICAL AT THIS SEAM FOR A STRUCTURAL REASON, NOT A COST ONE:
+ * ON THE RELEASE PATH THERE ARE NO PUBLISHED BYTES TO READ YET. The gate runs
+ * between `npm run build` and `npm publish`, which is the whole point of #670 —
+ * a refusal has to land before anything is live, because npm versions are
+ * immutable and the only remedy is burning the next version number nine times.
+ * So "assert the published tarball" and "assert before publishing" cannot both
+ * hold at one step, and #670 chose the second deliberately.
+ *
+ * THAT POSITION IS ASSERTED, NOT ASSUMED. `check-release-gate-wiring.test.mjs`
+ * pins `build < gate < publish` within the publish job, so moving the gate after
+ * the publish fails LOUDLY rather than quietly making this paragraph untrue.
+ *
+ * THAT CLAIM IS ONLY AS STRONG AS HOW THE GATE'S POSITION IS RESOLVED, and it is
+ * worth saying so here because the first version of it was weaker than this
+ * paragraph claimed (#752, found by QA attacking this exact sentence). Resolving
+ * the gate by its first textual mention let a COMMENT naming the script stand in
+ * for the step: with the gate moved AFTER the publish, the suite reported green
+ * on a tree that publishes before it verifies. The margin was one word — the
+ * comment above the step named the script without its extension.
+ *
+ * It is now resolved from the gate's RUN LINE: anchored to a whole line, and
+ * explicitly not a comment line, because a comment that QUOTES the command is
+ * the natural one to write and defeats an anchor that only requires "node ".
+ * Both defeat shapes are pinned as tests there, with the decoys proven to be
+ * genuine decoys rather than merely failing. If you weaken that resolution you
+ * weaken this paragraph: they are one claim, not two.
+ *
+ * WHAT THE FRESH PACK THEREFORE DOES AND DOES NOT PROVE. It proves the tree
+ * about to be published packs correctly, from the same tree and the same build
+ * that `npm publish` will use moments later in the same job. It does NOT prove
+ * the registry received those bytes — nothing at this seam can, because the
+ * publish has not happened. That is a different question with its own
+ * mechanism: `check-release-registry-reconcile.mjs`, nightly, reading live
+ * registry state.
+ *
+ * A POST-PUBLISH ASSERTION AGAINST THE REAL BYTES WAS CONSIDERED AND DECLINED,
+ * and the reasoning is recorded here so it is not re-derived.
+ *
+ * READ IT IN `check-release-registry-reconcile.mjs`'s header — the section "Why
+ * this is a scheduled OBSERVER and not a release-path GATE" — which is the
+ * artifact built FOR #660. Cite that header rather than #660 itself: the issue
+ * is about tag/release/registry divergence going unreported, and it never
+ * weighs a post-publish assertion, so a reader sent to the issue finds no such
+ * decision in it (#752, QA). An earlier draft of this paragraph cited the issue,
+ * which is the same defect this file exists to correct — pointing a reader at
+ * something that does not contain what it is said to contain.
+ *
+ * It IS constructible: `needs: [publish]` with `if: always()` defeats the skip.
+ * That goes beyond the reconciler's header, which argues the skip is itself
+ * disqualifying — so the decline here rests on the other three grounds, not on
+ * that one. It would be a second mechanism proving what the nightly reconciler
+ * already proves; a release here is a supervised event rather than an unattended
+ * one; and it could not replace the nightly regardless, because a manual
+ * recovery publish happens off the release path entirely, where no post-publish
+ * step would observe it. If detection latency ever becomes the binding problem,
+ * that is the change to make. It is not the binding problem now.
+ *
  * ORDERING — THIS GUARD MUST RUN AFTER THE BUILD.
  * ---------------------------------------------------------------------------
  * `npm pack` reports dist/ only if the package has actually been built. An

@@ -135,7 +135,47 @@ check(
 // — delete it, move it after the publish, or split it into its own job. This
 // block is what makes each of those fail.
 const publishJob = publish ?? '';
-const tarballRun = /^[^\n]*node \.github\/scripts\/check-tarball-compliance\.mjs\b[^\n]*$/m.exec(publishJob);
+
+// The gate's RUN LINE — a line that DOES something — never a mention of it.
+// Two properties are load-bearing, and both were learned from a defeat rather
+// than reasoned out in advance (#752, found by QA):
+//
+//   1. ANCHORED to a whole line.
+//   2. NOT A COMMENT. The `(?!\s*#)` is the half that an anchor requiring only
+//      the literal "node " still misses, because the natural comment to write
+//      above a step is one that QUOTES THE COMMAND THE STEP RUNS — and this
+//      workflow's gate carries exactly that kind of comment block.
+//
+// Resolving the gate by first textual mention lets a comment stand in for the
+// step. Measured on a tree with the gate moved AFTER the publish: first-mention
+// resolves into the comment, ahead of the publish, and the ordering check below
+// PASSES on a tree that publishes before it verifies. Both defeat shapes are
+// pinned further down; neither is hypothetical.
+const TARBALL_RUN_LINE =
+  /^(?!\s*#)[^\n]*node \.github\/scripts\/check-tarball-compliance\.mjs\b[^\n]*$/m;
+
+/**
+ * `build < gate < publish`, with the gate resolved from its run line.
+ *
+ * A function rather than three inline offsets so the decoys below exercise the
+ * SAME resolution the live assertion uses. A decoy run against a copy of this
+ * logic would prove only that the copy is sound (#679).
+ */
+function gateOrdering(jobText) {
+  const run = TARBALL_RUN_LINE.exec(jobText);
+  const buildAt = jobText.indexOf('npm run build');
+  const gateAt = run ? run.index : -1;
+  const publishAt = jobText.indexOf('npm publish');
+  return {
+    buildAt,
+    gateAt,
+    publishAt,
+    ordered:
+      buildAt !== -1 && gateAt !== -1 && publishAt !== -1 && buildAt < gateAt && gateAt < publishAt,
+  };
+}
+
+const tarballRun = TARBALL_RUN_LINE.exec(publishJob);
 
 check(
   'the publish job asserts tarball compliance before publishing',
@@ -143,12 +183,10 @@ check(
   'a PR-lane-only invocation proves the PR tree; the release publishes the release tree (#670)',
 );
 
-const buildAt = publishJob.indexOf('npm run build');
-const gateAt = publishJob.indexOf('check-tarball-compliance.mjs');
-const publishAt = publishJob.indexOf('npm publish');
+const { buildAt, gateAt, publishAt, ordered } = gateOrdering(publishJob);
 check(
   'the gate sits between npm run build and npm publish',
-  buildAt !== -1 && gateAt !== -1 && publishAt !== -1 && buildAt < gateAt && gateAt < publishAt,
+  ordered,
   `build@${buildAt} gate@${gateAt} publish@${publishAt} — the guard packs, and npm pack reports dist/ only once built, so it must follow the build; after the publish it asserts nothing`,
 );
 
@@ -184,6 +222,112 @@ check(
   'the PR-lane invocation is retained, not moved',
   testWorkflow.includes('check-tarball-compliance.mjs'),
   'the PR lane is the cheapest refusal available; the release gate is additional to it, not a relocation of it',
+);
+
+// --- A COMMENT MUST NOT STAND IN FOR THE STEP (#752) -------------------------
+// The ordering assertion above is what `check-tarball-compliance.mjs`'s header
+// cites when it says its fresh-pack substitution is safe BECAUSE the gate
+// provably precedes the publish. That makes the assertion's discrimination a
+// load-bearing claim rather than a nicety, on the path guarding an IRREVERSIBLE
+// publish — so the ways it can stop discriminating are pinned here.
+//
+// Every fixture below publishes BEFORE it verifies. The correct verdict is
+// always `ordered === false`; a fixture that returns true is a tree that would
+// publish unverified while this suite reported green.
+const decoyJob = (mention) =>
+  [
+    '  publish:',
+    '    steps:',
+    '      - run: npm run build',
+    `      ${mention}`,
+    '      - name: Publish',
+    '        run: npm publish --workspaces --provenance --access public',
+    '      - name: Packed tarballs carry README, LICENSE and NOTICE',
+    '        run: node .github/scripts/check-tarball-compliance.mjs .',
+  ].join('\n');
+
+// The shape QA found. Today's real comment says the script name WITHOUT the
+// extension, so adding four characters to it was the entire margin.
+const decoyName = decoyJob('# THE RELEASE GATE. See check-tarball-compliance.mjs for what it packs.');
+// The shape an anchor requiring only "node " still admits: a comment quoting
+// the command. This is the likelier of the two to be written by hand.
+const decoyCommand = decoyJob('# THE RELEASE GATE. It runs: node .github/scripts/check-tarball-compliance.mjs .');
+
+check(
+  'a comment NAMING the script does not satisfy the ordering assertion',
+  gateOrdering(decoyName).ordered === false,
+  `gate resolved to ${gateOrdering(decoyName).gateAt}, publish at ${gateOrdering(decoyName).publishAt}`,
+);
+check(
+  'a comment QUOTING the command does not satisfy it either',
+  gateOrdering(decoyCommand).ordered === false,
+  `gate resolved to ${gateOrdering(decoyCommand).gateAt}, publish at ${gateOrdering(decoyCommand).publishAt}`,
+);
+
+// WITHOUT THIS PAIR the two assertions above are satisfied by any resolution
+// that never finds the gate at all — including a broken regex. They assert the
+// decoys are genuinely decoys: under first-mention resolution each one PASSES,
+// which is the defect being pinned.
+// Assembled, not written literally: a literal first-mention lookup on the
+// script name here would be flagged by the source scan at the foot of this
+// block as the very call it forbids — the guard-forbids-its-own-documentation
+// shape (#740), arriving in an assertion instead of a comment.
+const SCRIPT_NAME = 'check-tarball-compliance.mjs';
+
+check(
+  'the NAMING decoy really would pass under first-mention resolution',
+  decoyName.indexOf(SCRIPT_NAME) < decoyName.indexOf('npm publish'),
+  'if this fails the fixture no longer reproduces the defect, and the assertion above proves nothing',
+);
+check(
+  'the QUOTING decoy really would pass under a "node "-only anchor',
+  /^[^\n]*node \.github\/scripts\/check-tarball-compliance\.mjs\b[^\n]*$/m.exec(decoyCommand).index <
+    decoyCommand.indexOf('npm publish'),
+  'if this fails the fixture no longer distinguishes the two anchorings',
+);
+
+// The positive control. Same shape, same comment, gate moved back before the
+// publish: excluding comments must not cost the assertion its true case.
+check(
+  'the same job with the gate BEFORE the publish still passes',
+  gateOrdering(
+    [
+      '  publish:',
+      '    steps:',
+      '      - run: npm run build',
+      '      # THE RELEASE GATE. It runs: node .github/scripts/check-tarball-compliance.mjs .',
+      '      - name: Packed tarballs carry README, LICENSE and NOTICE',
+      '        run: node .github/scripts/check-tarball-compliance.mjs .',
+      '      - name: Publish',
+      '        run: npm publish --workspaces --provenance --access public',
+    ].join('\n'),
+  ).ordered === true,
+  'the comment-exclusion must reject decoys without rejecting the real arrangement',
+);
+
+// The decoys prove the RESOLUTION is sound. They cannot prove the live check
+// still calls it — inlining a first-mention lookup at the call site would leave
+// every assertion above green while the real assertion stopped discriminating,
+// which is the #679 shape. So this reads the file's own source.
+//
+// Anchored per line, and matching only a real call: the negative lookahead for
+// a line comment keeps this prose from being read as the violation it forbids.
+const ownSource = readFileSync('.github/scripts/check-release-gate-wiring.test.mjs', 'utf8');
+check(
+  'the gate is never resolved by a bare first-mention lookup anywhere in this file',
+  !/^(?!\s*\/\/)(?!\s*\*).*\.indexOf\(\s*['"]check-tarball-compliance/m.test(ownSource),
+  'resolve the gate from TARBALL_RUN_LINE; a first-mention lookup matches comments',
+);
+
+// ...and the resolution itself, read from the LIVE function object rather than
+// from a textual guess at where it lives. Pins the shape, so replacing the
+// anchored lookup with any other resolution reddens here by name.
+const orderingSource = gateOrdering.toString();
+check(
+  'gateOrdering resolves the gate from the anchored run line',
+  /TARBALL_RUN_LINE\.exec\(/.test(orderingSource) &&
+    /const gateAt = run \? run\.index : -1;/.test(orderingSource),
+  orderingSource,
 );
 
 // --- the gateway suite's dist/ precondition (#702) ----------------------------

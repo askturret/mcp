@@ -11,7 +11,7 @@ of from the authority itself.
 
 | | the value | where it was taken from | why the reflection was wrong |
 |---|---|---|---|
-| **#768 / #804** | the cause of a dropped parameter | the downstream **symptom** — `!op.input` at `validate-invariants.ts:80-87` | a schema dropped for an unencodable media type reported `MISSING_INPUT_SCHEMA`. True in effect, false in fact: the schema was present and readable |
+| **#768 / #804** | the cause of a dropped parameter | the downstream **symptom** — `!op.input`, now at `validate-invariants.ts:168` | a schema dropped for an unencodable media type reported `MISSING_INPUT_SCHEMA`. True in effect, false in fact: the schema was present and readable. **Fixed by #804 — see the note below on how this row decayed** |
 | **#804** | which codes are shared between `doctor` and the compiler | **one pass** — the file being edited | walking a subset of the **three** passes that call `context.warnings.warn` reported **four** shared codes; the answer is **five**. `resolve-identity` was missed |
 | **#676** | how many notices a corpus row recorded | a **count** carried in a brief | the corpus held 234 files and 239 rows. The "five" was the arithmetic surplus, not any file's contents |
 | **PR #605** | a `Signed-off-by` trailer | **memory** of an earlier commit's trailer | it named `dmitrys-mac-mini-8`; the host had been rebuilt as `-9`, so the trailer named a machine that no longer signed anything |
@@ -44,7 +44,7 @@ Applying it is one question: **what would I have to change to make this value
 wrong?** If the answer is anything other than the thing the value is about, you
 are reading a reflection.
 
-Three notes on scope:
+Four notes on scope, and the last is the rule's hardest case:
 
 **A reflection is not a lie; it is a snapshot.** It was correct at the moment it
 was taken, and it decays silently. So the failure has no moment of breakage to
@@ -59,6 +59,33 @@ the authority is the one the other one is derived *from*.
 **Cost is a reason to be explicit, never a reason to substitute.** When
 re-deriving is genuinely too expensive, the answer is the next section — not a
 quiet reflection presented as an answer.
+
+**Deriving from the authority does not protect you if the authority moves
+afterwards.** This is the case the rule does *not* cover, and it is the one most
+likely to catch a careful reader, because everything about the read was correct:
+right source, right method, honestly recorded. **A value derived from the
+authority becomes a reflection the moment the authority changes underneath it** —
+and unlike the instances above there was no cheaper source to have refused.
+
+So a derived value carries an implicit *as-of*, and the rule needs a second half:
+**re-derive at the moment of writing, not at the moment of first learning.** The
+gap between those two is where this failure lives, and it widens with exactly the
+thing that makes a record worth writing — time spent getting it right.
+
+> This record was caught by it. Its first entry under *Verified independently*
+> described the pre-#804 compiler behaviour in the present tense. The read was
+> made while ruling on #762 and was accurate then; **#804 then fixed the very
+> defect being described, and #804 is this record's own merge base.** So the
+> record shipped a false present-tense claim about a file it cites, derived
+> correctly, from the authority, and stale by the time it was written down. It
+> was caught by review, not by the author.
+>
+> **This is the third distinct defect this record has committed against its own
+> subject** — after a miscount inside the row about miscounting, and a paraphrase
+> that inverted a source inside the section about quoting sources. Three is no
+> longer coincidence, and the honest reading is not that the author was careless
+> but that **this class is genuinely hard to avoid while writing about it**,
+> because the writing takes long enough for its own inputs to move.
 
 ## When you cannot make the reader re-derive, say what you derived over
 
@@ -157,9 +184,14 @@ record's subject is values taken from sources that were not checked.
 **Verified independently for this ADR:**
 
 - **The `MISSING_INPUT_SCHEMA` cause-naming** — read on `main` while ruling on
-  #762. `validate-invariants.ts:80-87` warns on `!op.input` and `continue`s,
-  with no access to why `input` is absent; the construction-time drop sites in
-  `from-openapi.ts` return `undefined` silently.
+  #762, **and that reading has since been superseded.** It was: the pass warned
+  on `!op.input` with no access to why `input` was absent, and the
+  construction-time drop sites in `from-openapi.ts` returned `undefined`
+  silently. **#804 fixed both, and #804 is this record's own merge base.** Today
+  `validate-invariants.ts:168` reads `unencodableFromHints(op.hints)` at `:181`
+  and emits `UNENCODABLE_INPUT_MEDIA_TYPE` when the cause is known, falling back
+  to `MISSING_INPUT_SCHEMA` only when it was given none; `from-openapi.ts:335-341`
+  builds the hints and `:369` passes them.
 - **#804's enumeration** — the comment states that the original walk covered only
   the pass being edited and reported four codes where five exist. **The passes
   were counted from the source directory on review** (nine files under
@@ -167,11 +199,13 @@ record's subject is values taken from sources that were not checked.
   `context.warnings.warn`), not from the commit comment.
 - **#676's counts** — measured directly **on 2026-09-08 at the time of that
   ruling**: 234 files, 239 rows. **The absolute pair is dated and drifts daily;
-  the surplus of 5 is the load-bearing part** and has held at every commit
-  sampled since (253/258, 255/260, 257/262, 262/267). Recount rather than citing
-  these.
+  the surplus of 5 is the load-bearing part.** Recount rather than citing these.
 - **The PR #605 trailer** — its own DCO check refused the commit, naming the
   mismatch between the remembered value and the actual author.
+
+**Verified by QA, from its own work, during review of this record:** the surplus
+of 5 above holds at every commit QA sampled — **253/258, 255/260, 257/262,
+262/267**. Those four pairs are QA's measurements, not this author's.
 
 **Reported and NOT reproduced here:** the PR #804 copied-trailer instance, which
 is QA's and the Engineer's observation; and a stale build artifact resolving

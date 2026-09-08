@@ -504,6 +504,27 @@ function analyzeOperation(
     }));
   }
 
+  // FOUR OF THE CODES IN THIS FUNCTION ALSO EXIST IN THE COMPILER, MEANING
+  // SOMETHING ELSE. `MISSING_OPERATION_ID`, `MISSING_INPUT_SCHEMA`,
+  // `MISSING_OUTPUT_SCHEMA` and `MISSING_EFFECTS` are each emitted by
+  // core's `validate-invariants` pass as an IR invariant over EVERY operation,
+  // where doctor's meaning is the narrower spec-quality one below — scoped to an
+  // HTTP method and phrased as advice. The severities disagree as well: doctor
+  // publishes two of them as `error`; every compiler warning is a warning.
+  //
+  // NOTHING MERGES THE TWO TODAY — doctor builds findings from its own walk of
+  // the OpenAPI document, and compiler warnings go to the WarningCollector. This
+  // is a recorded fact, not a defect and not a prediction.
+  //
+  // IF compiler warnings are ever fed into this finding list, each of those four
+  // strings arrives with two meanings and two severities, and the published code
+  // table in this package's README becomes wrong for exactly those rows. Reconcile
+  // the vocabularies before merging them.
+  //
+  // Do NOT resolve it by renaming: these codes are documented in the README and
+  // appear in `--json` output, so they are a user-facing contract and renaming
+  // one is a breaking change. The same note is at the compiler's emit site.
+
   // Check 2: Schema quality
   const hasInputSchema = hasValidInputSchema(operation);
   const hasOutputSchema = hasValidOutputSchema(operation, method);

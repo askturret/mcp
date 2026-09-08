@@ -68,6 +68,43 @@ function unencodableFromHints(
   return parts.length > 0 ? parts.join('; ') : undefined;
 }
 
+/**
+ * FOUR OF THE CODES BELOW ALSO EXIST IN `turret doctor`, MEANING SOMETHING ELSE.
+ *
+ * Two independent vocabularies share four strings, and in every pair doctor's
+ * meaning is the NARROWER one — scoped to an HTTP method, phrased as advice —
+ * while the code here is an IR invariant that applies to every operation:
+ *
+ *   MISSING_OPERATION_ID    here: no `id` on the operation
+ *                           doctor: the spec has no `operationId`
+ *   MISSING_INPUT_SCHEMA    here: no `input` schema, any operation
+ *                           doctor: a MUTATING operation should define a body
+ *   MISSING_OUTPUT_SCHEMA   here: no `output` schema, any operation
+ *                           doctor: a GET must have a non-empty output schema
+ *   MISSING_EFFECTS         here: no `effects` metadata
+ *                           doctor: a mutating operation should carry x-mcp-effects
+ *
+ * The severities disagree too: doctor publishes MISSING_OPERATION_ID and
+ * MISSING_OUTPUT_SCHEMA as `error`, while everything this pass emits is a
+ * warning.
+ *
+ * NOTHING MERGES THE TWO TODAY. doctor builds its findings from its own walk of
+ * the OpenAPI document; these go to the compiler's WarningCollector and are
+ * logged. So there is no defect here to fix, and this is not a prediction that
+ * anything will change.
+ *
+ * THE CONDITION UNDER WHICH IT BITES is a single, checkable one: if compiler
+ * warnings are ever fed into doctor's finding list, each of those four strings
+ * arrives carrying two meanings and two severities, and doctor's PUBLISHED code
+ * table (packages/cli/README.md) becomes wrong for exactly those rows. Whoever
+ * merges the vocabularies has to reconcile them first.
+ *
+ * DO NOT RESOLVE THIS BY RENAMING EITHER SIDE without asking. doctor's codes are
+ * documented in a published package's README and appear in its `--json` output,
+ * so they are a user-facing contract; renaming one is a breaking change, not a
+ * tidy-up. The same note is at doctor's emit site, because the collision bites
+ * whoever merges the two and they may arrive from either direction.
+ */
 export const validateInvariants: CompilerPass = {
   name: 'validate-invariants',
 

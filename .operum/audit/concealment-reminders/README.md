@@ -51,9 +51,9 @@ drift. The remedy is not:
 The disproof is in this corpus's own history. The question *"is this hedged,
 actor-less wording the T1 family, or a departure from it?"* was answerable only
 because every instance was kept. Under a tally it would have been
-**unanswerable**: you could still say *"83 T1C"*, and you could no longer
-discover that some of those 83 are not quite the same wording after all — which
-is the exact thing this corpus exists to detect. Substituting the derived value
+**unanswerable**: you could still say how many T1C rows there are, and you could
+no longer discover that some of them are not quite the same wording after all —
+which is the exact thing this corpus exists to detect. Substituting the derived value
 for the evidence is irreversible, and it forecloses questions nobody has asked
 yet, including the one that was asked the day this was written.
 
@@ -66,6 +66,25 @@ singletons. **Derive the summary; keep the evidence.**
 The multi-row files make every count over this directory ambiguous, and that has
 already produced two correct answers that read as a disagreement: **77 rows
 carry no string `template_id`, and they live in 75 files.** Neither is wrong.
+
+Both are present-tense and drift the moment another such row lands, so the
+predicate travels with them — the same move the totals above make:
+
+```
+node -e 'const fs=require("fs"); let r=0; const f=new Set();
+for (const n of fs.readdirSync(".").filter(x => x.endsWith(".jsonl")))
+  for (const l of fs.readFileSync(n,"utf8").split("\n").filter(Boolean))
+    if (typeof JSON.parse(l).template_id !== "string") { r++; f.add(n); }
+console.log(r, "rows in", f.size, "files");'
+```
+
+**Parse the rows; do not grep them.** These are JSON objects and their
+whitespace is not normalised, so `grep '"template_id":"T1C"'` misses every row
+written with a space after the colon. Measured at 244 rows: **69 against a
+parsed 93.** It undercounts by dozens, silently, and in the direction that looks
+like *less* drift — a grep that matches today is one differently-formatted
+writer away from being wrong, and it fails by returning a number rather than an
+error.
 
 The whole gap is **one file**: `20260826T075830Z-engineer-383.jsonl` holds three
 such rows, contributing 1 to the file tally and 3 to the row tally. The other two

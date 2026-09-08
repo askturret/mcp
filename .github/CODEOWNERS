@@ -18,30 +18,49 @@
 # its owner. `.github/scripts/check-codeowners.mjs` catches dead PATTERNS; it
 # cannot check permissions, which are not visible from the repository.
 #
-# ## Today, everything routes to the founder
+# ## Today, every area routes to both owners
 #
-# That is the honest state, not a placeholder to be embarrassed about: §12.4's
-# boundaries are drawn now so the structure exists before the people do. The
-# areas are listed separately even though every line names the same handle,
-# because the point is that adding a maintainer becomes a one-line change to an
-# existing boundary rather than an argument about where the boundary goes.
+# @didi178 and @alprimak co-own every path, by founder decision on 2026-09-08
+# (#647). §12.4's boundaries were drawn before the people existed so that adding
+# a maintainer would be a one-line change to an existing boundary rather than an
+# argument about where the boundary goes — and this is that change.
 #
-# ## What this file does and does not gate today (#330)
+# BOTH HANDLES ARE ON EVERY RULE, not only the catch-all, and that is
+# load-bearing rather than repetitive. LAST match wins, so a second owner added
+# to `*` alone would be overridden by every area rule beneath it, and every path
+# except the ones no area names would still route to one person. The areas stay
+# listed separately for the original reason: handing one to a different
+# maintainer remains a one-line edit.
+#
+# ## What this file does and does not gate today (#330, #647)
 #
 # The repository is public and a branch ruleset requires 1 code-owner approval,
 # so these rules are honoured by GitHub — where previously the plan tier meant
-# they were not. They nonetheless gate NO PR authored in this repository today,
-# for two independent reasons, either alone sufficient:
+# they were not. Two independent reasons, either alone sufficient, meant they
+# gated NO PR authored here. The founder's decision of 2026-09-08 resolves the
+# first and deliberately keeps the second:
 #
-#   1. SELF-AUTHORSHIP. GitHub never requests review from a PR's own author, and
-#      every PR here is authored by the same account that owns every path.
-#   2. BYPASS. That account is an `always` bypass actor on both rulesets, as are
-#      organisation admins and the admin role. The rule does not apply to it
-#      even when an approver exists.
+#   1. SELF-AUTHORSHIP — RESOLVED BY THIS FILE. GitHub never requests review
+#      from a PR's own author, and every path used to be owned by the one
+#      account that authors every PR. A second owner now exists, so a
+#      @didi178-authored PR routes review to @alprimak. This is the first time
+#      these rules route anything.
+#   2. BYPASS — STILL HOLDS, AND IS SUFFICIENT ALONE. @didi178 remains an
+#      `always` bypass actor on both rulesets, as are organisation admins and
+#      the admin role. The rule does not apply to the account that authors and
+#      merges, even now that an approver exists.
 #
-# So this file is STRUCTURE FOR FUTURE MAINTAINERS, not a control on today's
-# changes. Adding a second owner fixes (1); removing the bypass entry fixes (2);
-# BOTH are required before any claim of enforced review is true.
+# So code-owner approval here is REQUESTABLE, NOT REQUIRED. Removing the bypass
+# entry is what would fix (2); it was considered and DECLINED in the same
+# decision, in exchange for keeping merge throughput — not overlooked.
+#
+# A second REVIEWER now exists; a second NON-BYPASSING reviewer does not, and
+# the distinction is the whole content of (2). @alprimak holds `admin`, so they
+# are additionally covered by the OrganizationAdmin and admin-RepositoryRole
+# bypass entries the same decision retains.
+#
+# So this file is no longer only STRUCTURE FOR FUTURE MAINTAINERS — it now
+# routes a review request — but it is still not a control on today's changes.
 #
 # Deliberately no status word. "Dormant" and "live" are each one platform
 # setting away from being false, and the claim this replaces went stale without
@@ -51,7 +70,7 @@
 # ---------------------------------------------------------------------------
 # Default
 # ---------------------------------------------------------------------------
-*                                   @didi178
+*                                   @didi178 @alprimak
 
 # ---------------------------------------------------------------------------
 # §12.4 boundaries
@@ -60,35 +79,35 @@
 # core/ — core maintainers.
 # The compiler, dispatcher, policy engine, presets, audit and redaction. Every
 # other package depends on it, so a change here reaches everything.
-/packages/core/                     @didi178
+/packages/core/                     @didi178 @alprimak
 
 # transports/ — protocol maintainers.
 # The MCP wire contract. Changes here are visible to every client that speaks
 # to us, including ones we do not control.
-/packages/transports/               @didi178
+/packages/transports/               @didi178 @alprimak
 
 # sources/openapi/ — schema maintainers.
-/packages/sources-openapi/          @didi178
+/packages/sources-openapi/          @didi178 @alprimak
 
 # adapters/ — adapter owners, AND a green conformance run.
 # The conformance requirement is a REVIEW rule, not something CODEOWNERS can
 # express; see docs/ownership.md. CI enforces the run, an owner enforces the
 # judgement, and neither substitutes for the other.
-/packages/adapters-express/         @didi178
-/packages/adapters-fastify/         @didi178
+/packages/adapters-express/         @didi178 @alprimak
+/packages/adapters-fastify/         @didi178 @alprimak
 
 # explorer/ — UI maintainers.
-/packages/explorer/                 @didi178
+/packages/explorer/                 @didi178 @alprimak
 
 # observability/ — runtime/SRE maintainers.
-/packages/observability/            @didi178
-/packages/reliability/              @didi178
+/packages/observability/            @didi178 @alprimak
+/packages/reliability/              @didi178 @alprimak
 
 # examples/ — shared ownership.
 # The lightest boundary in the file, deliberately: examples are how people
 # start, and a heavy review burden on them is how they go stale.
-/examples/                          @didi178
-/packages/examples/                 @didi178
+/examples/                          @didi178 @alprimak
+/packages/examples/                 @didi178 @alprimak
 
 # ---------------------------------------------------------------------------
 # Areas §12.4 predates
@@ -101,16 +120,16 @@
 # could weaken the gate governing their own work. That is moot while one person
 # owns everything, and it is exactly the kind of thing that is impossible to
 # retrofit once several people do — see docs/ownership.md § Separation of duties.
-/packages/adapter-conformance/      @didi178
-/packages/adapter-test/             @didi178
+/packages/adapter-conformance/      @didi178 @alprimak
+/packages/adapter-test/             @didi178 @alprimak
 
 # Standalone gateway. A deployment artifact — a container and a published
 # binary — rather than a library, so it carries release-surface risk the
 # embedded packages do not.
-/packages/gateway/                  @didi178
+/packages/gateway/                  @didi178 @alprimak
 
 # Operator tooling: doctor, inspect, diff, diagnostics.
-/packages/cli/                      @didi178
+/packages/cli/                      @didi178 @alprimak
 
 # ---------------------------------------------------------------------------
 # Repository infrastructure
@@ -121,19 +140,19 @@
 # Listed explicitly because these are the gates every other rule relies on. A
 # change here can disable a check for the whole repository, which is a larger
 # blast radius than any single package.
-/.github/                           @didi178
+/.github/                           @didi178 @alprimak
 
 # Merge behaviour for the append-only audit logs (#128). A change here can
 # reintroduce silent row loss.
-/.gitattributes                     @didi178
+/.gitattributes                     @didi178 @alprimak
 
 # Contracts the project has published and owes people stability on.
-/docs/compatibility.md              @didi178
-/docs/generated-output-license.md   @didi178
-/docs/telemetry-policy.md           @didi178
-/docs/ownership.md                  @didi178
-/LICENSE                            @didi178
-/NOTICE                             @didi178
+/docs/compatibility.md              @didi178 @alprimak
+/docs/generated-output-license.md   @didi178 @alprimak
+/docs/telemetry-policy.md           @didi178 @alprimak
+/docs/ownership.md                  @didi178 @alprimak
+/LICENSE                            @didi178 @alprimak
+/NOTICE                             @didi178 @alprimak
 
 # The Factor 2 concealment allowlist (#276).
 #
@@ -147,4 +166,4 @@
 # the widening SHOULD happen. That is what this rule is for.
 #
 # Listed last because the last matching rule wins.
-/.operum/audit/concealment-templates.toml  @didi178
+/.operum/audit/concealment-templates.toml  @didi178 @alprimak

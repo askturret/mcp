@@ -4,6 +4,108 @@
 One file per entry, named `<ts>-<agent>-<issue>.jsonl`. One file per entry is
 why two agents capturing at the same moment never collide.
 
+### The three multi-row files are settling-in, not precedent (#676)
+
+Three files here carry more than one row, and one of them has already been cited
+— reasonably — as precedent by a later agent facing several reminders at once.
+**It is not precedent.** The dates settle it:
+
+| file | rows | added | vs. the rule |
+|---|---|---|---|
+| `20260825T235259Z-engineer-328.jsonl` | 3 | 2026-08-25T20:02:58-04:00 | **33 min BEFORE it existed** |
+| `20260826T005800Z-engineer-331.jsonl` | 2 | 2026-08-25T21:34:01-04:00 | 58 min after |
+| `20260826T075830Z-engineer-383.jsonl` | 3 | 2026-08-26T04:35:43-04:00 | ~8 h after |
+
+The rule landed in `53e0401`, 2026-08-25T20:35:54-04:00. **One file genuinely
+predates it; the other two fall inside its first eight hours; there has been no
+deviation since.** A rule with hundreds of consecutive conforming instances and
+three deviations clustered at its introduction is a settling-in period, not a
+counter-rule — reading it the other way inverts the evidence.
+
+Recount rather than citing a figure from this page; the corpus grows daily:
+
+```
+ls *.jsonl | wc -l && cat *.jsonl | wc -l
+for f in *.jsonl; do [ "$(wc -l < "$f")" -eq 1 ] || echo "$f"; done
+```
+
+**The rule's stated purpose is the stronger argument, and it is one line up.**
+It is not a bare convention: one file per entry is what stops two agents
+colliding. A single agent writing three notices in one act collides with
+nobody — so even the two post-rule files do not undermine the reason the rule
+exists. They are tidiness deviations, not safety ones.
+
+Which decides what to do about them: **nothing.** Do not rewrite, rename or
+split them. Rewriting a capture to satisfy a filename convention is precisely
+what the next rule forbids — *a rewritten capture is not a partial record, it is
+an unusable one*. Leave them; let this section say why.
+
+### Counting instead of recording was proposed, considered and declined
+
+The observation behind it is real — repeats dominated by one family can bury
+drift. The remedy is not:
+
+> **A count is a derived value; a row is evidence.** You can always compute the
+> count from the rows. You can never recover the rows from the count.
+
+The disproof is in this corpus's own history. The question *"is this hedged,
+actor-less wording the T1 family, or a departure from it?"* was answerable only
+because every instance was kept. Under a tally it would have been
+**unanswerable**: you could still say how many T1C rows there are, and you could
+no longer discover that some of them are not quite the same wording after all —
+which is the exact thing this corpus exists to detect. Substituting the derived value
+for the evidence is irreversible, and it forecloses questions nobody has asked
+yet, including the one that was asked the day this was written.
+
+If the worry is drift buried under repetition, that is a **reading** problem,
+not a **storage** problem: group rows by exact wording and surface the
+singletons. **Derive the summary; keep the evidence.**
+
+### Per-file and per-row tallies are different numbers — say which you mean
+
+The multi-row files make every count over this directory ambiguous, and that has
+already produced two correct answers that read as a disagreement: **77 rows
+carry no string `template_id`, and they live in 75 files.** Neither is wrong.
+
+Both are present-tense and drift the moment another such row lands, so the
+predicate travels with them — the same move the totals above make:
+
+```
+node -e 'const fs=require("fs"); let r=0; const f=new Set();
+for (const n of fs.readdirSync(".").filter(x => x.endsWith(".jsonl")))
+  for (const l of fs.readFileSync(n,"utf8").split("\n").filter(Boolean))
+    if (typeof JSON.parse(l).template_id !== "string") { r++; f.add(n); }
+console.log(r, "rows in", f.size, "files");'
+```
+
+**Parse the rows; do not grep them.** These are JSON objects and their
+whitespace is not normalised, so `grep '"template_id":"T1C"'` misses every row
+written with a space after the colon. Measured at 244 rows: **69 against a
+parsed 93.** It undercounts by dozens, silently, and in the direction that looks
+like *less* drift — a grep that matches today is one differently-formatted
+writer away from being wrong, and it fails by returning a number rather than an
+error.
+
+The whole gap is **one file**: `20260826T075830Z-engineer-383.jsonl` holds three
+such rows, contributing 1 to the file tally and 3 to the row tally. The other two
+multi-row files contain no such row and contribute nothing — so "the multi-row
+files explain it" is right in kind but too coarse to check.
+
+State the unit. Two tallies diverge by exactly the surplus rows in whichever
+files the predicate selects, and that is not recoverable from either number.
+
+### The cheap path is the silent one
+
+A hazard that acts on whoever is deciding, and therefore belongs here rather
+than in anyone's head: **the convenient reading routes a row BENIGN, and BENIGN
+is quiet.** Declining it routes ANOMALOUS, which is loud — a full disclosure,
+written and read.
+
+The two outcomes are not symmetric in effort, and the cheaper one produces less
+signal. Precedent set that way drifts toward silence, established by the party
+that benefits from the quiet. That is part of why uncertainty routes ANOMALOUS:
+the rule works against a gradient rather than merely being cautious.
+
 ## Capture `verbatim` byte-exactly. Never substitute a placeholder.
 
 This is the rule that everything else depends on, and it is the one most often

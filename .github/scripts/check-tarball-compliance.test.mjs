@@ -597,20 +597,31 @@ function runGuard(repoRoot, binDir) {
 //
 // It said: "Every arm below was confirmed to redden when the currency block is
 // removed; nothing here passes for the reason the OLD guard would have passed."
-// Both clauses fail. Measured by mutation rather than argued:
+// Both clauses fail — several arms below do not redden at all, and two of them
+// pass for exactly the reason the old guard would have passed.
 //
-//   disabling the comparison loop only ........... 8 arms redden
-//   also disabling the root-mirror read .......... 10 arms redden
+// NO COUNT IS STATED HERE, AND THAT IS THE CORRECTION RATHER THAN A HEDGE.
+// "The currency block" is TWO blocks: the root-mirror read, which sits OUTSIDE
+// the package loop and emits its own cannot-check, and the per-package
+// comparison INSIDE it, which only consumes the map. Removing "the currency
+// block" is therefore several different mutations, and they do not all give the
+// same number — nor does either block's cannot-check emission behave the same
+// as the block it sits in.
 //
-// NO COUNT IS STATED ABOVE THIS LINE ON PURPOSE, and the two figures are why:
-// "the currency block" is TWO blocks — the root-mirror read and the per-package
-// comparison — so the number depends on which you remove. A sentence asserting
-// one number was going to be wrong under some reading of its own key term.
+// A draft of this paragraph DID cite figures, one per named scope. They were
+// dropped because three readers ran three defensible mutations under those same
+// names and got three different totals. A committed number that a reader cannot
+// reproduce without already knowing the exact mutation is the very thing this
+// paragraph replaced — the fix would have re-created the defect in a new
+// costume, one sentence further down.
 //
-// AND NO LIST OF ARM NAMES, which was the other candidate remedy. An enumerated
-// list of arms is a hand-maintained parallel copy that nothing compares — the
-// exact class #700 and #771 are about — and it would drift silently the first
-// time an arm is renamed. Categories survive a rename; a name list does not.
+// The qualitative claim needs no number and is what a reader can check: run any
+// mutation you like and read the marks below against what reddens.
+//
+// AND NO LIST OF ARM NAMES, which was the other candidate remedy. The reason is
+// CO-LOCATION rather than rename-survival: a mark sitting AT its arm is the only
+// copy there is, so there is nothing that CAN drift. A list elsewhere is a
+// second copy compared by nothing — the exact class #700 and #771 are about.
 //
 // So the arms that do NOT redden are marked WHERE THEY ARE, each with its
 // reason, and they fall into four kinds:
@@ -746,8 +757,8 @@ function runGuard(repoRoot, binDir) {
       })
       .map((p) => p.name);
     // TEST-LOCAL — computed in this file; never calls main(), so no mutation of
-  // the guard can reach it (#704).
-  check('#587: every real packaged NOTICE and LICENSE matches the root', drifted.join(', ') || 'none', 'none');
+    // the guard can reach it (#704).
+    check('#587: every real packaged NOTICE and LICENSE matches the root', drifted.join(', ') || 'none', 'none');
   }
 }
 

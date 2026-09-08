@@ -42,17 +42,43 @@
  *   - and `publish` would publish anyway, because it no longer waits on
  *     `readiness`.
  *
- * The backstop fails in exactly the case it exists for, and what it produces is
- * a red job beside a successful publish — a red X on a release nothing actually
- * refused, which is the overclaim `tag-readiness-advisory.yml` already rules
- * against in the other direction.
+ * The backstop fails in exactly the case it exists for. And that word was the
+ * only thing ORDERING the two jobs, so once it is gone they run concurrently:
+ * the red need not even land beside the publish, it can arrive AFTER it, on a
+ * version already public. Nothing sequences them. `publish` is the one
+ * GitHub-hosted job here while `readiness` queues for the self-hosted pool, so
+ * that order is an ordinary schedule rather than a contrived one. Either way it
+ * is a red X on a release nothing actually refused — the overclaim
+ * `tag-readiness-advisory.yml` already rules against in the other direction.
  *
  * THE RESIDUAL, stated rather than implied: one lane cannot catch a workflow
  * change that reaches the release ref WITHOUT passing the PR lane. Every path
- * this repository uses goes through a pull request, so that is narrow — and per
- * the paragraph above, the `readiness` job is not somewhere that could block it
- * anyway. Closing it would need a check that runs before the publish AND is
- * depended on by it, which is what `needs:` already is.
+ * this repository uses goes through a pull request, so that is narrow.
+ *
+ * Two things this header does NOT get to say about it.
+ *
+ * FIRST, not "`readiness` could not block it either". Finding 1 proves
+ * `readiness` cannot block ONE failure — its own deletion from `publish`'s
+ * `needs:`, which is the case that severs the edge. The residual is a different
+ * scenario: some other workflow change arriving off the PR lane, with the edge
+ * INTACT. There a red `readiness` WOULD block `publish`, exactly as designed.
+ * Generalising finding 1 from the single case it proves to every case is a
+ * claim it does not support.
+ *
+ * SECOND, not "closing it would need a check that does not exist". One exists:
+ * `supply-chain`, in this same workflow file. It runs on `release` — its `if:`
+ * excludes only dependabot pull requests, and the comment above it says push
+ * and release must never be skipped by that condition — and `publish` NEEDS it.
+ * A wiring assertion hosted there would go red on the needs-deletion AND block
+ * the publish, covering finding 1's case and this residual together.
+ *
+ * It is not wired there, and that is a TRADE rather than an absence.
+ * `supply-chain` is the licence, NOTICE and SBOM job: every step in it is about
+ * what the product ships, and a red there is read as a compliance failure. A
+ * workflow-wiring assertion would be the one step that is about something else,
+ * making that job's red mean two unrelated things — paid for a path this
+ * repository does not use. If that stops being true, this is the lane, recorded
+ * here so the option is revisited rather than rediscovered.
  *
  * STILL DEPENDENCY-FREE, for the reason that is actually true rather than the
  * one above: it keeps this file eligible for the install-less lanes, where its

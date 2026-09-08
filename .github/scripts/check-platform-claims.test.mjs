@@ -403,6 +403,35 @@ check(
   false,
 );
 
+// THE GUARD'S OWN PROSE NAMES A `verifiable` EXAMPLE, AND IT MUST STILL BE ONE.
+//
+// This is the assertion that was missing. The paragraph contrasting the two
+// classifications named `organisation_plan` as its `verifiable` example; this
+// change reclassified that property and left the sentence standing, and the
+// suite was 67/0 with it false (#802, QA). Prose asserting the PRE-change
+// classification, AS THE GUIDANCE FOR THE NEXT CLASSIFICATION DECISION, is
+// #784's own defect in another medium — and the original misclassification came
+// from reasoning across resources BY ANALOGY, which is exactly what that
+// sentence invites a reader to do.
+//
+// Scoped to the ONE name the prose asserts, rather than checking prose in
+// general: "is this sentence a present-tense claim or a description of history?"
+// is not decidable, and a checker that guessed would fire on the two lines in
+// the guard that correctly narrate what the classification USED to be.
+{
+  const guardSource = readFileSync(GUARD, 'utf-8');
+  const named = /^\s*\/\/\s+`verifiable` example: `([a-z_]+)`/m.exec(guardSource);
+  // NON-VACUITY FIRST. If the line is reworded or deleted this must fail rather
+  // than silently stop checking — a check that passes because it found nothing
+  // is the shape #784 cost us.
+  check('#784: the guard prose still names a `verifiable` example in the checked form', named !== null, true);
+  check(
+    '#784: ...and the property it names really is classified `verifiable`',
+    named === null ? '(no example found)' : VOCABULARY[named[1]]?.classification,
+    'verifiable',
+  );
+}
+
 // ---------------------------------------------------------------------------
 // THE MISCLASSIFICATION AUDIT — the answer to "should an undeclared vocabulary
 // entry be flagged at all?" (#784)

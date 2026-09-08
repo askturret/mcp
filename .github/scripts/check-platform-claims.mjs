@@ -190,17 +190,46 @@ export const VOCABULARY = Object.freeze({
     // the fourth exercises it. The classification was right, but it is only now
     // EVIDENCED rather than inferred.
     //
-    // WHY THAT FORCES THIS CLASSIFICATION RATHER THAN `verifiable`. This file
-    // already holds both precedents, and they are distinguished by whether the
-    // credential COULD ever suffice. `organisation_plan` is `verifiable` because
-    // it MAY be readable depending on the token. `code_owner_review_required` is
-    // `declared-unverifiable` because reading it "requires admin credentials CI
-    // does not hold". This is the second case, not the first: no `permissions:`
-    // block can grant the scope, so it is not token-dependent — it is closed.
+    // WHY THAT FORCES THIS CLASSIFICATION RATHER THAN `verifiable`. The two
+    // classifications are separated by ONE question, and #784 changed what
+    // answers it: does the SCHEDULED JOB'S OWN CREDENTIAL read the property —
+    // MEASURED, not reasoned?
+    //
+    //   `verifiable` example: `repository_visibility` — the job reads it, 200
+    //     with `visibility` present. THE LINE ABOVE IS MACHINE-CHECKED: the
+    //     self-test extracts that property name and asserts the vocabulary really
+    //     classifies it `verifiable`. Keep it on one line. It exists because the
+    //     sentence it replaces named a property that this very PR reclassified,
+    //     and stayed green (#802, QA).
+    //   `declared-unverifiable`: this entry, and every other in this vocabulary
+    //     carrying a `reason` — each needs a credential no `permissions:` block
+    //     can grant. Deliberately NOT enumerated here: the membership is pinned
+    //     exactly, by name, in the self-test, and a second hand-maintained copy
+    //     is the thing that just went stale.
+    //
+    // THIS PARAGRAPH USED TO ASK A WEAKER QUESTION — whether the credential could
+    // EVER suffice — and it named `organisation_plan` as the `verifiable` side,
+    // because that property MIGHT be readable depending on the token. #784
+    // measured it: it is not, so it now sits in the class below, and that example
+    // is gone rather than replaced.
+    //
+    // THE TOKEN-DEPENDENT SIDE HAS NO EXAMPLE ON PURPOSE. An aspirational
+    // `verifiable` — "we think a token could read this" — is precisely what #784
+    // cost, and `checkLive`'s misclassification audit now reports one as a
+    // divergence for any property the job actually reads. So do not reintroduce
+    // "might be readable" as a reason to classify something `verifiable`: measure
+    // it, and if the job cannot read it, it belongs here with a reason.
+    //
+    // WHAT THE AUDIT DOES NOT COVER, recorded so nobody leans on it further than
+    // it reaches (QA, #802): it needs an `absent-field` entry in `unreadable`, so
+    // it is silent for a property classified `verifiable` that `readLiveState`
+    // never reads. Flipping a classification WITHOUT restoring the read — the
+    // likelier half of the mistake — is caught by the naming pins in
+    // `check-platform-claims.test.mjs`, not here. Those pins are the protection;
+    // do not weaken them on the strength of this audit existing.
     //
     // AND THE COST OF GETTING IT WRONG IS NOT SYMMETRIC. `repository_visibility`
-    // is currently the ONLY declared verifiable property (`organisation_plan` is
-    // in this vocabulary but declared at no site), so the nightly's
+    // is the ONLY `verifiable` property in this vocabulary, so the nightly's
     // platform-claims job runs GREEN. Declaring this one `verifiable` would make
     // it CANNOT CHECK on every run, permanently — exit 2 forever, with no path
     // to green and no way to distinguish it from a real unreadability. That

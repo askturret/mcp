@@ -175,12 +175,53 @@ const TEXT_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.cjs', '.js', '.yml', '.
  * from the capture stopping early, so widening the capture cannot break an
  * intended prefix semantic; there was never one to break.
  *
- * WHY THE CLASS IS NOT SIMPLY WIDENED TO INCLUDE `.`. A sentence-ending period
- * is the overwhelmingly common neighbour of a package name in prose, so
- * `[a-z0-9._-]*` captures `@askturret/mcp-cli.` from "…run `npx
- * @askturret/mcp-cli`." and reports a package that does not exist — trading a
- * silent suppression for a noisy false accusation on correct documents, which
- * is how a guard becomes something people switch off.
+ * WHY THE CLASS IS NOT SIMPLY WIDENED TO INCLUDE `.`. Widening it to
+ * `[a-z0-9._-]*` makes a sentence-ending period part of the name: a line
+ * reading
+ *
+ *     Then run npx @askturret/mcp-cli.
+ *
+ * captures `@askturret/mcp-cli.` and reports a package that does not exist.
+ *
+ * NOTE THE ABSENCE OF BACKTICKS IN THAT EXAMPLE, because it is the whole
+ * difference. Written the more natural way — ``run `npx @askturret/mcp-cli`.``
+ * — the closing backtick sits between the name and the period, every candidate
+ * pattern captures identically, and the example demonstrates nothing. The
+ * hazard needs the period ADJACENT to the name. That is the same backtick trap
+ * that made this change's own prose control decorative until a mutation caught
+ * it; it survived one file over, in the rationale (#805 review).
+ *
+ * THE ARGUMENT IS ASYMMETRY, NOT FREQUENCY — and an earlier draft of this
+ * comment got that wrong, asserting a sentence-ending period was "the
+ * overwhelmingly common neighbour of a package name in prose". MEASURED over
+ * the 61 invocations present BEFORE this comment was written, the character
+ * following the captured name is:
+ *
+ *     space  54    newline  5    `@`  1    backtick  1    period  0
+ *
+ * Zero. The claim was not merely imprecise, it was false about the tree it was
+ * asserted over.
+ *
+ * THE FIGURES ARE SCOPED TO THE PRE-COMMENT TREE ON PURPOSE, because this
+ * comment CHANGED them: the guard scans `.mjs` files including this one, so the
+ * unbackticked example above is now the tree's ONE period-adjacent invocation
+ * (and the backticked counter-example its second backtick). Counting after
+ * writing them would report the prose describing the hazard as evidence of the
+ * hazard. It is harmless — `mcp-cli` is published, and the capture excludes the
+ * trailing dot, so it names a real package and the guard stays green.
+ *
+ * And nothing in the frequency of a period decides this anyway. What decides it
+ * is which mistake is likelier and which fails worse:
+ *
+ *   the RESIDUAL below needs someone to publish an npm package whose name ENDS
+ *     in a dot, and its failure is a silent suppression of that one name;
+ *   the NAIVE WIDENING needs someone to end a sentence with a package name, and
+ *     its failure is the guard ACCUSING a correct document of naming a package
+ *     that does not exist.
+ *
+ * The second is far likelier and worse — a false accusation on a correct
+ * document is how a guard becomes something people switch off. That holds at a
+ * period count of zero, which is exactly why it is the leg to rest on.
  *
  * So the name may CONTAIN `.`, `_` and `-`, and may END with anything except a
  * dot. That is the npm grammar's shape and it separates the two cases exactly:
@@ -190,8 +231,8 @@ const TEXT_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.cjs', '.js', '.yml', '.
  *
  * THE RESIDUAL, stated rather than implied: a name ENDING in a dot would still
  * truncate and could still inherit an exemption. That is not a plausible npm
- * name, and closing it is what would reintroduce the prose false-positive
- * above, so it is accepted knowingly rather than overlooked.
+ * name, and closing it is what would reintroduce the false accusation above, so
+ * it is accepted knowingly rather than overlooked.
  *
  * MEASURED before and after on the real tree: 61 invocations both ways, zero
  * differences. This is the status quo for every line that exists today; it

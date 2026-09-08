@@ -2542,35 +2542,65 @@ function probeSpawnSafety(scriptPath, cwd) {
 }
 
 // ---------------------------------------------------------------------------
-// The mutation-application trap catalogue is MIRRORED, so it can drift (#761)
+// TESTING.md's list counts are MIRRORED in prose, so they drift (#761)
 //
 // `docs/TESTING.md` is the only control this repository has over the MANUAL
 // RED-on-revert procedure: an ad-hoc `sed`/`replace` mutation leaves NO artifact
 // in the tree, so no guard can inspect whether it applied. When the sole control
-// is prose, prose going stale IS the failure — and there are four copies of the
-// count available to disagree with each other:
+// is prose, prose going stale IS the failure.
 //
-//   1. the doc's own heading         "### The six variants"
-//   2. the doc's actual table rows   | 6 | ... |
-//   3. the harness's claim about it  "`docs/TESTING.md` catalogues six."
-//   4. the harness's own trap list    *   6  mutation never applied
+// The document keeps TWO numbered lists, and each states its own size in more
+// than one place. Every site below is a copy that can disagree with the list it
+// describes — deliberately enumerated rather than totalled, because a comment
+// saying "there are five copies" would itself be copy six, and stale the moment
+// someone adds one. That is this section's own subject applied to itself.
 //
-// Adding a variant means touching all four. Missing one leaves a confidently
-// worded false claim in the file the next author reads — the same defect class
-// the catalogue documents, one level up.
+//   antipatterns    "## The <word> antipatterns"        <- heading
+//                   "The <word> antipatterns above"     <- prose, far below
+//                   "### N. Name"                       <- the list itself
+//
+//   trap variants   "### The <word> variants"           <- heading
+//                   "only that these <word> have been"  <- prose, far below
+//                   "| N | ..."                         <- the table itself
+//                   "### Recorded instances" rows       <- a second table
+//                   check-mutation-audit "catalogues <word>."
+//                   check-mutation-audit " *   N  ..."  <- its own trap list
+//
+// THE PROSE SITES ARE THE ONES THAT ROT, and they rot precisely because they sit
+// hundreds of lines from the list they count, so an author extending the list
+// never sees them. Both were caught that way: line 471 was ALREADY FALSE on
+// `main` before #761 touched anything — six antipatterns, prose saying five —
+// and the variants prose was left stale by #761's own first draft, which edited
+// that very line and pinned everything except it (QA proved it by mutation, and
+// the suite stayed green).
 //
 // Ids are pinned BY MEMBERSHIP, not by count. A count is satisfied by any six
 // rows, including a duplicated `3` with `6` missing, so it cannot hold the
 // numbering contiguous — and contiguity is what the `variant N` cross-references
 // elsewhere in TESTING.md and in check-doc-surfaces.test.mjs depend on.
 // Renumbering silently repoints every one of them, so appending is the only safe
-// way to extend the table.
+// way to extend either list.
 {
   const NUMBER_WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+  const wordFor = (n) => NUMBER_WORDS[n] ?? `<${n}>`;
 
   const testingDoc = readFileSync(resolve(here, '..', '..', 'docs', 'TESTING.md'), 'utf-8');
   const auditSource = readFileSync(join(here, 'check-mutation-audit.mjs'), 'utf-8');
 
+  // A count word stated in prose, checked against the list it describes. `m` is
+  // null when the sentence has been reworded away — reported as ABSENT rather
+  // than skipped, because a silently-vanished claim is how this check would stop
+  // covering the thing it was added for.
+  const pinWord = (label, m, expected) => check(label, m === null ? 'ABSENT' : m[1], expected);
+
+  // --- list 1: the test antipatterns ---------------------------------------
+  const apIds = [...testingDoc.matchAll(/^### (\d+)\. /gm)].map((x) => Number(x[1]));
+  check('TESTING.md antipattern list is non-empty', apIds.length > 0, true);
+  check('TESTING.md antipattern ids are contiguous from 1', apIds.join(','), apIds.map((_, i) => i + 1).join(','));
+  pinWord('TESTING.md "## The <word> antipatterns" matches the list', /^## The (\w+) antipatterns$/m.exec(testingDoc), wordFor(apIds.length));
+  pinWord('TESTING.md "The <word> antipatterns above" matches the list', /^The (\w+) antipatterns above/m.exec(testingDoc), wordFor(apIds.length));
+
+  // --- list 2: the mutation-application trap variants ------------------------
   // Scoped to the traps section so a numbered table elsewhere in the document
   // cannot satisfy this by accident.
   const sectionIdx = testingDoc.indexOf('## Mutation-application traps');
@@ -2581,20 +2611,36 @@ function probeSpawnSafety(scriptPath, cwd) {
   check('TESTING.md declares a "### The <word> variants" heading', heading === null ? 'ABSENT' : 'present', 'present');
 
   if (heading !== null) {
-    // The table follows the heading and ends at the next `###`.
-    const table = section.slice(heading.index).split(/^### /m)[1] ?? '';
-    const rowIds = [...table.matchAll(/^\| (\d+) \|/gm)].map((m) => Number(m[1]));
-    const auditIds = [...auditSource.matchAll(/^ \* {3}(\d+) {2}\S/gm)].map((m) => Number(m[1]));
-    const auditClaim = /catalogues (\w+)\./.exec(auditSource);
-    const word = NUMBER_WORDS[rowIds.length] ?? `<${rowIds.length}>`;
+    // Each table runs from its own `###` heading to the next one, so the two
+    // tables in this section cannot be confused for one another.
+    const tableAfter = (text) => text.split(/^### /m)[1] ?? '';
+    const idsIn = (text) => [...text.matchAll(/^\| (\d+) \|/gm)].map((x) => Number(x[1]));
+
+    const rowIds = idsIn(tableAfter(section.slice(heading.index)));
+    const instIdx = section.indexOf('### Recorded instances');
+    const instIds = instIdx === -1 ? [] : idsIn(tableAfter(section.slice(instIdx)));
+    const auditIds = [...auditSource.matchAll(/^ \* {3}(\d+) {2}\S/gm)].map((x) => Number(x[1]));
+    const word = wordFor(rowIds.length);
 
     // Non-vacuity: an empty table would make every membership assertion below
     // trivially true, which is variant 5 applied to this very check.
     check('TESTING.md trap table is non-empty', rowIds.length > 0, true);
     check('TESTING.md trap ids are contiguous from 1', rowIds.join(','), rowIds.map((_, i) => i + 1).join(','));
     check('check-mutation-audit.mjs enumerates the SAME trap ids', auditIds.join(','), rowIds.join(','));
-    check('TESTING.md heading word matches its own row count', heading[1], word);
-    check('check-mutation-audit.mjs "catalogues <word>" matches', auditClaim === null ? 'ABSENT' : auditClaim[1], word);
+    pinWord('TESTING.md heading word matches its own row count', heading, word);
+    pinWord('TESTING.md "only that these <word> have been seen" matches', /only that these (\w+) have been seen/.exec(section), word);
+    pinWord('check-mutation-audit.mjs "catalogues <word>" matches', /catalogues (\w+)\./.exec(auditSource), word);
+
+    // Instances are EVIDENCE and may legitimately lag a newly added variant, so
+    // this is a subset test rather than an equality one. What it refuses is an
+    // instance row citing a variant that does not exist — the renumbering
+    // direction, which is the one that silently repoints cross-references.
+    check('TESTING.md recorded-instances table is non-empty', instIds.length > 0, true);
+    check(
+      'TESTING.md recorded-instance ids all name a real variant',
+      instIds.filter((n) => !rowIds.includes(n)).join(','),
+      '',
+    );
   }
 }
 

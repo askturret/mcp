@@ -468,7 +468,7 @@ refusal, for the same reason, as
 
 **A mutation result that looks like evidence and is not.**
 
-The five antipatterns above are defects in *tests*. These are defects in the
+The six antipatterns above are defects in *tests*. These are defects in the
 *procedure* that verifies a test — the manual RED-on-revert this document
 recommends as its primary control. They are worth naming separately because
 that control is what catches the antipatterns, so a silent failure here removes

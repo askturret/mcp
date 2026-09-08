@@ -429,8 +429,8 @@ export async function analyzeSpec(spec: OpenAPIDocument): Promise<AnalysisResult
       operations.reduce((sum, op) => sum + op.findings.filter((f) => f.severity === 'warning').length, 0),
     info: globalFindings.filter((f) => f.severity === 'info').length +
       operations.reduce((sum, op) => sum + op.findings.filter((f) => f.severity === 'info').length, 0),
-    lightExposed: operations.filter((op) => op.wouldBeExposedInLight).length,
-    lightDropped: operations.filter((op) => !op.wouldBeExposedInLight).length,
+    lightPolicyAdmitted: operations.filter((op) => op.admittedByLightPolicy).length,
+    lightPolicyExcluded: operations.filter((op) => !op.admittedByLightPolicy).length,
   };
 
   return {
@@ -560,16 +560,16 @@ function analyzeOperation(
     }));
   }
 
-  // Check 8: Light preset exposure policy
-  const { exposed, reason } = wouldBeExposedInLight(operation, method);
+  // Check 8: Light preset admission POLICY. Not a construction check (#762).
+  const { admitted, reason } = evaluateLightPolicy(operation, method);
 
   return {
     ...(operationId !== undefined && { operationId }),
     path,
     method,
     findings,
-    wouldBeExposedInLight: exposed,
-    ...(reason !== undefined && { wouldBeDroppedReason: reason }),
+    admittedByLightPolicy: admitted,
+    ...(reason !== undefined && { lightPolicyExclusionReason: reason }),
   };
 }
 
@@ -716,29 +716,53 @@ function findUnsafeFields(operation: OpenAPIOperation): string[] {
 }
 
 /**
- * Determine if operation would be exposed in Light preset
+ * Does the Light preset's POLICY admit this operation? (#762)
+ *
+ * ## What this decides, and what it deliberately does not
+ *
+ * Two inputs, and they are the whole function: the HTTP method, and `x-mcp`.
+ * Read-only methods are admitted; anything else needs an explicit opt-in.
+ *
+ * It was called `wouldBeExposedInLight`, and that name asked a bigger question
+ * than the body answers. Whether a tool actually appears is a CONJUNCTION —
+ * the preset must admit it AND it must be constructible from the spec — and
+ * this computes only the first conjunct. An operation admitted here can still
+ * fail to build, and a user reading "would be exposed" has no way to know that.
+ *
+ * ## Why the second conjunct is not simply added here
+ *
+ * Construction lives in `@askturret/mcp-sources-openapi`, which this package
+ * does not depend on, so doctor cannot call the constructor. Re-implementing
+ * the rule here would be a second copy free to disagree with the real one — and
+ * a construction failure is not a special case of a policy question anyway, so
+ * "keep them in sync" would not even be coherent.
+ *
+ * The structural fix is for doctor to run the real pipeline and OBSERVE the
+ * outcome rather than predict it, which is correct by construction rather than
+ * by maintenance. That is #762's option A and is not done here. This change
+ * only stops the name claiming more than the body delivers.
  */
-function wouldBeExposedInLight(
+function evaluateLightPolicy(
   operation: OpenAPIOperation,
   method: string,
-): { exposed: boolean; reason?: string } {
-  // Light preset: read-only auto-exposed, mutations require explicit inclusion
+): { admitted: boolean; reason?: string } {
+  // Light preset: read-only admitted by default, mutations require opt-in.
 
   const isReadOnly = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
 
   if (isReadOnly) {
-    return { exposed: true };
+    return { admitted: true };
   }
 
   // Check if explicitly included via x-mcp extension
   const xMcp = (operation as any)['x-mcp'];
   if (xMcp?.expose === true || xMcp?.['light-preset'] === true) {
-    return { exposed: true };
+    return { admitted: true };
   }
 
   return {
-    exposed: false,
-    reason: `${method} operation not auto-exposed in Light preset (mutations require explicit inclusion)`,
+    admitted: false,
+    reason: `${method} operation not admitted by Light preset policy (mutations require explicit inclusion)`,
   };
 }
 

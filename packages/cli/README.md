@@ -171,8 +171,9 @@ Summary:
   Errors:           0
   Warnings:         0
   Info:             0
-  Light Exposed:    2
-  Light Dropped:    1
+  Light policy admits:   2
+  Light policy excludes: 1
+  (Preset policy only — whether an operation can be built from this spec is not checked.)
 
 Operations:
 
@@ -183,10 +184,10 @@ Operations:
   GET     /pets/{id}                    getPetById            -   -   ✓
 
 Light Preset Policy:
-  The following operations would be dropped in Light preset:
+  The following operations are excluded by Light preset policy:
 
   • createPet
-    POST operation not auto-exposed in Light preset (mutations require explicit inclusion)
+    POST operation not admitted by Light preset policy (mutations require explicit inclusion)
 
 ═══════════════════════════════════════════════════════════════
 
@@ -219,8 +220,9 @@ Summary:
   Errors:           2
   Warnings:         8
   Info:             0
-  Light Exposed:    1
-  Light Dropped:    2
+  Light policy admits:   1
+  Light policy excludes: 2
+  (Preset policy only — whether an operation can be built from this spec is not checked.)
 
 Operations:
 
@@ -253,12 +255,12 @@ Detailed Findings:
       Suggestion: Add x-mcp-effects to operation object with appropriate effect types
 
 Light Preset Policy:
-  The following operations would be dropped in Light preset:
+  The following operations are excluded by Light preset policy:
 
   • p1_post_v3
-    POST operation not auto-exposed in Light preset (mutations require explicit inclusion)
+    POST operation not admitted by Light preset policy (mutations require explicit inclusion)
   • updateUser
-    PUT operation not auto-exposed in Light preset (mutations require explicit inclusion)
+    PUT operation not admitted by Light preset policy (mutations require explicit inclusion)
 
 ═══════════════════════════════════════════════════════════════
 

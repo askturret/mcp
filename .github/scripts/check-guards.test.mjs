@@ -43,7 +43,12 @@ import { spawnSync } from 'node:child_process';
 // term list inside the guard against hand-written term lists would be the
 // defect one level up. `check-mutation-audit.mjs` is entry-point guarded, so
 // importing it executes nothing.
-import { PARTITION_VERDICTS } from './check-mutation-audit.mjs';
+//
+// `partitionIdentity` and `INVENTORY_REL` are imported for the same reason: the
+// artifact assertion compares the committed inventory against the CURRENT
+// rendering and locates the file by the constant the writer itself uses, so
+// neither the sentence nor the path is restated here.
+import { PARTITION_VERDICTS, partitionIdentity, INVENTORY_REL } from './check-mutation-audit.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const PLACEHOLDER = join(here, 'check-placeholder-tests.mjs');
@@ -2696,21 +2701,31 @@ function probeSpawnSafety(scriptPath, cwd) {
   const IDENTITY_MARKER = 'partition-identity-exempt';
   const terms = [...PARTITION_VERDICTS, 'cannot-check sites'];
 
-  /** Occurrences of the identity SHAPE, classified. */
+  /**
+   * Lines carrying the identity SHAPE — two or more verdict terms joined by
+   * ` + `. Shape detection ONLY; what counts as acceptable differs by
+   * population and is decided by the callers below.
+   *
+   * Shared deliberately. The controls at the foot of this block exercise this
+   * function through `scanIdentity`, so they validate the same detector the
+   * artifact assertion uses — a control run against a second copy of this logic
+   * would prove only that the copy is sound (#679).
+   */
+  const identityLines = (label, text) =>
+    text
+      .split('\n')
+      .map((line, i) => ({ line, at: `${label}:${i + 1}` }))
+      .filter(({ line }) => line.includes(' + ') && terms.filter((t) => line.includes(t)).length >= 2);
+
+  /** Occurrences of the identity SHAPE in guard SOURCES, classified. */
   const scanIdentity = (dir) => {
     const found = { derived: [], marked: [], bare: [] };
     for (const name of readdirSync(dir).filter((n) => n.endsWith('.mjs'))) {
-      const file = join(dir, name);
-      readFileSync(file, 'utf-8')
-        .split('\n')
-        .forEach((line, i) => {
-          if (!line.includes(' + ')) return;
-          if (terms.filter((t) => line.includes(t)).length < 2) return;
-          const at = `${name}:${i + 1}`;
-          if (/partitionIdentity\(\)|partitionTerms\(\)/.test(line)) found.derived.push(at);
-          else if (line.includes(IDENTITY_MARKER)) found.marked.push(at);
-          else found.bare.push(at);
-        });
+      for (const { line, at } of identityLines(name, readFileSync(join(dir, name), 'utf-8'))) {
+        if (/partitionIdentity\(\)|partitionTerms\(\)/.test(line)) found.derived.push(at);
+        else if (line.includes(IDENTITY_MARKER)) found.marked.push(at);
+        else found.bare.push(at);
+      }
     }
     return found;
   };
@@ -2733,6 +2748,70 @@ function probeSpawnSafety(scriptPath, cwd) {
   // the one shape that would — a line that both calls the deriver and names
   // terms in the same breath — and being empty is the healthy state.
   check('identity: ...and the scan has live subjects to classify', real.marked.length > 0, true);
+
+  // ...AND THE PRIMARY ARTIFACT, READ FROM DISK RATHER THAN RE-RENDERED (#664)
+  //
+  // The scan above reads `.github/scripts/` non-recursively, `.mjs` only. The
+  // inventory is the identity's PRIMARY PUBLISHED ARTIFACT and sits outside that
+  // bound, so the scan cannot see it — and it was carrying the superseded
+  // three-term sentence, in the PRESENT TENSE, directly beneath its own totals,
+  // while this guard reported green. Four marked occurrences in scope plus one
+  // bare occurrence out of scope is indistinguishable, from inside the scan,
+  // from "no bare copies exist". THE GREEN WAS THE SYMPTOM.
+  //
+  // It survived only because the three missing buckets are all zero today, so
+  // 124 + 48 + 0 = 172 still closes. The file defining the partition says
+  // `not-mutatable` occurs at one ledger-gated site (#558) — so the artifact was
+  // ONE SITE away from stating an identity its own totals contradict, which is
+  // #651's defect verbatim, inside #651's own artifact.
+  //
+  // WHY READ THE FILE RATHER THAN RENDER IT. `check-mutation-audit.test.mjs`
+  // already asserts the superseded sentence is absent — from `rendered(TOTALS)`,
+  // a FRESH render. That assertion is true, and it will STAY true while the
+  // committed file it is named for says otherwise: its subject is the generator,
+  // not the artifact that lands. That is ADR-027's class, and it is why a
+  // generator test cannot stand in for this one. Both are kept: the generator
+  // test pins what the writer emits, this pins what is actually committed.
+  //
+  // ACCEPTANCE DIFFERS BY POPULATION, which is why only the shape detector is
+  // shared. In guard SOURCES a hand-written copy of the CURRENT identity is
+  // still a defect — it goes stale on the sixth verdict, which is the whole
+  // point. In the ARTIFACT the current rendering is exactly what must be there,
+  // because the generator puts it there. So sources are derived-or-marked, and
+  // the artifact is current-or-marked.
+  const inventoryPath = join(here, '..', '..', INVENTORY_REL);
+  let inventory = null;
+  try {
+    inventory = readFileSync(inventoryPath, 'utf-8');
+  } catch {
+    inventory = null;
+  }
+
+  // CANNOT-READ IS A FAILURE, NOT A PASS. Every assertion below is satisfied
+  // vacuously by an empty string, so an inventory that was moved, renamed or
+  // could not be opened would read as perfect compliance — the exact shape this
+  // repository refuses everywhere else.
+  check(
+    `identity: the committed inventory is readable (${INVENTORY_REL})`,
+    inventory !== null && inventory.length > 0,
+    true,
+  );
+
+  const inInventory = identityLines(INVENTORY_REL, inventory ?? '');
+
+  // NON-VACUITY, and it is not the same assertion as the one above. A readable
+  // file that states the identity NOWHERE would pass the staleness check below
+  // trivially — silence is not currency.
+  check('identity: ...and the inventory states the identity at least once', inInventory.length > 0, true);
+
+  check(
+    'identity: ...and every copy in it is the CURRENT identity or marked (#664)',
+    inInventory
+      .filter(({ line }) => !line.includes(partitionIdentity()) && !line.includes(IDENTITY_MARKER))
+      .map(({ at }) => at)
+      .join(', '),
+    '',
+  );
 
   // THE CONTROL, and it is the reason this guard exists rather than a fixture
   // invented to suit it: one of the two copies #663 actually removed, put back

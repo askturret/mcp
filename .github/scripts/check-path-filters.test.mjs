@@ -46,6 +46,11 @@ function check(desc, actual, expected) {
  * @param {object} [opts]
  * @param {string[]} [opts.outputs]            output names the `changes` job declares
  * @param {string} [opts.extraJobs]            appended YAML, for `if:` reference tests
+ * @param {Record<string, Record<string, string>>} [opts.sources]
+ *        dir -> (path under that package's `src/` -> file text). Check F reads
+ *        SOURCE rather than manifests, so it is the one check whose fixtures
+ *        need real files. Every case that omits this writes no `src/` at all,
+ *        which is why adding F left the existing cases untouched.
  */
 function fixture(packages, filtersBlock, opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'path-filters-'));
@@ -59,6 +64,14 @@ function fixture(packages, filtersBlock, opts = {}) {
         dependencies: Object.fromEntries(deps.map((d) => [d, '*'])),
       }),
     );
+  }
+
+  for (const [name, files] of Object.entries(opts.sources ?? {})) {
+    for (const [rel, text] of Object.entries(files)) {
+      const full = join(dir, 'packages', name, 'src', rel);
+      mkdirSync(dirname(full), { recursive: true });
+      writeFileSync(full, text);
+    }
   }
 
   const outputs = opts.outputs ?? Object.keys(packages);
@@ -1146,6 +1159,113 @@ const GAP_FILTERS = `            core:
     'trailer: ...with one problem attributed to each class',
     /1 filter-coverage problem\(s\)\./.test(r.out) && /1 lane problem\(s\)\./.test(r.out),
     true,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// F: a `docs/` file a package READS must appear in its filter (#774)
+//
+// The exit codes below are LOCAL LITERALS on purpose. Importing the guard's own
+// constants would compare them against themselves, which holds no matter what
+// they are — the #746 defect.
+// ---------------------------------------------------------------------------
+{
+  const READS_JSON = "const c = readFileSync(join(REPO_ROOT, 'docs', 'compatibility.json'), 'utf-8');\n";
+
+  const r = withFixture(
+    { core: [] },
+    "            core:\n              - 'packages/core/**'\n",
+    { sources: { core: { 'versions.test.ts': READS_JSON } } },
+  );
+  check('F: a docs file read but not filtered is a violation', r.code, 1);
+  check(
+    'F: ...and the message names the path, the reading file and the fix',
+    r.out.includes("filter 'core' does not cover 'docs/compatibility.json'") &&
+      r.out.includes('packages/core/src/versions.test.ts') &&
+      r.out.includes("add 'docs/compatibility.json'"),
+    true,
+  );
+
+  // The remedy actually works. A check that goes red and cannot be cleared by
+  // the fix it prints is worse than none.
+  check(
+    'F: naming the exact file in the filter clears it',
+    withFixture(
+      { core: [] },
+      "            core:\n              - 'packages/core/**'\n              - 'docs/compatibility.json'\n",
+      { sources: { core: { 'versions.test.ts': READS_JSON } } },
+    ).code,
+    0,
+  );
+
+  check(
+    'F: a docs/** prefix also covers a single-file read',
+    withFixture(
+      { core: [] },
+      "            core:\n              - 'packages/core/**'\n              - 'docs/**'\n",
+      { sources: { core: { 'versions.test.ts': READS_JSON } } },
+    ).code,
+    0,
+  );
+
+  // THE DISCRIMINATING CASE. A whole-tree read is not a per-file dependency, so
+  // naming today's files must NOT satisfy it — the file such a suite must re-run
+  // for is the one that does not exist yet. Without this case, an implementation
+  // that treated `join(root, 'docs')` as the literal path `docs` would pass
+  // every other case here.
+  const WALKS_TREE = "const all = walk(join(repoRoot, 'docs'));\n";
+  const walkNarrow = withFixture(
+    { cli: [] },
+    "            cli:\n              - 'packages/cli/**'\n              - 'docs/compatibility.json'\n",
+    { sources: { cli: { 'migrate.test.ts': WALKS_TREE } } },
+  );
+  check('F: a whole-tree read is NOT satisfied by naming one file', walkNarrow.code, 1);
+  check(
+    'F: ...and the remedy offered for it is docs/**',
+    walkNarrow.out.includes("add 'docs/**'"),
+    true,
+  );
+  check(
+    'F: ...while docs/** does satisfy it',
+    withFixture(
+      { cli: [] },
+      "            cli:\n              - 'packages/cli/**'\n              - 'docs/**'\n",
+      { sources: { cli: { 'migrate.test.ts': WALKS_TREE } } },
+    ).code,
+    0,
+  );
+
+  // Cry-wolf guards: F is scoped to docs/, and must not fire on prose.
+  check(
+    'F: a join() outside docs/ is not this check subject',
+    withFixture(
+      { gateway: [] },
+      "            gateway:\n              - 'packages/gateway/**'\n",
+      { sources: { gateway: { 'e.test.ts': "const p = join(REPO, 'examples', 'compose');\n" } } },
+    ).code,
+    0,
+  );
+
+  // The anchoring lesson (#679), pinned rather than assumed. A specimen quoted
+  // in a comment is prose ABOUT a read, not a read — and in this repository,
+  // which documents its path shapes at length, that is the likeliest false
+  // positive there is.
+  check(
+    'F: a specimen quoted in a comment is not a read',
+    withFixture(
+      { core: [] },
+      "            core:\n              - 'packages/core/**'\n",
+      {
+        sources: {
+          core: {
+            'doc.ts':
+              "// Reads join(REPO_ROOT, 'docs', 'compatibility.json') at startup.\n" +
+              " * and so does join(REPO_ROOT, 'docs', 'compatibility.md')\n",
+          },
+        },
+      },
+    ).code,
+    0,
   );
 }
 

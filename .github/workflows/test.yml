@@ -127,6 +127,14 @@ jobs:
           filters: |
             core:
               - 'packages/core/**'
+              # versions.test.ts READS both compatibility files and asserts the
+              # protocol constants against them, so an edit to either can fail
+              # this suite with no file under packages/core/** touched (#774).
+              # Named individually rather than as 'docs/**': the rest of docs/ is
+              # prose this suite never parses, and scheduling it for a typo fix
+              # would be a tax, not coverage.
+              - 'docs/compatibility.json'
+              - 'docs/compatibility.md'
             adapters-express:
               - 'packages/adapters-express/**'
               # adapters-express serves the Explorer, so an explorer-only
@@ -230,6 +238,9 @@ jobs:
             sources-openapi:
               - 'packages/sources-openapi/**'
               - 'packages/core/**'
+              # from-openapi.test.ts reads the same versioned contract to assert
+              # which OpenAPI versions are published as supported (#774).
+              - 'docs/compatibility.json'
             transports:
               - 'packages/transports/**'
               - 'packages/core/**'
@@ -242,6 +253,20 @@ jobs:
             cli:
               - 'packages/cli/**'
               - 'packages/core/**'
+              # THE WHOLE TREE, and this one is deliberately not narrowed (#774).
+              #
+              # migrate.test.ts walks every `.md` under docs/ looking for a stale
+              # "every workspace is private" publishing claim. The change it must
+              # re-run for is therefore a file that DOES NOT EXIST YET — a newly
+              # added ADR is the canonical case — so naming today's files would
+              # leave tomorrow's uncovered, which is the very defect #774 is.
+              #
+              # THE COST IS REAL AND IS THE POINT. This makes a docs-only edit
+              # schedule the cli suite, so such a PR is `ci:full` rather than
+              # `ci:cheap`. That is correct rather than a tax: this suite's
+              # subject IS the prose, so "a prose edit cannot affect a suite" —
+              # the usual argument for keeping docs cheap — is false here.
+              - 'docs/**'
             # A CHANGE TO THE FILE THAT DEFINES THE SUITES RE-RUNS THEM.
             # A CHANGE TO ANY OTHER WORKFLOW FILE DOES NOT. (#687)
             #

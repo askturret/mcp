@@ -183,10 +183,40 @@ moved away from it. A claim tagged `declared-unverifiable` is one CI holds no
 credential to read; it is declared anyway, so that "nothing verified this" is
 visible rather than absent.
 
+### Dependabot security updates (#677)
+
+`dependabot_security_updates` is **enabled**, and it is the control that has
+already caught three real advisories on this repository — two `qs` (medium) and
+`@modelcontextprotocol/sdk` **high**, `GHSA-w48q-cv73-mx4w`, the same advisory
+behind the SDK floor in #618. All three alerts are `fixed`; none is open.
+
+It is a **repo-level toggle**, not `.github/dependabot.yml`. That file does not
+exist here, and its absence means *version* updates have never run — a separate
+feature, and a separate decision. Nothing below is about it.
+
+The toggle is the same shape this section exists for: it governs behaviour, it
+sits outside every reviewed artifact, and anyone with settings access can change
+it with no diff, no review and no history. **If it were switched off today,
+nothing in this repository would notice.** Declaring it here at least makes the
+claim reviewable, and makes "nothing verified this" visible rather than absent.
+
+**It is tagged `declared-unverifiable`, and that is not a shortcut.** Both
+surfaces exposing it — `.security_and_analysis.dependabot_security_updates` on
+the repository payload, and `GET /repos/{owner}/{repo}/automated-security-fixes`
+— require **admin read access**. The Actions `GITHUB_TOKEN` cannot hold it:
+there is no `administration` scope in a workflow `permissions:` block. Measured
+2026-09-08 — unauthenticated, the whole `security_and_analysis` block is absent
+while `visibility` is still present.
+
+So a reader wanting assurance must check it by hand, or the scheduled job must
+be given a credential with admin read. Until then this is a declaration, not a
+verification, and it says so.
+
 <!-- platform-claims
 repository_visibility: public (verifiable)
 code_owner_review_required: true (declared-unverifiable)
 author_is_bypass_actor: true (declared-unverifiable)
+dependabot_security_updates: enabled (declared-unverifiable)
 -->
 
 ---

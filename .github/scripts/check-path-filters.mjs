@@ -20,10 +20,22 @@
  *   B. Every first-party dependency of that package appears in its filter.
  *   C. Every filter is exposed as an output of the `changes` job.
  *   D. Every `needs.changes.outputs.X` reference resolves to a declared output.
+ *   F. Every path under `docs/` a package's sources READ appears in its filter.
  *
  * C and D are the same defect one level up: a job gated on an output that does
  * not exist reads as falsy forever, so the job silently never runs and CI stays
  * green. Cheap to assert while the file is already parsed.
+ *
+ * F is the same defect reached from the other side (#774). B derives coverage
+ * from `package.json`, so it is structurally blind to a file no manifest can
+ * name: `docs/` is not a package, yet three suites parse files under it. A
+ * docs-only edit to `docs/compatibility.json` — a versioned contract that both
+ * `core` and `sources-openapi` read — scheduled neither suite, and PR #773 was
+ * that exact edit. It stays quiet because the dependency runs through DATA, not
+ * code: a reviewer seeing a docs-only diff has no cue that tests parse it.
+ *
+ * (E is the lane check, further down. The letters are the order they were
+ * added, not the order they run.)
  *
  * NOT checked: whether every package has a dedicated test job. `packages/examples`
  * has no filter and no `test-examples` job. Its suite is not unrun — the
@@ -494,6 +506,83 @@ function globMatches(glob, file) {
   return file === glob;
 }
 
+/**
+ * Every `.ts` file under a package's `src/`, recursively.
+ *
+ * Deliberately separate from `packageIndex()` above, which reads manifests.
+ * Check F asserts a dependency that NO manifest declares — `docs/` is not a
+ * package — so it has to read source. That is the whole reason it needs a pass
+ * of its own rather than another loop over the closure.
+ */
+function packageSources(dir) {
+  const out = [];
+  const walk = (d) => {
+    if (!existsSync(d)) return;
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.ts')) out.push(full);
+    }
+  };
+  walk(join(repoRoot, 'packages', dir, 'src'));
+  return out;
+}
+
+/**
+ * `join(<ident>, 'a', 'b')` calls whose first literal segment is `docs`.
+ *
+ * ANCHORED TO ONE LINE ON PURPOSE. `[^'\n]` refuses to cross a newline, so the
+ * pattern cannot run past the end of a call and match a specimen quoted in a
+ * neighbouring comment. That is not hypothetical here: this repository
+ * documents its path shapes heavily, and a scan loose enough to span lines
+ * finds the PROSE describing a read before it finds the read (#679).
+ *
+ * Only the `join()` form is recognised, which is how all four real sites are
+ * written. A bare `readFileSync('docs/x')` would NOT be seen. That blind spot is
+ * stated rather than papered over with a broader pattern: widening it to any
+ * quoted `docs/...` also matches comments and test FIXTURE data — this file's
+ * own self-test declares filter tuples containing such strings — and a guard
+ * that cries wolf on its own fixtures is one people learn to route around.
+ */
+const DOCS_JOIN_RE =
+  /\bjoin\(\s*[A-Za-z_$][A-Za-z0-9_$]*(?:\(\))?\s*,\s*((?:'[^'\n]*'\s*,\s*)*'[^'\n]*')\s*\)/g;
+
+/**
+ * Which paths under `docs/` does this package's own source read?
+ *
+ * Returns a Map of path -> the source files that read it. The bare string
+ * `docs` means a WHOLE-TREE read: `join(root, 'docs')` with no further literal
+ * segment, which is a directory the caller then walks.
+ */
+function docsReads(dir) {
+  const found = new Map();
+  for (const file of packageSources(dir)) {
+    for (const line of readFileSync(file, 'utf-8').split('\n')) {
+      // Skip whole-line comments. This repository documents its path shapes at
+      // length, so a JSDoc block quoting the very call below is by far the
+      // likeliest false positive, and by far the cheapest to remove. A trailing
+      // comment after real code is still matched: that residue is left
+      // deliberately rather than chased with a parser, because over-detection
+      // only ever asks for a filter entry that schedules MORE, while
+      // under-detection is the defect this check exists for.
+      const trimmed = line.trim();
+      if (trimmed.startsWith('//') || trimmed.startsWith('*')) continue;
+
+      for (const m of line.matchAll(DOCS_JOIN_RE)) {
+        const segments = m[1]
+          .split(',')
+          .map((s) => s.trim().replace(/^'|'$/g, ''))
+          .filter((s) => s !== '');
+        const path = segments.join('/').replace(/\/+/g, '/');
+        if (path !== 'docs' && !path.startsWith('docs/')) continue;
+        if (!found.has(path)) found.set(path, new Set());
+        found.get(path).add(file.slice(repoRoot.length + 1));
+      }
+    }
+  }
+  return found;
+}
+
 const workflowText = readFileSync(workflowPath, 'utf-8');
 
 const filters = parseFilters(extractFiltersBlock(workflowText));
@@ -573,6 +662,62 @@ for (const match of workflowText.matchAll(/needs\.changes\.outputs\.([A-Za-z0-9.
     violations.push(
       `workflow references needs.changes.outputs.${match[1]}, which the \`changes\` job does not declare — ` +
         `that expression is always falsy, so the job it gates never runs`,
+    );
+  }
+}
+
+// F: a package that READS a file under `docs/` must be scheduled by a change to
+// that file (#774).
+//
+// Checks B and D reason from `package.json`, so they can only ever see a
+// dependency some manifest DECLARES. This one cannot be derived that way:
+// `docs/` is not a package and appears in nobody's manifest, yet three suites
+// parse files there. `core` and `sources-openapi` both read
+// `docs/compatibility.json` — a versioned contract — and before this check a
+// docs-only edit to it scheduled NEITHER suite. PR #773 was that exact edit; the
+// two suites ran only because the agent working it chose to run them locally,
+// which is a property of that agent and not of this repository.
+//
+// The data-not-code asymmetry is what keeps this quiet. A reviewer looking at a
+// docs-only diff has no cue that package tests parse it, so the hole is invisible
+// from the side it fires on — the #110/#121 family this file already exists for,
+// reached through a path checks A-D structurally cannot see.
+for (const dir of dirs) {
+  const reads = docsReads(dir);
+  if (reads.size === 0) continue;
+
+  const globs = filters[dir];
+
+  for (const [path, files] of [...reads.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+    const where = [...files].sort().join(', ');
+
+    // A WHOLE-TREE read is not a per-file dependency and must not be satisfied
+    // by one. `packages/cli` walks every `.md` under `docs/` hunting a stale
+    // publishing claim, so the change it must re-run for is precisely a file
+    // that does not exist yet — a new ADR. Only `docs/**` states that; naming
+    // today's files would leave tomorrow's uncovered, which is this issue's own
+    // defect one level down.
+    const covered =
+      globs === undefined
+        ? false
+        : path === 'docs'
+          ? globs.includes('docs/**')
+          : globs.some((glob) => globMatches(glob, path));
+
+    if (covered) continue;
+
+    if (globs === undefined) {
+      violations.push(
+        `package '${dir}' reads '${path}' (${where}) but has no path filter at all, ` +
+          'so no change to that file can schedule it',
+      );
+      continue;
+    }
+
+    violations.push(
+      `filter '${dir}' does not cover '${path}', which its own sources read (${where}) — ` +
+        `a change to that file alone would not re-run ${dir}'s tests; add ` +
+        `'${path === 'docs' ? 'docs/**' : path}'`,
     );
   }
 }

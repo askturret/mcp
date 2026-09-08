@@ -37,6 +37,37 @@ function isCompleteEffects(effects: Partial<EffectMetadata>): effects is EffectM
   );
 }
 
+/**
+ * The input-drop reason a source attached to `hints`, rendered for a reader.
+ *
+ * VALIDATED RATHER THAN TRUSTED. `hints` is `Record<string, unknown>` and any
+ * source can populate it, so every field is checked before it reaches a warning
+ * message. A malformed hint yields `undefined` — which falls back to the honest
+ * `MISSING_INPUT_SCHEMA` rather than emitting a half-built sentence. Reporting
+ * "I was told something but cannot read it" as a specific cause would be the
+ * same defect #768 fixes, one layer along.
+ *
+ * Returns a phrase, not a boolean, because the media type is the actionable
+ * part for whoever wrote the spec.
+ */
+function unencodableFromHints(
+  hints: Readonly<Record<string, unknown>> | undefined,
+): string | undefined {
+  const raw = hints?.['unencodableParameterMediaTypes'];
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+
+  const parts: string[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const { parameter, mediaTypes } = entry as { parameter?: unknown; mediaTypes?: unknown };
+    if (typeof parameter !== 'string' || !Array.isArray(mediaTypes)) continue;
+    const types = mediaTypes.filter((t): t is string => typeof t === 'string');
+    if (types.length === 0) continue;
+    parts.push(`parameter '${parameter}' declares ${types.map((t) => `'${t}'`).join(', ')}`);
+  }
+  return parts.length > 0 ? parts.join('; ') : undefined;
+}
+
 export const validateInvariants: CompilerPass = {
   name: 'validate-invariants',
 
@@ -78,11 +109,36 @@ export const validateInvariants: CompilerPass = {
       }
 
       if (!op.input) {
-        context.warnings.warn(omitUndefined<CompilerWarning>({
-          code: 'MISSING_INPUT_SCHEMA',
-          message: `Operation '${op.id}' missing required 'input' schema`,
-          location: op.source?.location,
-        }));
+        // THIS PASS SEES ONLY THE ABSENCE, so it used to name the wrong cause
+        // (#768). An input dropped because its media type has no encoder is not
+        // a missing schema: the schema was present and readable, just declared
+        // under something we cannot put on the wire. Reporting that as
+        // `MISSING_INPUT_SCHEMA` told a reader their spec lacked a schema it
+        // plainly contains.
+        //
+        // The cause is known only at the DROP SITE, and it is handed here
+        // through `hints` — the declared source-to-compiler channel. This pass
+        // does not parse media types or know anything about OpenAPI; it reports
+        // the reason it was given, and falls back to the honest "missing" only
+        // when it was given none.
+        const unencodable = unencodableFromHints(op.hints);
+        context.warnings.warn(omitUndefined<CompilerWarning>(
+          unencodable === undefined
+            ? {
+                code: 'MISSING_INPUT_SCHEMA',
+                message: `Operation '${op.id}' missing required 'input' schema`,
+                location: op.source?.location,
+              }
+            : {
+                code: 'UNENCODABLE_INPUT_MEDIA_TYPE',
+                message:
+                  `Operation '${op.id}' has no usable 'input' schema — ${unencodable}, ` +
+                  `which this server cannot encode into a request. The schema IS present in the ` +
+                  `spec; re-declare the parameter with 'application/json', or as a plain 'schema', ` +
+                  `to make it servable.`,
+                location: op.source?.location,
+              },
+        ));
         continue;
       }
 

@@ -921,9 +921,10 @@ export const PARTITION_VERDICTS = new Set([
  *
  * Both the failure message and the inventory used to spell these terms out by
  * hand. Adding the three missing buckets fixed the arithmetic and left the
- * inventory's copy still reading `witnessed + unwitnessed + cannot-check sites
- * = failure sites` — an artifact stating an identity its own totals contradict
- * (167 + 17 + 0 against 185), printed one line below them.
+ * inventory's copy still reading the superseded three-term sentence —
+ * `witnessed + unwitnessed + cannot-check sites = failure sites` — partition-identity-exempt: quoting the superseded form as history
+ * an artifact stating an identity its own totals contradict (167 + 17 + 0
+ * against 185), printed one line below them.
  *
  * That is #651 one level up, and hand-editing a second copy is what produced it,
  * so the second copy is removed rather than corrected: a sixth verdict added to

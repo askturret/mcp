@@ -1690,7 +1690,8 @@ process.exit(0);
 // ---------------------------------------------------------------------------
 // THE PARTITION MUST CLOSE, AND MUST NAME WHAT ESCAPES IT (#651)
 //
-// The partition summed witnessed + unwitnessed + cannot-check sites. `auditGuard`
+// The partition summed witnessed + unwitnessed + cannot-check sites. partition-identity-exempt: the superseded form, quoted as history
+// `auditGuard`
 // emits FIVE verdicts, so `not-mutatable`, `unparseable` and `did-not-terminate`
 // fell through it. Only the first occurs today, at exactly one ledger-gated site
 // (#558) — which is why the gap read as an off-by-one for three days rather than
@@ -1772,8 +1773,9 @@ process.exit(0);
   // THE PRINTED IDENTITY MUST NAME EVERY BUCKET THE CODE SUMS (#651)
   //
   // Adding the three missing buckets closed the arithmetic and left the
-  // inventory still printing `witnessed + unwitnessed + cannot-check sites =
-  // failure sites` — directly beneath totals reading 167 + 17 + 0 against 185.
+  // inventory still printing the superseded sentence —
+  // `witnessed + unwitnessed + cannot-check sites = failure sites` — partition-identity-exempt: the superseded form, quoted as history
+  // directly beneath totals reading 167 + 17 + 0 against 185.
   // The sum was fixed; the artifact went on asserting the identity the sum had
   // just abandoned. That is #651 one level up, and it is how the first one
   // survived three days: the document and the code each looked right alone.
@@ -1797,7 +1799,7 @@ process.exit(0);
   // artifact, not merely joined by a longer one elsewhere in the document.
   check(
     'identity: CONTROL — the superseded three-term sentence is absent',
-    doc.includes('`witnessed + unwitnessed + cannot-check sites = failure sites`'),
+    doc.includes('`witnessed + unwitnessed + cannot-check sites = failure sites`'), // partition-identity-exempt: the superseded form, asserted ABSENT
     false,
   );
 }

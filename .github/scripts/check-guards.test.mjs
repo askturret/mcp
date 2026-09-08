@@ -38,6 +38,13 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
+// The partition identity's AUTHORITY. Imported so the scan at the foot of this
+// file derives its vocabulary rather than restating it (#664) — a hand-written
+// term list inside the guard against hand-written term lists would be the
+// defect one level up. `check-mutation-audit.mjs` is entry-point guarded, so
+// importing it executes nothing.
+import { PARTITION_VERDICTS } from './check-mutation-audit.mjs';
+
 const here = dirname(fileURLToPath(import.meta.url));
 const PLACEHOLDER = join(here, 'check-placeholder-tests.mjs');
 const EXECUTION = join(here, 'check-test-execution.mjs');
@@ -2642,6 +2649,121 @@ function probeSpawnSafety(scriptPath, cwd) {
       '',
     );
   }
+}
+
+// ---------------------------------------------------------------------------
+// A DERIVED IDENTITY MUST NOT BE COPIED BY HAND INTO PROSE (#664)
+//
+// The audit's partition identity is derived from `PARTITION_VERDICTS`, so a new
+// verdict updates every rendering of it automatically. #663 made that true of
+// the OUTPUT — and two hand-written copies of the superseded sentence survived
+// that very change, in the file that defines the partition, both found by a
+// human read rather than by any check. That is twice.
+//
+// WHAT THIS SCANS FOR, and why it is not a prose comparator: it never compares
+// sentences. It looks for the SHAPE — a line naming two or more of the verdict
+// terms joined by ` + ` — and then asks one question about each occurrence: is
+// it DERIVED, or is it DECLARED? A call to `partitionIdentity()` or
+// `partitionTerms()` is not a copy at all. Anything else must carry an inline
+// marker giving a reason.
+//
+// THE VOCABULARY IS IMPORTED, NOT LISTED. The terms come from
+// `PARTITION_VERDICTS` itself, so a sixth verdict widens this scan with no edit
+// here. Writing the term list into this file would be the very defect being
+// guarded, one level up — a hand-maintained copy inside the guard against
+// hand-maintained copies.
+//
+// WHY A DECLARED MARKER RATHER THAN AN INFERENCE. Separating "quoted as
+// history" from "asserted as current" is undecidable, and three earlier
+// formulations each reproduced the defect they would police: a literal scan
+// flags the legitimate historical quote, an allowlist is the hand-maintained
+// enumeration #556 removes, and a pinned count goes stale on the next
+// legitimate reference (ADR-024). The author declaring it converts an
+// undecidable inference into a stated property.
+//
+// PER OCCURRENCE, NOT PER FILE, and the reason is `check-adr-citations.mjs`'s
+// rather than one invented here: "a file-level exemption is indistinguishable
+// from an oversight once it exists: it silently covers every citation added to
+// that file afterwards, including the typos." The same holds term for term. The
+// marker sits on the line it excuses and cannot grow while nobody is looking.
+//
+// THE COST, carried rather than minimised: a marker can be applied lazily to
+// silence a genuinely stale copy. That is the identical cost
+// `adr-citation-exempt` already carries and this repository already accepted,
+// and it converts SILENTLY STALE into EXPLICITLY CLAIMED HISTORICAL, which is
+// at least reviewable.
+{
+  const IDENTITY_MARKER = 'partition-identity-exempt';
+  const terms = [...PARTITION_VERDICTS, 'cannot-check sites'];
+
+  /** Occurrences of the identity SHAPE, classified. */
+  const scanIdentity = (dir) => {
+    const found = { derived: [], marked: [], bare: [] };
+    for (const name of readdirSync(dir).filter((n) => n.endsWith('.mjs'))) {
+      const file = join(dir, name);
+      readFileSync(file, 'utf-8')
+        .split('\n')
+        .forEach((line, i) => {
+          if (!line.includes(' + ')) return;
+          if (terms.filter((t) => line.includes(t)).length < 2) return;
+          const at = `${name}:${i + 1}`;
+          if (/partitionIdentity\(\)|partitionTerms\(\)/.test(line)) found.derived.push(at);
+          else if (line.includes(IDENTITY_MARKER)) found.marked.push(at);
+          else found.bare.push(at);
+        });
+    }
+    return found;
+  };
+
+  const real = scanIdentity(here);
+  check(
+    `identity: no hand-written copy of the partition identity is unmarked (#664)`,
+    real.bare.join(', '),
+    '',
+  );
+
+  // NON-VACUITY. The assertion above passes trivially if the scan finds nothing
+  // — which is exactly how it would look if the shape detector broke. The
+  // repository really does carry legitimate historical quotes, so the marked
+  // set must not be empty.
+  //
+  // The `derived` bucket is deliberately NOT asserted non-empty: a line calling
+  // `partitionIdentity()` contains no literal terms at all, which is the whole
+  // point of deriving, so it never reaches the classifier. The bucket exists for
+  // the one shape that would — a line that both calls the deriver and names
+  // terms in the same breath — and being empty is the healthy state.
+  check('identity: ...and the scan has live subjects to classify', real.marked.length > 0, true);
+
+  // THE CONTROL, and it is the reason this guard exists rather than a fixture
+  // invented to suit it: one of the two copies #663 actually removed, put back
+  // without a marker.
+  //
+  // ASSEMBLED FROM THE IMPORTED TERMS, not written out. Written literally it is
+  // a hand-copied identity sitting in the guard against hand-copied identities,
+  // and the scan flags it — which it did, on the first run of this block, at
+  // this very line. That is the #740 shape (a guard forbidding its own test
+  // data) and the repository's answer to it is interpolation, as
+  // check-npx-invocations.test.mjs does for the same reason.
+  const [first, second] = [...PARTITION_VERDICTS];
+  const removed = ` *   2. RECLASSIFICATION IS NOT REGRESSION. \`${first} + ${second} +`;
+  const control = mkdtempSync(join(tmpdir(), 'partition-identity-'));
+  tmpDirs.push(control);
+  writeFileSync(join(control, 'check-relapse.mjs'), `${removed}\n`);
+  const relapsed = scanIdentity(control);
+  check('identity: CONTROL — reintroducing a removed copy is CAUGHT', relapsed.bare.length, 1);
+  check(
+    'identity: ...and it is named, so a reader is not left to search',
+    relapsed.bare[0],
+    'check-relapse.mjs:1',
+  );
+
+  // ...and the same line WITH a marker passes. Without this the control above
+  // is satisfied by a rule that flags every occurrence, marked or not — which
+  // would make the convention unusable and every historical quote a failure.
+  const excused = mkdtempSync(join(tmpdir(), 'partition-identity-ok-'));
+  tmpDirs.push(excused);
+  writeFileSync(join(excused, 'check-relapse.mjs'), `${removed} ${IDENTITY_MARKER}: history\n`);
+  check('identity: ...while the SAME line carrying a marker is not', scanIdentity(excused).bare.length, 0);
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });

@@ -233,16 +233,26 @@ const liveFixture = () => fixture({ 'docs/a.md': `# A\n\n${GOOD_BLOCK}` });
 
 // PRECEDENCE. A confirmed falsehood outranks an unknown — but the unknown is
 // still REPORTED, because narrowing to one exit code must not narrow the report.
+// Driven by a FIXTURE vocabulary rather than the real one, because this asserts
+// a MECHANIC (which code wins) and not a classification. It used to lean on
+// `organisation_plan` being `verifiable`; #784 reclassified it, and a mechanic
+// test that breaks when an unrelated property is reclassified was testing the
+// wrong thing. The classification itself is pinned against the REAL vocabulary
+// further down, which is where that belongs.
 {
   const dir = fixture({
-    'docs/a.md': `<!-- platform-claims\nrepository_visibility: public (verifiable)\norganisation_plan: free (verifiable)\n-->\n`,
+    'docs/a.md': `<!-- platform-claims\nrepository_visibility: public (verifiable)\nsecond_property: free (verifiable)\n-->\n`,
   });
   const r = await checkLive({
     rootDir: dir,
     sites: ['docs/a.md'],
+    vocabulary: {
+      repository_visibility: { classification: 'verifiable', source: 'x' },
+      second_property: { classification: 'verifiable', source: 'y' },
+    },
     readState: async () => ({
       values: { repository_visibility: 'private' },
-      unreadable: [{ property: 'organisation_plan', reason: 'no `plan` field' }],
+      unreadable: [{ property: 'second_property', reason: 'no `plan` field' }],
     }),
   });
   check('B: divergence outranks cannot-check in the exit code', r.code, 1);
@@ -357,6 +367,120 @@ check(
 );
 
 // ---------------------------------------------------------------------------
+// `organisation_plan` — RECLASSIFIED ON A MEASUREMENT (#784)
+//
+// Against the REAL vocabulary, for the reason the #677 block gives: a fixture
+// would prove the guard can classify SOME property and would stay green if this
+// one were flipped back.
+// ---------------------------------------------------------------------------
+
+check(
+  '#784: `organisation_plan` is `declared-unverifiable`, not `verifiable`',
+  VOCABULARY['organisation_plan'].classification,
+  'declared-unverifiable',
+);
+check(
+  '#784: ...and carries a reason rather than a source, per the class contract',
+  typeof VOCABULARY['organisation_plan'].reason === 'string' &&
+    VOCABULARY['organisation_plan'].source === undefined,
+  true,
+);
+// The reason must name the CREDENTIAL, not merely the endpoint. "Needs
+// GET /orgs/{org}" is true of the `verifiable` classification too, so a reason
+// that only said that would not distinguish the two.
+check(
+  '#784: ...and the reason names why the credential cannot see it',
+  /organisation OWNER|permissions:` block/.test(VOCABULARY['organisation_plan'].reason),
+  true,
+);
+
+// THE READ IS GONE TOO. Reclassifying while leaving the org fetch in place would
+// keep a nightly API call whose result can never be compared — and would leave
+// the next reader thinking the property is still being checked.
+check(
+  '#784: readLiveState no longer fetches the organisation',
+  /api\.github\.com\/orgs\//.test(readFileSync(GUARD, 'utf-8')),
+  false,
+);
+
+// ---------------------------------------------------------------------------
+// THE MISCLASSIFICATION AUDIT — the answer to "should an undeclared vocabulary
+// entry be flagged at all?" (#784)
+//
+// It runs over the VOCABULARY rather than the declarations, because the entry
+// that was wrong was declared at no site: every declaration-driven assertion in
+// this file was green while the classification was false.
+// ---------------------------------------------------------------------------
+{
+  // RED ARM. A `verifiable` entry the credential cannot read is a confirmed
+  // falsehood about our own vocabulary, so it ranks with a divergence.
+  const dir = fixture({ 'docs/a.md': '<!-- platform-claims\nrepository_visibility: public (verifiable)\n-->\n' });
+  const r = await checkLive({
+    rootDir: dir,
+    sites: ['docs/a.md'],
+    vocabulary: {
+      repository_visibility: { classification: 'verifiable', source: 'x' },
+      never_declared: { classification: 'verifiable', source: 'y' },
+    },
+    readState: async () => ({
+      values: { repository_visibility: 'public' },
+      unreadable: [{ property: 'never_declared', kind: 'absent-field', reason: 'the payload carried no field' }],
+    }),
+  });
+  check('#784: RED ARM — a verifiable entry the credential cannot read is reported', r.misclassified.length, 1);
+  check('#784: ...even though NOTHING declares it', /`never_declared`/.test(r.misclassified.join('\n')), true);
+  check('#784: ...and it reddens the run as a confirmed falsehood, not a cannot-check', r.code, 1);
+  check('#784: ...and says how to clear it', /reclassify it `declared-unverifiable`/.test(r.misclassified.join('\n')), true);
+}
+{
+  // GREEN ARM. Readable — so the classification is TRUE and nothing is said.
+  // Without this the red arm above is satisfied by a rule that always fires.
+  const dir = fixture({ 'docs/a.md': '<!-- platform-claims\nrepository_visibility: public (verifiable)\n-->\n' });
+  const r = await checkLive({
+    rootDir: dir,
+    sites: ['docs/a.md'],
+    vocabulary: {
+      repository_visibility: { classification: 'verifiable', source: 'x' },
+      never_declared: { classification: 'verifiable', source: 'y' },
+    },
+    readState: async () => ({
+      values: { repository_visibility: 'public', never_declared: 'anything' },
+      unreadable: [],
+    }),
+  });
+  check('#784: GREEN ARM — a readable verifiable entry is not reported', r.misclassified.length, 0);
+  check('#784: ...and the run is clean', r.code, 0);
+}
+{
+  // A TRANSPORT FAILURE IS NOT A MISCLASSIFICATION. This is the anti-noise arm:
+  // without the `kind` distinction, every GitHub outage would report the
+  // vocabulary as wrong — a standing alarm that is never a true positive, which
+  // is the failure this file argues against elsewhere.
+  const dir = fixture({ 'docs/a.md': '<!-- platform-claims\nrepository_visibility: public (verifiable)\n-->\n' });
+  const r = await checkLive({
+    rootDir: dir,
+    sites: ['docs/a.md'],
+    vocabulary: { repository_visibility: { classification: 'verifiable', source: 'x' } },
+    readState: async () => ({
+      values: {},
+      unreadable: [{ property: 'repository_visibility', kind: 'transport', reason: 'HTTP 503' }],
+    }),
+  });
+  check('#784: a TRANSPORT failure is not reported as a misclassification', r.misclassified.length, 0);
+  check('#784: ...it stays a cannot-check, exit 2', r.code, 2);
+}
+{
+  // ANTI-VACUITY. The audit is silent when the vocabulary has no `verifiable`
+  // entry at all, so "silent" must not be mistaken for "checked". The real
+  // vocabulary must actually give it something to check.
+  check(
+    '#784: the real vocabulary has at least one `verifiable` entry for the audit to check',
+    Object.values(VOCABULARY).some((v) => v.classification === 'verifiable'),
+    true,
+  );
+}
+
+// ---------------------------------------------------------------------------
 // THE ENTRY POINT AND main()'s RETURN CODES — #110's shape
 //
 // Every case above calls an exported function directly, so `main()` and the
@@ -460,6 +584,9 @@ check(
 // surfaced the gap: the count went red, which was right, while the name it went
 // red under was already inaccurate. Comparing the sorted list is what the
 // description always claimed.
+// It earned its keep again on #784: moving `organisation_plan` into this set
+// reddened it BY NAME, printing both lists side by side. A count would have gone
+// from 3 to 4 and said nothing about which property moved or in which direction.
 check(
   'vocabulary: the declared-unverifiable members are named, exactly',
   Object.entries(VOCABULARY)
@@ -467,7 +594,20 @@ check(
     .map(([k]) => k)
     .sort()
     .join(','),
-  'author_is_bypass_actor,code_owner_review_required,dependabot_security_updates',
+  'author_is_bypass_actor,code_owner_review_required,dependabot_security_updates,organisation_plan',
+);
+// THE COMPLEMENT, pinned for the same reason. Without it the set above can be
+// satisfied by moving a property OUT of `verifiable` into nothing at all, and
+// `verifiable` is the classification that makes a live assertion — so it is the
+// one whose membership matters most.
+check(
+  'vocabulary: the verifiable members are named, exactly',
+  Object.entries(VOCABULARY)
+    .filter(([, v]) => v.classification === 'verifiable')
+    .map(([k]) => k)
+    .sort()
+    .join(','),
+  'repository_visibility',
 );
 check('registry: the #330 sites are registered', REGISTERED_SITES.includes('docs/ownership.md'), true);
 

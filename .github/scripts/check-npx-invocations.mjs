@@ -160,9 +160,46 @@ const TEXT_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.cjs', '.js', '.yml', '.
  * be an ARGUMENT — a flag, or a bare package name — and stops at the first
  * token that is neither. `@`-prefixed text cannot be consumed by the skip, so
  * the specifier itself can never be swallowed by it.
+ *
+ * ## The captured name must TERMINATE, not merely begin correctly (#759)
+ *
+ * The capture used to be `[a-z0-9][a-z0-9-]*`, which excludes `_` and `.` —
+ * both LEGAL npm name characters. So it truncated at the first one, and the
+ * exemption lookup below is an EXACT `Object.hasOwn`, which then matched the
+ * TRUNCATED name. `@askturret/mcp-adapter-test_v2` captured as
+ * `@askturret/mcp-adapter-test`, an exempt entry, and was SUPPRESSED — a
+ * package inheriting an exemption by merely starting with an exempt name.
+ *
+ * NOTHING WAS EVER PREFIX-MATCHED ON PURPOSE. Both lookups — the exemption and
+ * the published-package set — are exact. The prefix behaviour came entirely
+ * from the capture stopping early, so widening the capture cannot break an
+ * intended prefix semantic; there was never one to break.
+ *
+ * WHY THE CLASS IS NOT SIMPLY WIDENED TO INCLUDE `.`. A sentence-ending period
+ * is the overwhelmingly common neighbour of a package name in prose, so
+ * `[a-z0-9._-]*` captures `@askturret/mcp-cli.` from "…run `npx
+ * @askturret/mcp-cli`." and reports a package that does not exist — trading a
+ * silent suppression for a noisy false accusation on correct documents, which
+ * is how a guard becomes something people switch off.
+ *
+ * So the name may CONTAIN `.`, `_` and `-`, and may END with anything except a
+ * dot. That is the npm grammar's shape and it separates the two cases exactly:
+ * a dotted package name is captured whole, a trailing sentence period is not.
+ * Note it deliberately still ends on `_`, so `mcp-adapter-test_` is captured
+ * whole and flagged rather than truncating back onto the exemption.
+ *
+ * THE RESIDUAL, stated rather than implied: a name ENDING in a dot would still
+ * truncate and could still inherit an exemption. That is not a plausible npm
+ * name, and closing it is what would reintroduce the prose false-positive
+ * above, so it is accepted knowingly rather than overlooked.
+ *
+ * MEASURED before and after on the real tree: 61 invocations both ways, zero
+ * differences. This is the status quo for every line that exists today; it
+ * changes only the hazard cases, which are LATENT — no `@askturret` invocation
+ * in the tree is followed by `_` or `.`.
  */
 const INVOCATION =
-  /\b(?:npx|npm\s+install|npm\s+i|yarn\s+add|pnpm\s+add)(?:\s+(?:--?[A-Za-z][\w-]*|[a-z0-9][\w.-]*))*\s+(@askturret\/[a-z0-9][a-z0-9-]*)/g;
+  /\b(?:npx|npm\s+install|npm\s+i|yarn\s+add|pnpm\s+add)(?:\s+(?:--?[A-Za-z][\w-]*|[a-z0-9][\w.-]*))*\s+(@askturret\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)/g;
 
 /**
  * Specifiers that are UNPUBLISHED ON PURPOSE, each with a reason and the issue

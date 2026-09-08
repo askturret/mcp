@@ -7,7 +7,7 @@
     "declared-untested": "Declared in peerDependencies and expected to work, but NOT exercised by CI. Use at your own risk; report breakage as a bug.",
     "planned": "Not implemented. Tracked by the linked issue. Do not depend on it.",
     "deprecated": "Still supported, with a scheduled removal release.",
-    "unsupported": "Explicitly rejected. Not accepted as input and not planned."
+    "unsupported": "Explicitly rejected. Not planned."
   },
   "runtime": {
     "node": {
@@ -18,7 +18,8 @@
           "version": "20.x",
           "track": "LTS",
           "status": "supported",
-          "note": "The version CI runs on."
+          "note": "The version CI runs on.",
+          "mirroredInMd": true
         },
         {
           "version": "22.x",
@@ -119,7 +120,8 @@
           "version": "2.0 (Swagger)",
           "status": "unsupported",
           "verifiedBy": "packages/sources-openapi/src/__tests__/from-openapi.test.ts",
-          "note": "Rejected. Convert to OpenAPI 3.x first. Refusal surfaces as zero operations and a logged error, not a thrown exception."
+          "note": "Rejected. Convert to OpenAPI 3.x first. Refusal surfaces as zero operations and a logged error, not a thrown exception.",
+          "mirroredInMd": true
         }
       ],
       "note": "Version detection matches the dotted prefixes '3.0.' and '3.1.' against the document's openapi field. A document declaring exactly \"3.0\" or \"3.1\" with no patch segment is rejected; write \"3.0.0\" or \"3.1.0\". Refusal surfaces as zero operations and a logged error, not a thrown exception — the same code path as the 2.0 row above, since one version check refuses both."

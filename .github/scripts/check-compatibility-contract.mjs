@@ -359,6 +359,74 @@ export function main(argv) {
     }
   }
 
+  // --- E's INPUT, WIDENED: DECLARED NOTE MIRRORS (#700) ----------------------
+  //
+  // `comparable` collected only `declared`, `tested` and `entryPoint`, so NO
+  // check anywhere read a `note`. #625 aligned six note copies by hand and
+  // nothing could notice the next edit separating them — the guard was green,
+  // was correctly cited as the .md <-> .json comparison, and did not compare the
+  // field that PR changed.
+  //
+  // WHY THIS IS OPT-IN RATHER THAN EVERY NOTE, WHICH IS WHAT WAS ASKED FOR.
+  // Measured before building it: of the 13 `note` fields, exactly 2 appear
+  // verbatim in the .md. Feeding all 13 to check E would redden main eleven
+  // times on a tree everyone agrees is correct — and the eleven are not drift.
+  // The two documents are written in different REGISTERS: the .md is formatted
+  // markdown (`**and**`, `` `peerDependencies` ``) and the .json is plain text,
+  // so most pairs are paraphrase BY DESIGN. Zero of the five statusLegend values
+  // appear verbatim for exactly that reason.
+  //
+  // So byte-equality is not a property of notes in general, and a guard asserting
+  // it would be wrong rather than strict. It IS a property of the ones #625
+  // deliberately aligned, and `mirroredInMd` is where that intent is now written
+  // down instead of being inferable only by diffing the two files.
+  //
+  // THE BOUNDARY, STATED (#700 item 4): a note carrying `mirroredInMd: true`
+  // must appear byte-for-byte in the .md. Every other note is paraphrase and is
+  // NOT compared. Paraphrased prose describing the same fact does not create a
+  // false claim; two copies stating different MECHANISMS does, which is the
+  // failure this closes. Adding the flag is how a claim becomes contractual —
+  // and it is a decision someone makes, not a default that quietly widens.
+  const mirroredNotes = [];
+  const collectMirrored = (node) => {
+    if (node === null || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      for (const item of node) collectMirrored(item);
+      return;
+    }
+    if (node.mirroredInMd === true && typeof node.note === 'string') mirroredNotes.push(node.note);
+    for (const value of Object.values(node)) collectMirrored(value);
+  };
+  collectMirrored(contract);
+
+  // A flag on an object with no note is a mis-declaration, not a no-op: it reads
+  // as covered and is covered by nothing. Refused rather than skipped, for the
+  // same reason check A refuses a row with no `source`.
+  const collectMisdeclared = (node, path) => {
+    if (node === null || typeof node !== 'object') return;
+    if (Array.isArray(node)) {
+      node.forEach((item, i) => collectMisdeclared(item, `${path}[${i}]`));
+      return;
+    }
+    if (node.mirroredInMd === true && typeof node.note !== 'string') {
+      divergences.push(
+        `${path || 'contract'}: carries \`mirroredInMd: true\` but no string \`note\` — the flag declares a ` +
+          `note is mirrored in docs/compatibility.md, so an object without one is covered by nothing`,
+      );
+    }
+    for (const [k, v] of Object.entries(node)) collectMisdeclared(v, path ? `${path}.${k}` : k);
+  };
+  collectMisdeclared(contract, '');
+
+  // NO VACUITY REFUSAL HERE, and the first draft had one. A contract with no
+  // mirrored note is legitimate — every synthetic fixture in the self-test is
+  // one, and refusing them turned ten passing cases into cannot-check. The
+  // vacuity that matters is THIS repository's contract losing its flags, which
+  // is asserted against the real tree in the self-test instead. A guard that
+  // refuses valid inputs to catch a regression in one specific input is
+  // measuring the wrong thing in the wrong place.
+  for (const note of mirroredNotes) comparable.push(note);
+
   // --- D: SUPPORTED ENTRY POINT ---------------------------------------------
   // The aspirational species: a row may name an entry point that was intended
   // and never shipped. Do not watch the plan — assert the artifact the claim

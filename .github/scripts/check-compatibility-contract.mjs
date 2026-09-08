@@ -98,6 +98,7 @@ import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
+import { publicPackages } from './lib/public-packages.mjs';
 
 /** Number words this guard can read back out of the enforcement prose. */
 const WORD_TO_NUMBER = Object.freeze({
@@ -192,23 +193,18 @@ export function declaredEntries(contract) {
   return found;
 }
 
-/** Public workspace package names, discovered rather than hardcoded. */
+/**
+ * Public workspace package names, discovered rather than hardcoded.
+ *
+ * The walk is shared (#711). The POLICY stays here: an unreadable manifest is
+ * skipped, because unreadable manifests are reported by the packaging guards
+ * and not by this one — and an absent `packages/` yields an empty set rather
+ * than a refusal, because this guard only consults the set when a support claim
+ * needs holding to it.
+ */
 export function discoverPublicPackages(repoRoot) {
-  const dir = join(repoRoot, 'packages');
-  if (!existsSync(dir)) return new Set();
-  const names = new Set();
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    const manifest = join(dir, entry.name, 'package.json');
-    if (!existsSync(manifest)) continue;
-    try {
-      const m = JSON.parse(readFileSync(manifest, 'utf-8'));
-      if (m.private !== true && typeof m.name === 'string') names.add(m.name);
-    } catch {
-      // Unreadable manifests are reported by the packaging guards, not here.
-    }
-  }
-  return names;
+  const { packages } = publicPackages(repoRoot);
+  return new Set((packages ?? []).map((p) => p.name));
 }
 
 /** The version the lockfile actually installs for a package, or null. */

@@ -44,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { generateNotice } from './generate-notice.mjs';
+import { generateNotice, noticeTargets, staleNoticeTargets } from './generate-notice.mjs';
 import { didNotStart } from './sdk-upgrade-drill.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -344,6 +344,56 @@ console.log('\n# this repository\n');
   // An inventory that collapsed to nothing would also report up-to-date;
   // assert it is real so a broken scan cannot look healthy.
   check_('CONTROL: and the inventory is non-trivial', result.runtimeCount > 10, true);
+}
+
+// ---------------------------------------------------------------------------
+// EVERY NOTICE COPY, FROM A LIST THAT IS NOT WRITTEN HERE (#711)
+//
+// Apache-2.0 §4(d) is satisfied per ARTIFACT, so a package shipping a stale
+// NOTICE is non-compliant even when the root is current. The generator writes
+// them all — and the point of #711 is that it does so from a SHARED list,
+// because a sixth hand-written copy of "which packages are public" would make
+// the set receiving a NOTICE a parallel to the set that exists.
+// ---------------------------------------------------------------------------
+{
+  // DERIVED, NOT HARDCODED — including the count. A fixture with two public
+  // packages, one private, and one public-without-a-NOTICE must yield exactly
+  // root + the two that qualify, so neither membership nor number can have been
+  // written down anywhere.
+  const dir = scratch({
+    NOTICE: 'ROOT\n',
+    'packages/alpha/package.json': '{"name":"@x/alpha","version":"0.0.0"}',
+    'packages/alpha/NOTICE': 'ROOT\n',
+    'packages/beta/package.json': '{"name":"@x/beta","version":"0.0.0"}',
+    'packages/beta/NOTICE': 'stale\n',
+    'packages/hidden/package.json': '{"name":"@x/hidden","version":"0.0.0","private":true}',
+    'packages/hidden/NOTICE': 'ROOT\n',
+    // Public, but ships no NOTICE. Deliberately NOT given one: whether it
+    // should ship one is check-tarball-compliance's call, not this script's.
+    'packages/nonotice/package.json': '{"name":"@x/nonotice","version":"0.0.0"}',
+  });
+
+  const targets = noticeTargets(dir).map((p) => p.slice(dir.length + 1));
+  check_('#711: root and every public package carrying a NOTICE is a target', targets.length, 3);
+  check_('#711: ...the private package is excluded', targets.includes('packages/hidden/NOTICE'), false);
+  check_(
+    '#711: ...and a public package with no NOTICE is not given one',
+    targets.includes('packages/nonotice/NOTICE'),
+    false,
+  );
+
+  // THE DRIFT PROBE, and it is the assertion that caught a real defect in the
+  // first version of this change: `beta` has drifted while the ROOT is current.
+  // Gating the write on the root's own `changed` flag left it drifted — which
+  // is the #587 state exactly, a copy going stale while the root regenerates.
+  const stale = staleNoticeTargets(dir, 'ROOT\n').map((p) => p.slice(dir.length + 1));
+  check_('#711: a drifted copy is stale even when the ROOT is current', stale.join(','), 'packages/beta/NOTICE');
+
+  // THE CONTROL. Without it the assertion above is satisfied by a rule that
+  // calls every copy stale, which would rewrite all ten on every run and make
+  // "stale" mean nothing.
+  writeFileSync(join(dir, 'packages/beta/NOTICE'), 'ROOT\n');
+  check_('#711: ...and once it matches, nothing is stale', staleNoticeTargets(dir, 'ROOT\n').length, 0);
 }
 
 // ---------------------------------------------------------------------------

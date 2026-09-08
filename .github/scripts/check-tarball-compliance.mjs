@@ -177,6 +177,7 @@ import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
+import { enumerateWorkspacePackages } from './lib/public-packages.mjs';
 
 /** Entries every public tarball must carry. */
 export const REQUIRED_TARBALL_ENTRIES = ['README.md', 'LICENSE', 'NOTICE'];
@@ -374,34 +375,20 @@ export function findManifestMetadataIssues(manifest, dir) {
  * drops out on the same day.
  */
 export function discoverPublicPackages(repoRoot) {
-  const packagesDir = join(repoRoot, 'packages');
-  if (!existsSync(packagesDir)) return [];
+  // The walk is shared (#711). This guard's policy is the third of the three
+  // and is kept here: an unreadable manifest is RETAINED as an entry rather
+  // than skipped, because skipping would drop a package out of the guard on
+  // the strength of a parse error — it is surfaced as cannot-check instead.
+  const { entries } = enumerateWorkspacePackages(repoRoot);
+  if (entries === null) return [];
 
-  const found = [];
-  const entries = readdirSync(packagesDir, { withFileTypes: true })
-    .filter((e) => e.isDirectory())
-    .sort((a, b) => (a.name < b.name ? -1 : 1));
-
-  for (const entry of entries) {
-    const dir = `packages/${entry.name}`;
-    const manifestPath = join(packagesDir, entry.name, 'package.json');
-    if (!existsSync(manifestPath)) continue;
-
-    let manifest;
-    try {
-      manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    } catch (err) {
-      // Unreadable, so its visibility is unknown. Surfaced as cannot-check
-      // rather than skipped: skipping would drop a package out of the guard
-      // on the strength of a parse error.
-      found.push({ dir, name: null, unreadable: String(err && err.message) });
-      continue;
-    }
-
-    if (manifest.private === true) continue;
-    found.push({ dir, name: manifest.name, keywords: manifest.keywords, manifest });
-  }
-  return found;
+  return entries
+    .filter((e) => e.unreadable !== null || e.manifest.private !== true)
+    .map((e) =>
+      e.unreadable !== null
+        ? { dir: e.dir, name: null, unreadable: e.unreadable }
+        : { dir: e.dir, name: e.manifest.name, keywords: e.manifest.keywords, manifest: e.manifest },
+    );
 }
 
 /**

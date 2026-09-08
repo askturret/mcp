@@ -23,6 +23,7 @@ import { join, resolve } from 'node:path';
 
 import { inventory } from './lib/dependencies.mjs';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
+import { publicPackages } from './lib/public-packages.mjs';
 
 const BEGIN = '<!-- BEGIN GENERATED THIRD-PARTY NOTICES -->';
 const END = '<!-- END GENERATED THIRD-PARTY NOTICES -->';
@@ -189,15 +190,91 @@ export function generateNotice(rootDir = '.', options = {}) {
   };
 }
 
+/**
+ * Where the NOTICE has to exist: the repository root, and every package that
+ * ships one (#711).
+ *
+ * Apache-2.0 §4(d) is satisfied per ARTIFACT, so a published package carrying a
+ * stale NOTICE is non-compliant even when the root is current. #587 closed half
+ * of that — `check-tarball-compliance` asserts each shipped copy is
+ * byte-identical to the root — but the guard can only REPORT the drift. This
+ * writes the copies, so regeneration cannot leave one behind.
+ *
+ * THE LIST IS IMPORTED, NOT RESTATED, which is the whole of #711. Five files
+ * carried their own copy of this walk; spelling a sixth out here would have
+ * made the set of packages receiving a NOTICE a hand-maintained parallel to the
+ * set of packages that exist — the shape #625, #700 and #704 are each removing
+ * elsewhere.
+ *
+ * ONLY PACKAGES THAT ALREADY HAVE ONE. A public package with no NOTICE is not
+ * given one here: whether it should ship one is a packaging decision that
+ * `check-tarball-compliance` already owns and reports on, and creating files as
+ * a side effect of regeneration would make this script the author of a claim
+ * rather than the maintainer of one.
+ */
+export function noticeTargets(rootDir) {
+  const root = resolve(rootDir);
+  const { packages } = publicPackages(root);
+  return [
+    join(root, 'NOTICE'),
+    ...(packages ?? []).map((p) => join(root, p.dir, 'NOTICE')).filter((p) => existsSync(p)),
+  ];
+}
+
+/**
+ * The targets whose content is not the desired content.
+ *
+ * SEPARATE FROM `changed`, and the distinction is the one that matters. The
+ * root can be perfectly up to date while a package copy has drifted — that IS
+ * the #587 state, nine snapshots going stale while the root regenerates. Gating
+ * the write on the root's own `changed` flag reproduces it: the root matches,
+ * nothing is written, the drifted copy stays drifted.
+ *
+ * Found by running the drift probe #711 asks for, on a first version of this
+ * change that did exactly that. Recorded rather than quietly corrected: the
+ * probe is what made the difference between a fix and a fix-shaped change.
+ */
+export function staleNoticeTargets(rootDir, next) {
+  return noticeTargets(rootDir).filter((target) => {
+    try {
+      return readFileSync(target, 'utf-8') !== next;
+    } catch {
+      return true;
+    }
+  });
+}
+
 if (isProcessEntryPoint(import.meta.url)) {
   const args = process.argv.slice(2);
   const rootDir = args.find((a) => !a.startsWith('--')) ?? '.';
-  const result = generateNotice(rootDir, { checkOnly: args.includes('--check') });
+  const checkOnly = args.includes('--check');
+  const result = generateNotice(rootDir, { checkOnly });
 
-  if (result.code === 0 && result.changed) {
-    writeFileSync(join(resolve(rootDir), 'NOTICE'), result.next);
+  if (result.code !== 0) {
+    console.error(result.message);
+    process.exit(result.code);
   }
-  if (result.code === 0) console.log(result.message);
-  else console.error(result.message);
-  process.exit(result.code);
+
+  const stale = result.next === undefined ? [] : staleNoticeTargets(rootDir, result.next);
+
+  if (checkOnly) {
+    if (stale.length > 0) {
+      console.error(
+        `::error::${stale.length} NOTICE cop(ies) are out of date:\n` +
+          stale.map((p) => `  ${p}`).join('\n') +
+          '\n\nRun `node .github/scripts/generate-notice.mjs` to rewrite them.',
+      );
+      process.exit(1);
+    }
+    console.log(result.message);
+    process.exit(0);
+  }
+
+  for (const target of stale) writeFileSync(target, result.next);
+  console.log(
+    stale.length === 0
+      ? `${result.message} All ${noticeTargets(rootDir).length} copies match.`
+      : `${result.message} Rewrote ${stale.length} of ${noticeTargets(rootDir).length} copies.`,
+  );
+  process.exit(0);
 }

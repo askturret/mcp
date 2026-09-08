@@ -132,6 +132,25 @@ describe('isSupportedProtocolVersion', () => {
   });
 
   it('rejects anything else', () => {
+    // ONE negative sample, deliberately — and the reason is the IMPLEMENTATION,
+    // not this test's pairing with the one above it (#712).
+    //
+    // The tempting rationale is "the positive direction above iterates the whole
+    // supported set, so a single negative balances it". That argument is about
+    // the pairing, and it is not what makes one sample enough.
+    // `isSupportedProtocolVersion` is a one-line
+    // `SUPPORTED_MCP_PROTOCOL_VERSIONS.includes(version)` — set membership, with
+    // no parsing, no ranges, no prefix or normalisation handling. There is no
+    // second sample that could catch anything the first does not, because there
+    // is no branch for one to take.
+    //
+    // The distinction is load-bearing for whoever changes that implementation:
+    // if it ever grows surface, this test wants revisiting — and the pairing
+    // argument would go on reading as sound while the coverage quietly stopped
+    // being adequate. The rationale is what generalises; the decision is not.
+    //
+    // The sample is the version from the originating bug (#61): the one the
+    // dispatcher used to stamp onto every span but the server never spoke.
     expect(isSupportedProtocolVersion('2025-06-18')).toBe(false);
   });
 });
@@ -152,11 +171,22 @@ describe('the announced version and the published contract agree', () => {
   // pairing with a different failure mode, and nesting it under the other made
   // the parent block's subject wrong too.
 
-  // Guards the guard, and it is load-bearing rather than ceremony: if either
-  // read yields undefined, the assertions below would compare against undefined
-  // and could no longer fail on the thing they exist to detect. That is exactly
-  // the defect this issue is about, so it must not be reintroduced through the
-  // fixture.
+  // Guards the guard, and it is load-bearing rather than ceremony — but what it
+  // buys is DIAGNOSIS, not the ability to fail (#712).
+  //
+  // If either read yields undefined the assertions below do not go quiet. They
+  // fail either way, because `expect('2024-11-05').toBe(undefined)` fails. What
+  // breaks is what the failure SAYS: it inverts into `Expected: undefined,
+  // Received: "2024-11-05"`, accusing MCP_PROTOCOL_VERSION — the one value in
+  // the comparison still known to be correct. A reader follows that message to
+  // the constant and finds nothing wrong with it.
+  //
+  // So this assertion names the CAUSE — a contract read stopped producing a
+  // version — rather than preventing a silent pass, which is not a failure mode
+  // available here. Do not take that on trust; it is cheap to check. Break
+  // either read (misspell the row label in the regex above, or parse `'{}'` in
+  // place of the JSON file) and run this suite: TWO arms redden, not one, and
+  // only this one says what actually happened.
   it('read a version out of both contract copies to compare against', () => {
     expect(CONTRACT_JSON.protocol?.mcp?.protocolVersion).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     expect(MD_PROTOCOL_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);

@@ -69,11 +69,19 @@ function unencodableFromHints(
 }
 
 /**
- * FOUR OF THE CODES BELOW ALSO EXIST IN `turret doctor`, MEANING SOMETHING ELSE.
+ * FIVE COMPILER CODES ALSO EXIST IN `turret doctor`, MEANING SOMETHING ELSE.
  *
- * Two independent vocabularies share four strings, and in every pair doctor's
- * meaning is the NARROWER one — scoped to an HTTP method, phrased as advice —
- * while the code here is an IR invariant that applies to every operation:
+ * THE SET THIS WAS ENUMERATED OVER, stated so the next reader can judge whether
+ * it was closed over the right thing: every pass under
+ * `packages/core/src/compiler/passes/` that calls `context.warnings.warn` —
+ * `apply-overlays`, `resolve-identity` and this file — giving 12 codes, against
+ * doctor's 11 in `packages/cli/src/commands/doctor.ts`.
+ *
+ * THAT SCOPE IS THE CORRECTION. The first version of this note walked only THIS
+ * pass — the one being edited — and reported four shared codes as though that
+ * were the whole set. `DUPLICATE_OPERATION_ID` is emitted from
+ * `resolve-identity.ts` and fell outside the window. If you extend this note,
+ * re-walk the passes; do not assume the list below is still complete.
  *
  *   MISSING_OPERATION_ID    here: no `id` on the operation
  *                           doctor: the spec has no `operationId`
@@ -83,10 +91,21 @@ function unencodableFromHints(
  *                           doctor: a GET must have a non-empty output schema
  *   MISSING_EFFECTS         here: no `effects` metadata
  *                           doctor: a mutating operation should carry x-mcp-effects
+ *   DUPLICATE_OPERATION_ID  resolve-identity.ts: one id claimed by MULTIPLE
+ *                           SOURCES, carrying winnerSource/loserSource
+ *                           doctor: two operations inside ONE document
  *
- * The severities disagree too: doctor publishes MISSING_OPERATION_ID and
- * MISSING_OUTPUT_SCHEMA as `error`, while everything this pass emits is a
- * warning.
+ * THE PATTERN, stated so it holds for all five: doctor models a SINGLE OpenAPI
+ * DOCUMENT, while a compiler code describes the compiled IR, which may compose
+ * several sources. Doctor's reading is the narrower one in every pair — for
+ * three of the five it is further scoped to an HTTP method, but that is a
+ * property of those three and not of the pattern. `DUPLICATE_OPERATION_ID` is
+ * the case that shows the difference: multi-source composition is a concept
+ * doctor has no notion of at all.
+ *
+ * THE SEVERITIES DISAGREE ON THREE. doctor publishes MISSING_OPERATION_ID,
+ * MISSING_OUTPUT_SCHEMA and DUPLICATE_OPERATION_ID as `error`; every compiler
+ * warning is a warning.
  *
  * NOTHING MERGES THE TWO TODAY. doctor builds its findings from its own walk of
  * the OpenAPI document; these go to the compiler's WarningCollector and are
@@ -94,16 +113,17 @@ function unencodableFromHints(
  * anything will change.
  *
  * THE CONDITION UNDER WHICH IT BITES is a single, checkable one: if compiler
- * warnings are ever fed into doctor's finding list, each of those four strings
- * arrives carrying two meanings and two severities, and doctor's PUBLISHED code
- * table (packages/cli/README.md) becomes wrong for exactly those rows. Whoever
- * merges the vocabularies has to reconcile them first.
+ * warnings are ever fed into doctor's finding list, each of those five strings
+ * arrives carrying two meanings — three of them two severities — and doctor's
+ * PUBLISHED code table (packages/cli/README.md) becomes wrong for exactly those
+ * rows. Whoever merges the vocabularies has to reconcile them first.
  *
  * DO NOT RESOLVE THIS BY RENAMING EITHER SIDE without asking. doctor's codes are
  * documented in a published package's README and appear in its `--json` output,
  * so they are a user-facing contract; renaming one is a breaking change, not a
- * tidy-up. The same note is at doctor's emit site, because the collision bites
- * whoever merges the two and they may arrive from either direction.
+ * tidy-up. The same note is at doctor's emit site and at `resolve-identity.ts`,
+ * because the collision bites whoever merges the two and they may arrive from
+ * any of those directions.
  */
 export const validateInvariants: CompilerPass = {
   name: 'validate-invariants',

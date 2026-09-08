@@ -28,6 +28,7 @@ import { spawnSync } from 'node:child_process';
 import {
   main,
   parseImports,
+  CODE_FENCES,
   discoverPublicPackages,
   discoverPrivatePackageNames,
   readRootPackageName,
@@ -115,6 +116,90 @@ function silently(fn) {
   check('skips default imports', parseImports("```ts\nimport express from 'express';\n```").length, 0);
 
   check('finds several imports in one fence', parseImports("```ts\nimport { a } from 'x';\nimport { b } from 'y';\n```").length, 2);
+}
+
+// ---------------------------------------------------------------------------
+// THE BOUND OF FINDING, MADE EXECUTABLE (#683).
+//
+// The header claims every import this FINDS is probed, and that half is
+// exhaustive. FINDING was not, and the limits were unstated: a double-quoted
+// specifier yielded 0, and a ```tsx block was never read. That is a third shape
+// between the two the header enumerated — an import that EXISTS but is NOT
+// FOUND — which is the same class the paragraph was written to prevent.
+//
+// Both are now read. What remains excluded is asserted below rather than
+// described, because a described bound is what went stale in #593.
+// ---------------------------------------------------------------------------
+{
+  // THE FENCE LIST IS PINNED BY MEMBERSHIP, not by sampling. A per-tag probe
+  // proves the tags it names are read and says nothing about a ninth being
+  // added; this reddens on ANY widening and forces the header list to be
+  // corrected in the same change. That is the whole ask of #683.
+  check(
+    'the fence list is exactly what the header documents',
+    CODE_FENCES.join(','),
+    'ts,typescript,js,javascript,tsx,jsx,mjs,cjs',
+  );
+
+  // The four added by #683, each read for the first time.
+  check('parses a ```tsx fence', parseImports("```tsx\nimport { a } from 'x';\n```").length, 1);
+  check('parses a ```jsx fence', parseImports("```jsx\nimport { a } from 'x';\n```").length, 1);
+  check('parses a ```mjs fence', parseImports("```mjs\nimport { a } from 'x';\n```").length, 1);
+  check('parses a ```cjs fence', parseImports("```cjs\nimport { a } from 'x';\n```").length, 1);
+
+  // A tag NOT on the list, so the list is demonstrably a list rather than a
+  // wildcard that happens to match everything tried above.
+  check(
+    'a fence tag outside the list is still not read',
+    parseImports("```javascriptreact\nimport { a } from 'x';\n```").length,
+    0,
+  );
+
+  // DOUBLE QUOTES. Asserted on the SPECIFIER, not the count: a count of 1 is
+  // satisfied by a match that captured the quote character instead of the
+  // module name, which is exactly what a mis-numbered capture group produces.
+  const dq = parseImports('```ts\nimport { a, b as c } from "@scope/pkg";\n```');
+  check('parses a double-quoted specifier', dq.length, 1);
+  check('...and captures the specifier, not the quote', dq[0]?.specifier, '@scope/pkg');
+  check('...and its bindings survive intact', dq[0]?.named.join(','), 'a,b');
+  check(
+    '...and the probe statement normalises to single quotes',
+    dq[0]?.probeStatement,
+    "import { a, b } from '@scope/pkg'",
+  );
+
+  // The quote is a BACKREFERENCE, so an unterminated string is not a specifier.
+  check(
+    'mismatched quotes are not a specifier',
+    parseImports('```ts\nimport { a } from \'@scope/pkg";\n```').length,
+    0,
+  );
+
+  // The remaining exclusions, all four together — matching the header, so a
+  // reader meets them in one place in both artifacts.
+  check(
+    'still skips default imports',
+    parseImports("```ts\nimport express from 'express';\n```").length,
+    0,
+  );
+  check(
+    'still skips namespace imports',
+    parseImports("```ts\nimport * as express from 'express';\n```").length,
+    0,
+  );
+  check(
+    'a template-literal specifier is not found — it is a SyntaxError anyway',
+    parseImports('```ts\nimport { a } from `x`;\n```').length,
+    0,
+  );
+
+  // THE CONTROL. Without it every 0 above is satisfied by a parser that finds
+  // nothing at all — the #63 empty-input shape, applied to this block.
+  check(
+    'bound control: an ordinary import IS still found, so the zeros above mean something',
+    parseImports("```ts\nimport { a } from 'x';\n```").length,
+    1,
+  );
 }
 
 // ---------------------------------------------------------------------------

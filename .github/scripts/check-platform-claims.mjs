@@ -99,13 +99,51 @@ export const VOCABULARY = Object.freeze({
     source: 'GET /repos/{owner}/{repo} -> .visibility',
   }),
   organisation_plan: Object.freeze({
-    classification: 'verifiable',
-    source: 'GET /orgs/{org} -> .plan.name',
-    // READABLE ONLY WITH AN ORG-SCOPED CREDENTIAL. Measured 2026-08-31:
-    // unauthenticated, `plan` is ABSENT from the response entirely. So this
-    // property is verifiable in principle and may be CANNOT CHECK in practice,
-    // depending on what the scheduled job's token can see. That is exactly what
-    // exit 2 is for; it must never degrade to a pass on a missing field.
+    classification: 'declared-unverifiable',
+    reason:
+      'Reading it needs `GET /orgs/{org}` -> `.plan.name`, which GitHub returns only to an ' +
+      'organisation OWNER. The Actions `GITHUB_TOKEN` is a repository-scoped installation token, ' +
+      'and no workflow `permissions:` block exposes an organisation scope at all — so the field ' +
+      'is absent from an otherwise-200 response rather than producing an error.',
+    // RECLASSIFIED FROM `verifiable`, ON A MEASUREMENT OF THE JOB'S OWN
+    // CREDENTIAL (#784).
+    //
+    // The previous classification was not careless, and it is worth being exact
+    // about what was wrong with it. It recorded an UNAUTHENTICATED read showing
+    // `plan` absent, and concluded the property was "verifiable in principle and
+    // may be CANNOT CHECK in practice, depending on what the scheduled job's
+    // token can see". Every word of that was true. The missing step was that
+    // nobody had ever asked the scheduled job's token.
+    //
+    // An unauthenticated read is a PROXY for "holds no admin", not an exercise
+    // of the credential, and it could not settle this on its own: the two
+    // resources have DIFFERENT PERMISSION MODELS, so an org's `plan` might have
+    // been readable by a member token where a repo's `security_and_analysis` is
+    // admin-only. Reasoning from one to the other — in either direction — is
+    // what produced the original classification.
+    //
+    // MEASURED 2026-09-08 by exercising `secrets.GITHUB_TOKEN` from a pushed
+    // workflow on this repository, which is the SAME credential
+    // `reliability-nightly.yml`'s `platform-claims` job passes to this guard:
+    //
+    //     GET /orgs/askturret                -> 200, 24 keys, `plan` ABSENT
+    //     GET /repos/askturret/mcp           -> 200, `visibility` present,
+    //                                           `security_and_analysis` ABSENT
+    //     GET .../automated-security-fixes   -> 403
+    //
+    // The run's own log reported the token's scopes as `Contents: read`,
+    // `Metadata: read`, `Packages: read`.
+    //
+    // The org response carries 24 keys — identical to what an anonymous caller
+    // sees. So this is the `code_owner_review_required` case rather than the
+    // "depends on the token" case: no `permissions:` block can widen it, which
+    // makes it CLOSED rather than token-dependent.
+    //
+    // TO UPGRADE THIS TO `verifiable`, the job needs an org-owner credential — a
+    // PAT or App token in `secrets`, not the Actions token. Then move the
+    // classification, add the read back to `readLiveState`, and the divergence
+    // arm starts working. Same escape hatch as `dependabot_security_updates`,
+    // and for the same reason.
   }),
   code_owner_review_required: Object.freeze({
     classification: 'declared-unverifiable',
@@ -133,25 +171,65 @@ export const VOCABULARY = Object.freeze({
     // ADMIN credential, and the question this classification answers is not "can
     // it be read?" but "can the SCHEDULED JOB read it?"
     //
-    // MEASURED 2026-09-08, three ways:
+    // MEASURED 2026-09-08, four ways:
     //   - authenticated with an admin token: `security_and_analysis` present,
     //     `dependabot_security_updates.status = "enabled"`;
     //   - UNAUTHENTICATED: the `security_and_analysis` block is ABSENT ENTIRELY
     //     while `visibility` is still present, so absence is the documented
     //     under-privileged shape rather than a transport failure;
-    //   - GitHub's own docs on both endpoints: "must have admin read access".
+    //   - GitHub's own docs on both endpoints: "must have admin read access";
+    //   - and, added by #784, WITH THE SCHEDULED JOB'S OWN `secrets.GITHUB_TOKEN`
+    //     exercised from a pushed workflow: `GET /repos/askturret/mcp` returns
+    //     200 with `visibility` present and `security_and_analysis` ABSENT, and
+    //     `GET .../automated-security-fixes` returns 403.
     //
-    // WHY THAT FORCES THIS CLASSIFICATION RATHER THAN `verifiable`. This file
-    // already holds both precedents, and they are distinguished by whether the
-    // credential COULD ever suffice. `organisation_plan` is `verifiable` because
-    // it MAY be readable depending on the token. `code_owner_review_required` is
-    // `declared-unverifiable` because reading it "requires admin credentials CI
-    // does not hold". This is the second case, not the first: no `permissions:`
-    // block can grant the scope, so it is not token-dependent — it is closed.
+    // That fourth measurement is the one that matters, and it was missing until
+    // #784. QA named the gap explicitly when this was classified: "I did NOT
+    // establish that the workflow token cannot read it; only that an unprivileged
+    // read does not." The first three are all proxies for the credential; only
+    // the fourth exercises it. The classification was right, but it is only now
+    // EVIDENCED rather than inferred.
+    //
+    // WHY THAT FORCES THIS CLASSIFICATION RATHER THAN `verifiable`. The two
+    // classifications are separated by ONE question, and #784 changed what
+    // answers it: does the SCHEDULED JOB'S OWN CREDENTIAL read the property —
+    // MEASURED, not reasoned?
+    //
+    //   `verifiable` example: `repository_visibility` — the job reads it, 200
+    //     with `visibility` present. THE LINE ABOVE IS MACHINE-CHECKED: the
+    //     self-test extracts that property name and asserts the vocabulary really
+    //     classifies it `verifiable`. Keep it on one line. It exists because the
+    //     sentence it replaces named a property that this very PR reclassified,
+    //     and stayed green (#802, QA).
+    //   `declared-unverifiable`: this entry, and every other in this vocabulary
+    //     carrying a `reason` — each needs a credential no `permissions:` block
+    //     can grant. Deliberately NOT enumerated here: the membership is pinned
+    //     exactly, by name, in the self-test, and a second hand-maintained copy
+    //     is the thing that just went stale.
+    //
+    // THIS PARAGRAPH USED TO ASK A WEAKER QUESTION — whether the credential could
+    // EVER suffice — and it named `organisation_plan` as the `verifiable` side,
+    // because that property MIGHT be readable depending on the token. #784
+    // measured it: it is not, so it now sits in the class below, and that example
+    // is gone rather than replaced.
+    //
+    // THE TOKEN-DEPENDENT SIDE HAS NO EXAMPLE ON PURPOSE. An aspirational
+    // `verifiable` — "we think a token could read this" — is precisely what #784
+    // cost, and `checkLive`'s misclassification audit now reports one as a
+    // divergence for any property the job actually reads. So do not reintroduce
+    // "might be readable" as a reason to classify something `verifiable`: measure
+    // it, and if the job cannot read it, it belongs here with a reason.
+    //
+    // WHAT THE AUDIT DOES NOT COVER, recorded so nobody leans on it further than
+    // it reaches (QA, #802): it needs an `absent-field` entry in `unreadable`, so
+    // it is silent for a property classified `verifiable` that `readLiveState`
+    // never reads. Flipping a classification WITHOUT restoring the read — the
+    // likelier half of the mistake — is caught by the naming pins in
+    // `check-platform-claims.test.mjs`, not here. Those pins are the protection;
+    // do not weaken them on the strength of this audit existing.
     //
     // AND THE COST OF GETTING IT WRONG IS NOT SYMMETRIC. `repository_visibility`
-    // is currently the ONLY declared verifiable property (`organisation_plan` is
-    // in this vocabulary but declared at no site), so the nightly's
+    // is the ONLY `verifiable` property in this vocabulary, so the nightly's
     // platform-claims job runs GREEN. Declaring this one `verifiable` would make
     // it CANNOT CHECK on every run, permanently — exit 2 forever, with no path
     // to green and no way to distinguish it from a real unreadability. That
@@ -355,27 +433,25 @@ export async function readLiveState({ owner = 'askturret', repo = 'mcp', token =
 
   try {
     const j = await get(`https://api.github.com/repos/${owner}/${repo}`);
+    // A MISSING FIELD IS CANNOT CHECK, NEVER A PASS. Treating absence as
+    // agreement is the #281 defect verbatim.
     if (typeof j.visibility === 'string') values['repository_visibility'] = j.visibility;
-    else unreadable.push({ property: 'repository_visibility', reason: 'the repository payload carried no `visibility` field' });
-  } catch (e) {
-    unreadable.push({ property: 'repository_visibility', reason: e.message });
-  }
-
-  try {
-    const j = await get(`https://api.github.com/orgs/${owner}`);
-    // A MISSING `plan` IS CANNOT CHECK, NEVER A PASS. Unauthenticated — and
-    // possibly with a repo-scoped Actions token — the field is absent
-    // altogether. Treating absence as agreement is the #281 defect verbatim.
-    if (j.plan && typeof j.plan.name === 'string') values['organisation_plan'] = j.plan.name;
     else {
       unreadable.push({
-        property: 'organisation_plan',
-        reason: 'the organisation payload carried no `plan` field — the credential in use cannot see it',
+        property: 'repository_visibility',
+        kind: 'absent-field',
+        reason: 'the repository payload carried no `visibility` field',
       });
     }
   } catch (e) {
-    unreadable.push({ property: 'organisation_plan', reason: e.message });
+    unreadable.push({ property: 'repository_visibility', kind: 'transport', reason: e.message });
   }
+
+  // NO ORGANISATION READ. `organisation_plan` is `declared-unverifiable` since
+  // #784, and every other property in that class is likewise not fetched here —
+  // a read whose result can never be compared is a nightly API call that cannot
+  // inform anything. Restore it in the same commit that reclassifies the
+  // property back to `verifiable`, never before.
 
   return { values, unreadable };
 }
@@ -396,6 +472,38 @@ export async function checkLive({ rootDir, sites = REGISTERED_SITES, vocabulary 
 
   const { values, unreadable } = await readState();
   const unreadableBy = new Map(unreadable.map((u) => [u.property, u.reason]));
+
+  // THE CLASSIFICATION IS ITSELF A CLAIM, and until #784 nothing tested it.
+  //
+  // `verifiable` asserts that the credential THIS JOB HOLDS could read the
+  // property. Nothing ever checked that assertion against the credential, and
+  // #784 is what that cost: `organisation_plan` sat classified `verifiable` and
+  // unreadable, silently, because it was DECLARED AT NO SITE — and the loop
+  // below only ever visits declared claims.
+  //
+  // So this runs over the VOCABULARY, not over the declarations. That is the
+  // whole point: an undeclared entry is a claim nobody has tested, and it stays
+  // untested right up until someone declares it and inherits a permanently red
+  // nightly that looks like their change broke. The cost lands on whoever does
+  // the right thing next, which is the worst place to put it.
+  //
+  // ONLY `absent-field` COUNTS, and the distinction is load-bearing. A transport
+  // failure means the read did not happen — an unknown, which belongs in
+  // cannot-check. A 200 response with the field missing is the under-privileged
+  // shape, and THAT is evidence about the credential. Conflating them would turn
+  // every GitHub outage into a spurious "your vocabulary is wrong", which is the
+  // standing-alarm failure this file already argues against elsewhere.
+  const misclassified = [];
+  for (const [property, spec] of Object.entries(vocabulary)) {
+    if (spec.classification !== 'verifiable') continue;
+    const u = unreadable.find((x) => x.property === property && x.kind === 'absent-field');
+    if (u === undefined) continue;
+    misclassified.push(
+      `\`${property}\` is classified \`verifiable\`, but the credential this job holds cannot read it — ` +
+        `${u.reason}. Give the job a credential that can, or reclassify it \`declared-unverifiable\` ` +
+        `with a reason (#784).`,
+    );
+  }
 
   for (const rel of sites) {
     const abs = join(rootDir, rel);
@@ -431,7 +539,17 @@ export async function checkLive({ rootDir, sites = REGISTERED_SITES, vocabulary 
     }
   }
 
-  return { code: divergences.length > 0 ? 1 : cannotCheck.length > 0 ? 2 : 0, divergences, cannotCheck, declaredUnverifiable };
+  // A misclassification ranks with a divergence, not with a cannot-check: it is
+  // a CONFIRMED falsehood about our own vocabulary, and unlike a missing
+  // credential it has a path to green that costs one line.
+  const confirmedFalse = divergences.length + misclassified.length;
+  return {
+    code: confirmedFalse > 0 ? 1 : cannotCheck.length > 0 ? 2 : 0,
+    divergences,
+    cannotCheck,
+    declaredUnverifiable,
+    misclassified,
+  };
 }
 
 export async function main(argv) {
@@ -453,13 +571,17 @@ export async function main(argv) {
     return 1;
   }
 
-  const { code, divergences, cannotCheck, declaredUnverifiable } = await checkLive({ rootDir });
+  const { code, divergences, cannotCheck, declaredUnverifiable, misclassified } = await checkLive({ rootDir });
   for (const d of declaredUnverifiable) console.log(`  declared-unverifiable — ${d}`);
   for (const c of cannotCheck) console.error(`  CANNOT CHECK — ${c}`);
+  for (const m of misclassified) console.error(`  MISCLASSIFIED — ${m}`);
   for (const d of divergences) console.error(`  DIVERGENCE — ${d}`);
 
   if (code === 1) {
-    console.error(`\n::error::${divergences.length} platform claim(s) diverge from live state.`);
+    const parts = [];
+    if (divergences.length > 0) parts.push(`${divergences.length} platform claim(s) diverge from live state`);
+    if (misclassified.length > 0) parts.push(`${misclassified.length} vocabulary entr(ies) misclassified \`verifiable\``);
+    console.error(`\n::error::${parts.join('; ')}.`);
     return 1;
   }
   if (code === 2) {

@@ -60,10 +60,169 @@ import { join, relative, isAbsolute, resolve as resolvePath } from 'node:path';
 
 const ADAPTER_DIR = join('packages', 'adapters-express');
 
+/** The job whose `strategy.matrix.include` declares one leg per Express major. */
+const MATRIX_JOB = 'test-adapters-express';
+
 function cannotCheck(message) {
   console.error(`check-express-resolution: CANNOT CHECK — ${message}`);
   console.error('Refusing to report success: an unverifiable guard is not a passing guard.');
   process.exit(2);
+}
+
+/**
+ * THE DECLARED MAJORS, READ FROM THE ONE AUTHORITY — the adapter's own manifest.
+ *
+ * Shared by BOTH directions deliberately. The converse check (#721) needs the
+ * same set this one does, and a second copy of the range parsing is precisely
+ * how the two directions could come to disagree about what is declared — a
+ * guard reading a copy of the claim it exists to police. One reader, one
+ * answer, and any change to the range grammar moves both checks at once.
+ */
+function readDeclaredMajors(root) {
+  const manifestPath = resolvePath(join(root, ADAPTER_DIR, 'package.json'));
+  if (!existsSync(manifestPath)) {
+    cannotCheck(`no adapter manifest at ${manifestPath}`);
+  }
+
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+  } catch (err) {
+    cannotCheck(`adapter manifest is not readable JSON (${manifestPath}): ${err.message}`);
+  }
+
+  const peerRange = manifest.peerDependencies?.express;
+  if (typeof peerRange !== 'string' || peerRange.trim() === '') {
+    cannotCheck(`${ADAPTER_DIR} declares no peerDependencies.express to check the leg against`);
+  }
+
+  // Only the caret-comparator shape this manifest actually uses. A range written
+  // some other way (`>=4 <6`, `4.x`) is NOT silently accepted as "no majors
+  // found" — that would let the cross-check pass by matching nothing, which is
+  // the decorative-guard shape. It exits 2 instead, naming the range.
+  const declaredMajors = [...peerRange.matchAll(/\^(\d+)\./g)].map((m) => Number(m[1]));
+  if (declaredMajors.length === 0) {
+    cannotCheck(
+      `cannot read majors out of peerDependencies.express = ${JSON.stringify(peerRange)}. ` +
+        'This guard understands caret comparators (`^4.18.0 || ^5.0.0`) only — teach it the ' +
+        'new shape rather than loosening it to match nothing.',
+    );
+  }
+  return { peerRange, declaredMajors };
+}
+
+/**
+ * THE CONVERSE: every DECLARED major has a matrix leg that executes it (#721).
+ *
+ * The per-leg check below asserts that the major a leg INSTALLED is one the
+ * adapter declares. That is one direction, and on its own it permits the
+ * failure it looks like it prevents: widen the peer range to
+ * `^4.18.0 || ^5.0.0 || ^6.0.0`, add no leg, and every leg still tests a
+ * declared major. The guard stays green while express 6 is advertised to
+ * consumers and executed by nothing.
+ *
+ * WHY THIS CANNOT LIVE IN THE PER-LEG CHECK. A leg knows only its own major;
+ * the converse is a statement about the WHOLE matrix, so it has to read the
+ * matrix. It therefore runs ONCE, from `test-integrity`, rather than per leg —
+ * which also means it runs UNFILTERED, so it holds even for a change that
+ * touches neither the adapter nor this workflow's filters.
+ *
+ * AND IT USES js-yaml RATHER THAN A THIRD HAND-ROLLED PARSER. #721 was filed
+ * blocked on exactly that concern: `check-runners.mjs` parses this workflow by
+ * hand and `check-guards.test.mjs` greps its text, and adding a third ad-hoc
+ * reader would be building the problem #698 describes. #698 resolved it —
+ * `js-yaml` is a DECLARED root devDependency (4.3.1), and
+ * `check-workflows-parse.mjs` established the loader pattern copied here,
+ * including its cannot-check when the module is absent.
+ */
+async function checkMatrixCoversDeclared(root) {
+  const { peerRange, declaredMajors } = readDeclaredMajors(root);
+
+  const workflowPath = resolvePath(join(root, '.github', 'workflows', 'test.yml'));
+  if (!existsSync(workflowPath)) {
+    cannotCheck(`no workflow at ${workflowPath} to read the express matrix from`);
+  }
+
+  let YAML;
+  try {
+    YAML = (await import('js-yaml')).default;
+  } catch (err) {
+    cannotCheck(
+      `the YAML parser (js-yaml) could not be loaded: ${err.message}. Run \`npm ci\` first; ` +
+        'js-yaml is a declared devDependency of the root package.',
+    );
+  }
+
+  let workflow;
+  try {
+    workflow = YAML.load(readFileSync(workflowPath, 'utf8'));
+  } catch (err) {
+    cannotCheck(`${workflowPath} is not parseable YAML: ${err.message}`);
+  }
+
+  const job = workflow?.jobs?.[MATRIX_JOB];
+  if (job === undefined) {
+    cannotCheck(`${workflowPath} declares no \`${MATRIX_JOB}\` job to read legs from`);
+  }
+
+  const include = job?.strategy?.matrix?.include;
+  if (!Array.isArray(include) || include.length === 0) {
+    cannotCheck(
+      `\`${MATRIX_JOB}\` has no \`strategy.matrix.include\` array. This guard reads the legs ` +
+        'from there; a matrix expressed some other way is not silently treated as zero legs, ' +
+        'because zero legs would make the comparison below pass by covering nothing.',
+    );
+  }
+
+  const legMajors = [];
+  for (const [i, leg] of include.entries()) {
+    const raw = leg?.express;
+    // Accept the string form the workflow actually uses, and a bare number in
+    // case a future edit drops the quotes. Anything else is unreadable rather
+    // than skippable — a leg this cannot read is a leg it must not count.
+    const text = typeof raw === 'number' ? String(raw) : raw;
+    if (typeof text !== 'string' || !/^\d+$/.test(text)) {
+      cannotCheck(
+        `\`${MATRIX_JOB}\` leg ${i} has no readable \`express\` major (got ${JSON.stringify(raw)})`,
+      );
+    }
+    legMajors.push(Number(text));
+  }
+
+  const uncovered = declaredMajors.filter((m) => !legMajors.includes(m));
+  if (uncovered.length > 0) {
+    console.error(
+      `${ADAPTER_DIR} declares Express ${uncovered.join(', ')} but the matrix has no leg for it.\n`,
+    );
+    console.error(`  peerDependencies.express = ${peerRange}`);
+    console.error(`  declared majors          = ${declaredMajors.join(', ')}`);
+    console.error(`  matrix legs              = ${legMajors.join(', ')}`);
+    console.error(
+      [
+        '',
+        'A declared major with no leg is a compatibility claim nothing executes.',
+        'It is advertised to consumers and tested by nobody, and every other check',
+        'here stays green while it is true — the per-leg check only asks whether a',
+        'leg tests something declared, never whether everything declared is tested.',
+        '',
+        'Remedy: add a leg for it to the `express` matrix in',
+        '.github/workflows/test.yml, or drop the major from the peer range. The',
+        'matrix and the peer range are two statements of the same claim and must',
+        'agree — in BOTH directions.',
+      ].join('\n'),
+    );
+    process.exit(1);
+  }
+
+  console.log(
+    `check-express-resolution: OK — every declared Express major (${declaredMajors.join(', ')}) ` +
+      `has a matrix leg (${legMajors.join(', ')}).`,
+  );
+  process.exit(0);
+}
+
+if (process.argv[2] === '--matrix') {
+  await checkMatrixCoversDeclared(process.argv[3] ?? '.');
 }
 
 const expectedRaw = process.argv[2];
@@ -80,38 +239,12 @@ if (!/^\d+$/.test(expectedRaw)) {
 const expectedMajor = Number(expectedRaw);
 
 const manifestPath = resolvePath(join(root, ADAPTER_DIR, 'package.json'));
-if (!existsSync(manifestPath)) {
-  cannotCheck(`no adapter manifest at ${manifestPath}`);
-}
-
-let manifest;
-try {
-  manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
-} catch (err) {
-  cannotCheck(`adapter manifest is not readable JSON (${manifestPath}): ${err.message}`);
-}
 
 // ---------------------------------------------------------------------------
 // 1. The major under test must be one the adapter actually claims.
 // ---------------------------------------------------------------------------
 
-const peerRange = manifest.peerDependencies?.express;
-if (typeof peerRange !== 'string' || peerRange.trim() === '') {
-  cannotCheck(`${ADAPTER_DIR} declares no peerDependencies.express to check the leg against`);
-}
-
-// Only the caret-comparator shape this manifest actually uses. A range written
-// some other way (`>=4 <6`, `4.x`) is NOT silently accepted as "no majors
-// found" — that would let the cross-check pass by matching nothing, which is
-// the decorative-guard shape. It exits 2 instead, naming the range.
-const declaredMajors = [...peerRange.matchAll(/\^(\d+)\./g)].map((m) => Number(m[1]));
-if (declaredMajors.length === 0) {
-  cannotCheck(
-    `cannot read majors out of peerDependencies.express = ${JSON.stringify(peerRange)}. ` +
-      'This guard understands caret comparators (`^4.18.0 || ^5.0.0`) only — teach it the ' +
-      'new shape rather than loosening it to match nothing.',
-  );
-}
+const { peerRange, declaredMajors } = readDeclaredMajors(root);
 
 if (!declaredMajors.includes(expectedMajor)) {
   console.error(

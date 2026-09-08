@@ -83,6 +83,29 @@ function runGuard(args) {
   return spawnSync(process.execPath, [GUARD, ...args], { encoding: 'utf8' });
 }
 
+/**
+ * A fixture carrying a `.github/workflows/test.yml` whose express matrix has
+ * exactly the given legs. `legs: null` writes no workflow at all, which is the
+ * cannot-check case.
+ *
+ * Written as real YAML rather than assembled from the repository's own file:
+ * a fixture derived from the thing under test would pass whatever that file
+ * said, which is the shape these tests exist to refuse.
+ */
+function matrixFixture({ peer = PEER_BOTH, legs = ['5', '4'], job = 'test-adapters-express' } = {}) {
+  const dir = withFixture({ peer });
+  if (legs === null) return dir;
+  const include = legs
+    .map((l) => (l === null ? '          - install: no-express-key\n' : `          - express: '${l}'\n`))
+    .join('');
+  mkdirSync(join(dir, '.github', 'workflows'), { recursive: true });
+  writeFileSync(
+    join(dir, '.github', 'workflows', 'test.yml'),
+    `name: t\non: push\njobs:\n  ${job}:\n    runs-on: ubuntu-latest\n    strategy:\n      matrix:\n        include:\n${include || '          []\n'}    steps:\n      - run: echo hi\n`,
+  );
+  return dir;
+}
+
 const dirs = [];
 function withFixture(opts) {
   const dir = fixture(opts);
@@ -213,6 +236,79 @@ check(
   runGuard(['5', withFixture({ express: '5.2.1', peer: '^4.18.0' })]).status,
   1,
 );
+
+// ---------------------------------------------------------------------------
+console.log('\n# --matrix: every DECLARED major has a leg (#721)\n');
+
+// THE CASE THE ISSUE IS ABOUT. Widen the peer range, add no leg, and every
+// other check here stays green: each leg still tests a declared major, the
+// matrix still has two legs, and express 6 is advertised and executed by
+// nothing. This is the only assertion in the repository that fails on it.
+{
+  const dir = matrixFixture({ peer: '^4.18.0 || ^5.0.0 || ^6.0.0', legs: ['5', '4'] });
+  const r = runGuard(['--matrix', dir]);
+  check('a DECLARED major with no matrix leg FAILS', r.status, 1);
+  check(
+    '...and names the uncovered major, not just "a mismatch"',
+    /declares Express 6 but the matrix has no leg/.test(r.stderr),
+    true,
+  );
+  check('...and prints both sides so the reader can see which to change', /matrix legs\s+= 5, 4/.test(r.stderr), true);
+}
+
+// THE POSITIVE CONTROL, and it is what stops the above being satisfied by a
+// check that fails on everything: the same shape with the leg present passes.
+{
+  const dir = matrixFixture({ peer: '^4.18.0 || ^5.0.0 || ^6.0.0', legs: ['5', '4', '6'] });
+  check('...while the same range WITH a leg for it passes', runGuard(['--matrix', dir]).status, 0);
+}
+{
+  const dir = matrixFixture({ peer: PEER_BOTH, legs: ['5', '4'] });
+  const r = runGuard(['--matrix', dir]);
+  check('the shipped shape — two declared, two legs — passes', r.status, 0);
+  check('...and says so out loud rather than exiting 0 silently', /every declared Express major/.test(r.stdout), true);
+}
+
+// THE DIRECTION THIS CHECK DOES NOT OWN. A leg for an UNDECLARED major is the
+// per-leg check's job — it fails when the major under test is not a declared
+// peer. Asserting 0 here pins the division of labour: without it, a later edit
+// could make this a symmetric set-equality and nobody would notice the two
+// checks had started reporting the same failure twice.
+{
+  const dir = matrixFixture({ peer: PEER_BOTH, legs: ['5', '4', '6'] });
+  check('a leg for an UNDECLARED major is NOT this check’s failure', runGuard(['--matrix', dir]).status, 0);
+}
+
+// CANNOT-CHECK ARMS. Each one fails CLOSED, matching the per-leg guard: a
+// matrix this cannot read must never resolve as "nothing uncovered".
+{
+  const noWorkflow = matrixFixture({ legs: null });
+  check('no workflow file is CANNOT CHECK (exit 2), not a pass', runGuard(['--matrix', noWorkflow]).status, 2);
+
+  const wrongJob = matrixFixture({ job: 'some-other-job' });
+  const r = runGuard(['--matrix', wrongJob]);
+  check('a missing matrix job is CANNOT CHECK, not "zero legs, all covered"', r.status, 2);
+  check('...and names the job it looked for', /test-adapters-express/.test(r.stderr), true);
+
+  const emptyMatrix = matrixFixture({ legs: [] });
+  check('an empty include list is CANNOT CHECK — zero legs would cover nothing', runGuard(['--matrix', emptyMatrix]).status, 2);
+
+  const unreadableLeg = matrixFixture({ legs: ['5', null] });
+  check('a leg with no readable express major is CANNOT CHECK, not skipped', runGuard(['--matrix', unreadableLeg]).status, 2);
+
+  // The shared authority path: an unparseable peer range must fail closed here
+  // exactly as it does for the per-leg check, because both read it through the
+  // same function.
+  const badRange = matrixFixture({ peer: '>=4 <6' });
+  check('a peer range the guard cannot parse is CANNOT CHECK in --matrix too', runGuard(['--matrix', badRange]).status, 2);
+}
+
+// AND THE REAL REPOSITORY, so the check is not green only against fixtures.
+{
+  const repoRoot = join(here, '..', '..');
+  const r = runGuard(['--matrix', repoRoot]);
+  check('the real repository passes — every declared major has a leg today', r.status, 0);
+}
 
 for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
 

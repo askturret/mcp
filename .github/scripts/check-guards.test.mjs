@@ -2075,14 +2075,29 @@ export function spawningScripts(scriptsDir) {
     // never-started branch. `process.execPath` is absolute and always resolves,
     // so no PATH manipulation can reach it — a real limit, declared below.
     //
-    // DELIBERATELY NOT WIDENED TO INJECTED CALL SITES. `run('npm', ...)` does
-    // resolve through PATH, so counting it would be defensible — and it would
-    // make `check-readme-imports` PROBEABLE, which is unsafe: it also spawns
-    // `process.execPath`, so the probe would run its clean-room `npm pack` for
-    // real, the hazard the header above this function's caller warns about.
-    // Entering the population is what this change buys; being probed is a
-    // separate decision, and it is recorded as a declaration instead.
-    const byName = /\b(?:spawnSync|execFileSync|spawn)\s*\(\s*'[^']+'/.test(code);
+    // INJECTED CALL SITES COUNT TOO, and only with a LITERAL first argument.
+    // `run('npm', ...)` resolves through PATH exactly as `spawnSync('npm', ...)`
+    // does, so the distinction was never the spawner's NAME — it is whether the
+    // command is a literal that PATH must resolve.
+    //
+    // The literal requirement is what keeps the #435 protection intact:
+    // `check-mutation-audit`'s injected call passes `process.execPath`, which is
+    // not a quoted literal, so it stays unprobeable and its 330-second
+    // guard-mutating run is still never triggered by this suite.
+    //
+    // AN EARLIER REVISION OF THIS COMMENT DECLINED THE WIDENING, on the ground
+    // that probing `check-readme-imports` would run its clean-room `npm pack`
+    // for real because it ALSO spawns `process.execPath`. That reasoning was
+    // wrong, and the refutation is measurable in under a tenth of a second: run
+    // it under the probe's conditions and it exits 2, reached, uncrashed, in
+    // ~75ms. It bails at the FIRST spawn — `run('npm', ...)` cannot resolve, the
+    // clean room is never built, and the `process.execPath` calls downstream of
+    // that build are never reached. Same ingredients as #435, opposite
+    // consequence: there `execPath` is the primary action, here it is GATED
+    // behind a step that needs npm.
+    const byName = ['spawnSync', 'execFileSync', 'spawn', ...injected].some((fn) =>
+      new RegExp(`\\b${fn}\\s*\\(\\s*'[^']+'`).test(code),
+    );
     out.push({ name: f, byName });
   }
   return out;
@@ -2129,25 +2144,36 @@ const PROBE_UNREACHABLE = Object.freeze({
   'sdk-upgrade-drill.mjs':
     'spawns process.execPath, same as above. It is the reference implementation of didNotStart, and its ' +
     'classifier is exercised directly — including against a genuinely SIGKILLed child — in its own self-test.',
-  // THIS ENTRY IS DIFFERENT IN KIND FROM THE TWO ABOVE, and the difference is
-  // the point (#661). They are unprobeable because a PATH cannot reach them.
-  // This one IS PATH-reachable — it spawns `npm` and `tar` by name — and is
-  // declared because probing it would be UNSAFE rather than uninformative.
+  // check-readme-imports.mjs WAS BRIEFLY DECLARED HERE and never should have
+  // been (#661). The record is kept for the same reason check-path-filters'
+  // is, below: the way it was wrong is instructive.
   //
-  // It reached no population at all until #661 widened the derivation: it
-  // spawns through an injected default (`run = spawnSync`, then `run('npm',
-  // ...)`), which the literal-call test did not see. So it was neither probed
-  // NOR reported undeclared, because the undeclared check can only speak for
-  // scripts the deriver returns. Widening surfaced it; this records the
-  // decision that surfacing forced.
-  'check-readme-imports.mjs':
-    'spawns npm and tar BY NAME through an injected default, so a broken PATH would reach the ' +
-    'never-started branch — unlike the two above, this is reachable in principle. It is declared because ' +
-    'probing it is unsafe, not because it cannot be witnessed: it ALSO spawns process.execPath, which no ' +
-    'PATH stops, so the probe would run its clean-room `npm pack` and tarball extraction for real inside ' +
-    'the suite — the hazard the probe helper warns about, which already had to be killed once on ' +
-    'check-mutation-audit (#435). What would change this: a spawn seam, or a probe that asserts on the ' +
-    'injected runner rather than on the process.',
+  // It claimed the script was PATH-reachable but UNSAFE to probe, because it
+  // also spawns `process.execPath` and the probe would therefore run its
+  // clean-room `npm pack` for real — citing #435, where exactly that had to be
+  // killed after 330 seconds.
+  //
+  // THE HAZARD DOES NOT EXIST, and disproving it takes under a tenth of a
+  // second. Run under the probe's own conditions the script exits 2, reached,
+  // uncrashed, in ~75ms: it bails at the FIRST spawn, `run('npm', ...)`, so the
+  // clean room is never built and the `execPath` calls DOWNSTREAM of that build
+  // are never reached. #435's precedent does not transfer, and the reason is
+  // the discrimination the entry missed — there `execPath` is the PRIMARY
+  // action, so a broken PATH cannot stop it; here the `execPath` spawns are
+  // GATED behind a step that requires npm. Same ingredients, opposite
+  // consequence.
+  //
+  // So the remedy was never a declaration: it was widening `byName` to injected
+  // call sites with a literal first argument, which is what the deriver above
+  // now does. The script is probed like any other, and the ledger carries one
+  // fewer claim.
+  //
+  // WORTH KEEPING BECAUSE THE HEADER ALREADY SAID SO. This ledger's own
+  // instruction — "QA caught it by RUNNING the script under the probe's
+  // conditions. Do the same before you write an entry: the ledger will not" —
+  // is exactly the check that was skipped. An unverified declaration in a
+  // ledger about unverified claims is the shape this file exists to refuse, and
+  // it got in anyway.
   // check-path-filters.mjs WAS DECLARED HERE and no longer is (#563). The record
   // is kept rather than deleted, because the reason it was true is the reason
   // the probe now supplies a fixture payload.

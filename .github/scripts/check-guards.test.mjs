@@ -2048,10 +2048,40 @@ export function spawningScripts(scriptsDir) {
   const out = [];
   for (const f of readdirSync(scriptsDir).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs')).sort()) {
     const code = strip(readFileSync(join(scriptsDir, f), 'utf-8'));
-    if (!/\b(spawnSync|execFileSync|execSync)\s*\(|\bspawn\s*\(/.test(code)) continue;
+
+    // TWO WAYS A SCRIPT SPAWNS, and the second was invisible here (#661).
+    //
+    // Directly — `spawnSync('npm', ...)` — or INJECTED: the spawner is taken as
+    // a default parameter and called through that name. `check-readme-imports`
+    // is the second shape (`run = spawnSync`, then `run('npm', ...)`), and a
+    // literal-call test does not see it.
+    //
+    // IT THEREFORE ENTERED NO POPULATION AT ALL. It was not probed, and it was
+    // not reported undeclared either — because "every unprobeable script is
+    // declared" can only speak for the scripts this deriver RETURNS. A stale
+    // declaration is caught; a script missing from the derivation is silent by
+    // construction. That is why the derivation is widened here rather than an
+    // entry simply being added below: adding an entry would have recorded the
+    // symptom while leaving the next injected spawner just as invisible.
+    const injected = [
+      ...new Set(
+        [...code.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*(?:spawnSync|execFileSync|execSync)\b/g)].map((m) => m[1]),
+      ),
+    ];
+    const spawnsDirectly = /\b(spawnSync|execFileSync|execSync)\s*\(|\bspawn\s*\(/.test(code);
+    if (!spawnsDirectly && injected.length === 0) continue;
+
     // A bare name resolves through PATH, so an unresolvable PATH reaches the
     // never-started branch. `process.execPath` is absolute and always resolves,
     // so no PATH manipulation can reach it — a real limit, declared below.
+    //
+    // DELIBERATELY NOT WIDENED TO INJECTED CALL SITES. `run('npm', ...)` does
+    // resolve through PATH, so counting it would be defensible — and it would
+    // make `check-readme-imports` PROBEABLE, which is unsafe: it also spawns
+    // `process.execPath`, so the probe would run its clean-room `npm pack` for
+    // real, the hazard the header above this function's caller warns about.
+    // Entering the population is what this change buys; being probed is a
+    // separate decision, and it is recorded as a declaration instead.
     const byName = /\b(?:spawnSync|execFileSync|spawn)\s*\(\s*'[^']+'/.test(code);
     out.push({ name: f, byName });
   }
@@ -2099,6 +2129,25 @@ const PROBE_UNREACHABLE = Object.freeze({
   'sdk-upgrade-drill.mjs':
     'spawns process.execPath, same as above. It is the reference implementation of didNotStart, and its ' +
     'classifier is exercised directly — including against a genuinely SIGKILLed child — in its own self-test.',
+  // THIS ENTRY IS DIFFERENT IN KIND FROM THE TWO ABOVE, and the difference is
+  // the point (#661). They are unprobeable because a PATH cannot reach them.
+  // This one IS PATH-reachable — it spawns `npm` and `tar` by name — and is
+  // declared because probing it would be UNSAFE rather than uninformative.
+  //
+  // It reached no population at all until #661 widened the derivation: it
+  // spawns through an injected default (`run = spawnSync`, then `run('npm',
+  // ...)`), which the literal-call test did not see. So it was neither probed
+  // NOR reported undeclared, because the undeclared check can only speak for
+  // scripts the deriver returns. Widening surfaced it; this records the
+  // decision that surfacing forced.
+  'check-readme-imports.mjs':
+    'spawns npm and tar BY NAME through an injected default, so a broken PATH would reach the ' +
+    'never-started branch — unlike the two above, this is reachable in principle. It is declared because ' +
+    'probing it is unsafe, not because it cannot be witnessed: it ALSO spawns process.execPath, which no ' +
+    'PATH stops, so the probe would run its clean-room `npm pack` and tarball extraction for real inside ' +
+    'the suite — the hazard the probe helper warns about, which already had to be killed once on ' +
+    'check-mutation-audit (#435). What would change this: a spawn seam, or a probe that asserts on the ' +
+    'injected runner rather than on the process.',
   // check-path-filters.mjs WAS DECLARED HERE and no longer is (#563). The record
   // is kept rather than deleted, because the reason it was true is the reason
   // the probe now supplies a fixture payload.

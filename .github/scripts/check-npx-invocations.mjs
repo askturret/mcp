@@ -160,9 +160,103 @@ const TEXT_EXTENSIONS = ['.md', '.ts', '.tsx', '.mjs', '.cjs', '.js', '.yml', '.
  * be an ARGUMENT — a flag, or a bare package name — and stops at the first
  * token that is neither. `@`-prefixed text cannot be consumed by the skip, so
  * the specifier itself can never be swallowed by it.
+ *
+ * ## The captured name must TERMINATE, not merely begin correctly (#759)
+ *
+ * The capture used to be `[a-z0-9][a-z0-9-]*`, which excludes `_` and `.` —
+ * both LEGAL npm name characters. So it truncated at the first one, and the
+ * exemption lookup below is an EXACT `Object.hasOwn`, which then matched the
+ * TRUNCATED name. `@askturret/mcp-adapter-test_v2` captured as
+ * `@askturret/mcp-adapter-test`, an exempt entry, and was SUPPRESSED — a
+ * package inheriting an exemption by merely starting with an exempt name.
+ *
+ * NOTHING WAS EVER PREFIX-MATCHED ON PURPOSE. Both lookups — the exemption and
+ * the published-package set — are exact. The prefix behaviour came entirely
+ * from the capture stopping early, so widening the capture cannot break an
+ * intended prefix semantic; there was never one to break.
+ *
+ * WHY THE CLASS IS NOT SIMPLY WIDENED TO INCLUDE `.`. Widening it to
+ * `[a-z0-9._-]*` makes a sentence-ending period part of the name: a line
+ * reading
+ *
+ *     Then run npx @askturret/mcp-cli.
+ *
+ * captures `@askturret/mcp-cli.` and reports a package that does not exist.
+ *
+ * NOTE THE ABSENCE OF BACKTICKS IN THAT EXAMPLE, because it is the whole
+ * difference. Written the more natural way — ``run `npx @askturret/mcp-cli`.``
+ * — the closing backtick sits between the name and the period, every candidate
+ * pattern captures identically, and the example demonstrates nothing. The
+ * hazard needs the period ADJACENT to the name. That is the same backtick trap
+ * that made this change's own prose control decorative until a mutation caught
+ * it; it survived one file over, in the rationale (#805 review).
+ *
+ * THE ARGUMENT IS ASYMMETRY, NOT FREQUENCY — and an earlier draft of this
+ * comment got that wrong, asserting a sentence-ending period was "the
+ * overwhelmingly common neighbour of a package name in prose". MEASURED over
+ * the 61 invocations present BEFORE this comment was written, the character
+ * following the captured name is:
+ *
+ *     space  54    newline  5    `@`  1    backtick  1    period  0
+ *
+ * Zero. The claim was not merely imprecise, it was false about the tree it was
+ * asserted over.
+ *
+ * THE FIGURES ARE SCOPED TO THE PRE-COMMENT TREE ON PURPOSE, because this
+ * comment CHANGED them: the guard scans `.mjs` files including this one, so the
+ * unbackticked example above is now the tree's ONE period-adjacent invocation
+ * (and the backticked counter-example its second backtick). Counting after
+ * writing them would report the prose describing the hazard as evidence of the
+ * hazard. It is harmless — `mcp-cli` is published, and the capture excludes the
+ * trailing dot, so it names a real package and the guard stays green.
+ *
+ * And nothing in the frequency of a period decides this anyway. What decides it
+ * is which mistake is likelier and which fails worse:
+ *
+ *   the RESIDUAL below needs someone to publish an npm package whose name ENDS
+ *     in a dot, and its failure is a silent suppression of that one name;
+ *   the NAIVE WIDENING needs someone to end a sentence with a package name, and
+ *     its failure is the guard ACCUSING a correct document of naming a package
+ *     that does not exist.
+ *
+ * The second is far likelier and worse — a false accusation on a correct
+ * document is how a guard becomes something people switch off. That holds at a
+ * period count of zero, which is exactly why it is the leg to rest on.
+ *
+ * So the name may CONTAIN `.`, `_` and `-`, and may END with anything except a
+ * dot. That is the npm grammar's shape and it separates the two cases exactly:
+ * a dotted package name is captured whole, a trailing sentence period is not.
+ * Note it deliberately still ends on `_`, so `mcp-adapter-test_` is captured
+ * whole and flagged rather than truncating back onto the exemption.
+ *
+ * THE RESIDUAL, stated rather than implied: a name ENDING in a dot would still
+ * truncate and could still inherit an exemption. That is not a plausible npm
+ * name, and closing it is what would reintroduce the false accusation above, so
+ * it is accepted knowingly rather than overlooked.
+ *
+ * MEASURED BEFORE AND AFTER on the real tree: the two patterns match the SAME
+ * SET, with ZERO differences. That invariant is the load-bearing part and it
+ * does not move — the count under it does, and is scoped for the same reason
+ * the distribution above is: 61 both ways when this change was made, 63 both
+ * ways once this comment's own examples joined the tree. So this is the status
+ * quo for every line that exists today; it changes only the hazard cases.
+ *
+ * THOSE HAZARD CASES ARE LATENT. When this change was made, no `@askturret`
+ * invocation in the tree was followed by `_` or `.`. There is exactly ONE today
+ * and it is the unbackticked example in this comment — inert, for the reason
+ * given there: `mcp-cli` is published and the capture excludes the trailing dot.
+ *
+ * The scoping in this paragraph exists because the sentence it replaces said
+ * "no invocation in the tree is followed by `_` or `.`" in the PRESENT tense,
+ * and the paragraph 30 lines above had just made that false by adding the
+ * example. Correctly describing the observer effect in one paragraph while
+ * leaving a neighbour asserting the pre-observation state is the same reach
+ * failure one scale smaller (#805 review, second round). When scoping a figure,
+ * grep the whole comment for every other present-tense claim about the same
+ * population before pushing.
  */
 const INVOCATION =
-  /\b(?:npx|npm\s+install|npm\s+i|yarn\s+add|pnpm\s+add)(?:\s+(?:--?[A-Za-z][\w-]*|[a-z0-9][\w.-]*))*\s+(@askturret\/[a-z0-9][a-z0-9-]*)/g;
+  /\b(?:npx|npm\s+install|npm\s+i|yarn\s+add|pnpm\s+add)(?:\s+(?:--?[A-Za-z][\w-]*|[a-z0-9][\w.-]*))*\s+(@askturret\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)/g;
 
 /**
  * Specifiers that are UNPUBLISHED ON PURPOSE, each with a reason and the issue

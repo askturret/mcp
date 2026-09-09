@@ -33,6 +33,35 @@ function createTestContext(): DiscoveryContext {
   };
 }
 
+/**
+ * A discovery context whose logger RECORDS its error events (#628).
+ *
+ * The tests above assert only what `discover` RETURNED, and return value is
+ * exactly what a refusal and an internal fault have in common — both yield `[]`.
+ * Telling them apart is the whole point of #628, so asserting it needs a logger
+ * that keeps what it was told.
+ */
+function createRecordingContext(): {
+  context: DiscoveryContext;
+  errors: { message: string; meta?: Record<string, unknown> }[];
+} {
+  const errors: { message: string; meta?: Record<string, unknown> }[] = [];
+  return {
+    context: {
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: (message: string, meta?: Record<string, unknown>) => {
+          errors.push({ message, meta });
+        },
+      },
+      abortSignal: new AbortController().signal,
+    },
+    errors,
+  };
+}
+
 describe('fromOpenApi()', () => {
   describe('OpenAPI 3.0 support', () => {
     it('should discover operations from Petstore 3.0', async () => {
@@ -627,6 +656,90 @@ describe('fromOpenApi()', () => {
       expect(operations).toHaveLength(0);
     });
   });
+
+  // -------------------------------------------------------------------------
+  // A VERSION REFUSAL IS AN EXPECTED OUTCOME AND MUST NOT WEAR AN INTERNAL
+  // ERROR'S CLOTHES (#628).
+  //
+  // Both outcomes return `[]` and both log at ERROR, which is the published
+  // contract and is not what changed. What changed is that they no longer share
+  // an EVENT: a refusal logs 'OpenAPI version not supported' with a stable
+  // `reason` code, an internal fault logs 'OpenAPI discovery failed'. Before
+  // this, separating them required parsing `error.message` — which
+  // compatibility-policy.md forbids.
+  //
+  // The conflation was TWO-WAY, so both directions are asserted below. A test
+  // for the refusal alone would still pass if the failure path were widened to
+  // swallow it again.
+  // -------------------------------------------------------------------------
+  describe('version refusal is a typed outcome, not an internal error (#628)', () => {
+    // THE INPUT HERE IS `swagger: "2.0"`, AND THE CHOICE IS LOAD-BEARING.
+    //
+    // Measured while writing these tests: `SwaggerParser.dereference` rejects
+    // `openapi: "2.0.0"` itself, throwing before our version check is reached —
+    // so the older 'should handle invalid OpenAPI version' case above, and the
+    // contract row probe below, both exercise the PARSER's rejection and never
+    // touch the check they appear to be about. They pass, for a reason other
+    // than the one their names suggest.
+    //
+    // Also rejected inside the parser: a bare `"3.0"` or `"3.1"`, `"3.2.0"`,
+    // `"4.0.0"`, and a document with no `openapi` field.
+    //
+    // A genuine Swagger 2.0 document is the case that survives the parser —
+    // swagger-parser supports Swagger 2.0 and returns it — and is therefore the
+    // ONLY input that reaches our version check to be refused there. Using
+    // anything else here would make these tests green without exercising the
+    // code path #628 is about.
+    const unsupportedSpec = {
+      swagger: '2.0',
+      info: { title: 'Old', version: '1.0.0' },
+      paths: { '/probe': { get: { responses: { '200': { description: 'OK' } } } } },
+    };
+
+    it('logs its own event with a stable reason code', async () => {
+      const { context, errors } = createRecordingContext();
+
+      const source = fromOpenApi(unsupportedSpec, { location: 'old.yaml' });
+      const operations = await source.discover(context);
+
+      expect(operations).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toBe('OpenAPI version not supported');
+      expect(errors[0].meta).toMatchObject({
+        reason: 'unsupported-openapi-version',
+        // No `openapi` field on a Swagger 2.0 document, so the actionable value
+        // is the `swagger` one. Asserting both pins that the refusal reports
+        // what it actually found rather than a bare null.
+        declaredVersion: null,
+        declaredSwaggerVersion: '2.0',
+        location: 'old.yaml',
+      });
+    });
+
+    it('never reaches the internal-failure event', async () => {
+      const { context, errors } = createRecordingContext();
+
+      await fromOpenApi(unsupportedSpec).discover(context);
+
+      // The assertion that goes RED if the refusal is routed back through the
+      // catch — which is precisely what reverting the fix does.
+      expect(errors.map((e) => e.message)).not.toContain('OpenAPI discovery failed');
+    });
+
+    it('leaves a genuine internal fault on the failure event, so the two are distinguishable', async () => {
+      const { context, errors } = createRecordingContext();
+
+      // A path the parser cannot read at all: unexpected, and therefore the one
+      // case that SHOULD reach the catch.
+      const source = fromOpenApi('./definitely-not-a-real-spec-628.yaml');
+      const operations = await source.discover(context);
+
+      expect(operations).toHaveLength(0);
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toBe('OpenAPI discovery failed');
+      expect(errors.map((e) => e.message)).not.toContain('OpenAPI version not supported');
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -676,11 +789,15 @@ describe('compatibility contract: OpenAPI rows match what fromOpenApi accepts (#
       const source = fromOpenApi(spec, { location: `contract-${concrete}.yaml` });
       const operations = await source.discover(createTestContext());
 
-      // NOTE how refusal actually surfaces. `discover` catches everything and
-      // returns [] with a logged error — "Don't throw - return empty array with
-      // warning", from-openapi.ts:203. So an unsupported version is refused by
-      // yielding NO OPERATIONS, not by rejecting. The spec above carries exactly
-      // one operation, which is what makes the two outcomes distinguishable.
+      // NOTE how refusal actually surfaces: by yielding NO OPERATIONS, not by
+      // rejecting. The spec above carries exactly one operation, which is what
+      // makes the two outcomes distinguishable here.
+      //
+      // Since #628 an unsupported version returns [] from the version check
+      // itself, under its own log event, rather than being thrown and caught.
+      // What this test observes is unchanged — zero operations either way — so
+      // it needed no edit. No source line is cited any more: the number this
+      // comment used to carry had drifted by nine lines.
       if (status === 'supported') {
         expect(operations.length).toBeGreaterThan(0);
       } else {

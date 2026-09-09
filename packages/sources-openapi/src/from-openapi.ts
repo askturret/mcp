@@ -126,10 +126,72 @@ export function fromOpenApi(
           return [];
         }
 
-        // Validate OpenAPI version
+        // Validate OpenAPI version.
+        //
+        // A REFUSAL RETURNS; IT DOES NOT THROW (#628). An unsupported version is
+        // an EXPECTED outcome — the system working, correctly declining a
+        // document it does not support. Throwing routed it into the catch below,
+        // where it logged 'OpenAPI discovery failed' and became indistinguishable
+        // from a genuine internal fault: two outcomes with opposite operational
+        // meanings, separable only by parsing `error.message`, which
+        // compatibility-policy.md forbids. A raw Error whose only distinguishing
+        // feature is its message is a sentinel string wearing an exception.
+        //
+        // So the refusal is logged under its OWN event carrying a stable
+        // `reason` code, and returns `[]` directly. That is the ADR-011 shape
+        // available here: `discover()` yields operations rather than a result
+        // envelope, so the typed outcome is carried by a distinct event plus
+        // structured details instead of by a changed return type — the same
+        // move ADR-011 cites in `policy/authorization.ts`, which returns a
+        // result object rather than a sentinel string.
+        //
+        // The #625 reasons for `[]` over `throw` are unchanged and recorded at
+        // the catch below; this does not revisit them. What changed is only that
+        // the expected case no longer borrows the unexpected one's path, which
+        // leaves that catch meaning "something went wrong" — what a catch should
+        // mean.
+        //
+        // PUBLISHED CONTRACT, deliberately not altered: docs/compatibility.
+        // {md,json} promise refusal surfaces as "zero operations and a logged
+        // error, not a thrown exception". Still zero operations, still a logged
+        // error, still no exception — only now a distinct one.
+        // WHICH DOCUMENTS ACTUALLY REACH HERE — measured, not assumed (#628).
+        // `SwaggerParser.dereference` above rejects most unsupported versions
+        // itself, throwing before this check ever runs. An `openapi` field of
+        // 2.0.0, of a bare 3.0 or 3.1, of 3.2.0 or 4.0.0, and a document
+        // carrying no `openapi` field at all, every one of them fails inside
+        // the parser and lands in the catch.
+        //
+        // Those versions are deliberately written UNQUOTED. Quoting a
+        // three-component version anywhere under packages/<pkg>/src — comment
+        // prose included — makes check-version-literals demand it be declared
+        // in .github/version-literals.json as mirroring some manifest. These
+        // are example inputs, not a version this package publishes, so the
+        // registry is the wrong home for them and dropping the quotes is the
+        // honest fix rather than a silenced entry.
+        //
+        // The case that DOES arrive here is a genuine Swagger 2.0 document in
+        // its native form — `swagger: "2.0"` and no `openapi` field. The parser
+        // supports Swagger 2.0 and accepts it happily; we are the ones declining
+        // it. That is exactly the "2.0 (Swagger)" row in docs/compatibility.json,
+        // and it is why this check is not dead code.
         const version = getOpenAPIVersion(api);
         if (!version) {
-          throw new Error('Invalid or missing OpenAPI version (expected 3.0.x or 3.1.x)');
+          const declaredOpenApi = declaredOpenApiVersion(api);
+          const declaredSwagger = declaredSwaggerVersion(api);
+          logger.error('OpenAPI version not supported', {
+            reason: UNSUPPORTED_OPENAPI_VERSION,
+            declaredVersion: declaredOpenApi ?? null,
+            // Reported only when present, and it is the whole actionable payload
+            // for the reachable case: `declaredVersion: null` alone would tell
+            // the spec's author nothing, while "you sent Swagger 2.0" tells them
+            // precisely what to convert.
+            ...(declaredSwagger !== undefined && { declaredSwaggerVersion: declaredSwagger }),
+            supportedVersions: SUPPORTED_OPENAPI_VERSION_PREFIXES,
+            sourceId,
+            location,
+          });
+          return [];
         }
 
         logger.debug('Parsed OpenAPI document', { version, title: api.info?.title });
@@ -233,11 +295,33 @@ export function fromOpenApi(
         // inferred a throw and wrote `rejects.toThrow()`, which failed — the
         // cheap version of the same mistake.
         //
-        // KNOWN GAP, deliberately not closed here: a version refusal and an
-        // internal error both log 'OpenAPI discovery failed' and differ only in
-        // error.message, which compatibility-policy.md forbids parsing. That is
-        // an ADR-011 typed-outcome gap with its own remedy, tracked separately
-        // as #628 — do not fold a fix for it into this catch.
+        // #628 NARROWED THAT GAP, AND THE REMAINDER IS NAMED RATHER THAN
+        // IMPLIED. A version refusal RAISED BY OUR OWN CHECK used to arrive
+        // here and log 'OpenAPI discovery failed', differing from a genuine
+        // fault only in error.message — which compatibility-policy.md forbids
+        // parsing. That one returns above under its own event now, so it never
+        // reaches this catch.
+        //
+        // WHAT STILL DOES, and is an expected outcome wearing this event: the
+        // version refusals the PARSER makes before our check ever runs — an
+        // `openapi` field of 2.0.0, of a bare 3.0 or 3.1, of 3.2.0 or 4.0.0,
+        // and a document carrying no `openapi` field at all, per the
+        // measurement recorded at the version check above. For those inputs
+        // 'OpenAPI discovery failed' still means either "we decline this
+        // document" or "something broke", exactly as it did before.
+        //
+        // SO DO NOT READ THIS CATCH AS "everything here is a defect". An
+        // earlier draft of this comment said exactly that, and it was false by
+        // this file's own measurement 140 lines above. QA caught it before the
+        // PR landed. That sentence did NORMATIVE work — it would have sent the
+        // next person debugging a 4.0.0 refusal hunting a bug that does not
+        // exist, which costs more than a wrong number does.
+        //
+        // Closing the remainder would mean classifying the parser's own
+        // rejection, which is a different change from this one. The narrower
+        // claim is the one that holds: nothing WE refuse routes back through
+        // here any more. Do not route a refusal of ours into it again — handle
+        // it where the cause is known, as the version check does.
         return [];
       }
     },
@@ -250,15 +334,59 @@ export function fromOpenApi(
 const HTTP_METHODS = ['get', 'post', 'put', 'patch', 'delete', 'head', 'options'] as const;
 
 /**
- * Get OpenAPI version from document
+ * The `openapi` field prefixes this source accepts.
+ *
+ * ONE definition rather than two (#628). `getOpenAPIVersion` tests against
+ * these and the refusal log reports them, so the set we accept and the set we
+ * TELL a caller about cannot drift apart. Prefixes, not versions: a document
+ * declaring exactly "3.0" with no patch segment is rejected, which
+ * docs/compatibility.md records as a known sharp edge rather than an intended
+ * restriction.
+ */
+const SUPPORTED_OPENAPI_VERSION_PREFIXES = ['3.0.', '3.1.'] as const;
+
+/**
+ * Stable code for the version refusal (#628).
+ *
+ * The discriminator a caller branches on, so telling a refusal from an internal
+ * fault never requires parsing a human-readable message — compatibility-policy.md
+ * forbids that, and ADR-011 asks for a closed code precisely so a caller can
+ * branch exhaustively.
+ */
+const UNSUPPORTED_OPENAPI_VERSION = 'unsupported-openapi-version';
+
+/**
+ * The version string the document DECLARES, whatever it is.
+ *
+ * Distinct from `getOpenAPIVersion`, which answers "is it one we accept?".
+ * Kept separate because the refusal needs to report what was actually found —
+ * the actionable part for whoever wrote the spec is WHICH version we declined,
+ * and `getOpenAPIVersion` has thrown that away by the time it returns null.
+ */
+function declaredOpenApiVersion(api: OpenAPIDocument): string | undefined {
+  return 'openapi' in api && typeof api.openapi === 'string' ? api.openapi : undefined;
+}
+
+/**
+ * The `swagger` field of a Swagger 2.0 document, if this is one.
+ *
+ * Not part of the OpenAPI 3 types, hence the cast. It is read only to make the
+ * refusal actionable: a Swagger 2.0 document is the one unsupported shape that
+ * reaches our version check rather than being rejected by the parser, and it
+ * carries its version under `swagger` rather than `openapi`.
+ */
+function declaredSwaggerVersion(api: OpenAPIDocument): string | undefined {
+  const doc = api as { swagger?: unknown };
+  return typeof doc.swagger === 'string' ? doc.swagger : undefined;
+}
+
+/**
+ * Get OpenAPI version from document, or null if it is not one we support.
  */
 function getOpenAPIVersion(api: OpenAPIDocument): string | null {
-  if ('openapi' in api && typeof api.openapi === 'string') {
-    const version = api.openapi;
-    // Accept 3.0.x and 3.1.x
-    if (version.startsWith('3.0.') || version.startsWith('3.1.')) {
-      return version;
-    }
+  const version = declaredOpenApiVersion(api);
+  if (version && SUPPORTED_OPENAPI_VERSION_PREFIXES.some((prefix) => version.startsWith(prefix))) {
+    return version;
   }
   return null;
 }

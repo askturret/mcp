@@ -692,6 +692,23 @@ export function check(rootDir, { diffBase = null, addedFiles = null, modifiedFil
   // this justification keeps reproducing it. Worth knowing before editing it a
   // third time: check the claim against `main()` and the self-test rather than
   // against how reasonable it reads.
+  //
+  // THOSE TWO ARE TODAY'S CALLERS, AND THIS IS HOW THE SET WAS CLOSED (#427,
+  // ADR-025). `check` is exported, so a caller either lives in this module or
+  // imports it, and both were enumerated: inside the module `check(` is called
+  // exactly once, from `main()`; across the repository exactly one file imports
+  // this module, its own self-test. Measured 2026-09-09.
+  //
+  // DO NOT ASSUME THE PAIR IS STILL THE POPULATION. A third caller — a new
+  // entry point, a wrapper, another guard reusing `check` — would leave the
+  // sentence above naming a subset while still reading as a census, which is
+  // the shape it has already been corrected for twice. Re-run the two
+  // enumerations rather than trusting this list: the METHOD is the instruction,
+  // and the pair is only what it returned the last time someone ran it.
+  //
+  // The ADR-025 form — state the set, say how it was closed, say not to assume
+  // it is complete — postdates this note by about a fortnight, so its absence
+  // here was never an oversight by whoever wrote the sentence above.
   // TWO SETS SINCE #562, because one predicate cannot express two scopes. Most
   // conditions legitimately cover added-or-modified; the inverse check covers
   // added ONLY, and while both lived in one set there was nothing to narrow it

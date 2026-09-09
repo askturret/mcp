@@ -109,6 +109,8 @@
 import { readdirSync, readFileSync, existsSync, statSync } from 'node:fs';
 import { join, resolve, relative } from 'node:path';
 
+import { enumerateWorkspacePackages, isPublic } from './lib/public-packages.mjs';
+
 export const EXIT_OK = 0;
 export const EXIT_UNKNOWN_PACKAGE = 1;
 export const EXIT_CANNOT_CHECK = 2;
@@ -301,25 +303,19 @@ export const DECLARED_UNPUBLISHED = Object.freeze({
  * the day a tenth package ships.
  */
 export function publishedPackages(rootDir) {
-  const dir = join(rootDir, 'packages');
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory());
-  } catch (err) {
-    return { packages: null, reason: `cannot read packages/ (${err?.message ?? err})` };
+  // The WALK is shared (#711); the FAIL-CLOSED POLICY below is this guard's own
+  // and is not. An unparseable manifest refuses the whole answer here, which
+  // `check-compatibility-contract` deliberately does not do — sharing the policy
+  // along with the walk would have silently changed one of them.
+  const { entries, error } = enumerateWorkspacePackages(rootDir);
+  if (entries === null) return { packages: null, reason: error };
+
+  const unreadable = entries.find((e) => e.unreadable !== null);
+  if (unreadable !== undefined) {
+    return { packages: null, reason: `cannot parse ${unreadable.dir}/package.json (${unreadable.unreadable})` };
   }
 
-  const packages = new Set();
-  for (const d of entries) {
-    const manifest = join(dir, d.name, 'package.json');
-    if (!existsSync(manifest)) continue;
-    try {
-      const pkg = JSON.parse(readFileSync(manifest, 'utf-8'));
-      if (pkg.private !== true && typeof pkg.name === 'string') packages.add(pkg.name);
-    } catch (err) {
-      return { packages: null, reason: `cannot parse ${d.name}/package.json (${err?.message ?? err})` };
-    }
-  }
+  const packages = new Set(entries.filter(isPublic).map((e) => e.name));
 
   if (packages.size === 0) {
     // The vacuity guard. An empty authority set would make every invocation

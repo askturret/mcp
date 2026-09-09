@@ -44,7 +44,7 @@ import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { generateNotice } from './generate-notice.mjs';
+import { generateNotice, noticeTargets, staleNoticeTargets } from './generate-notice.mjs';
 import { didNotStart } from './sdk-upgrade-drill.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -344,6 +344,151 @@ console.log('\n# this repository\n');
   // An inventory that collapsed to nothing would also report up-to-date;
   // assert it is real so a broken scan cannot look healthy.
   check_('CONTROL: and the inventory is non-trivial', result.runtimeCount > 10, true);
+}
+
+// ---------------------------------------------------------------------------
+// EVERY NOTICE COPY, FROM A LIST THAT IS NOT WRITTEN HERE (#711)
+//
+// Apache-2.0 §4(d) is satisfied per ARTIFACT, so a package shipping a stale
+// NOTICE is non-compliant even when the root is current. The generator writes
+// them all — and the point of #711 is that it does so from a SHARED list,
+// because a sixth hand-written copy of "which packages are public" would make
+// the set receiving a NOTICE a parallel to the set that exists.
+// ---------------------------------------------------------------------------
+{
+  // DERIVED, NOT HARDCODED — including the count. A fixture with two public
+  // packages, one private, and one public-without-a-NOTICE must yield exactly
+  // root + the two that qualify, so neither membership nor number can have been
+  // written down anywhere.
+  const dir = scratch({
+    NOTICE: 'ROOT\n',
+    'packages/alpha/package.json': '{"name":"@x/alpha","version":"0.0.0"}',
+    'packages/alpha/NOTICE': 'ROOT\n',
+    'packages/beta/package.json': '{"name":"@x/beta","version":"0.0.0"}',
+    'packages/beta/NOTICE': 'stale\n',
+    'packages/hidden/package.json': '{"name":"@x/hidden","version":"0.0.0","private":true}',
+    'packages/hidden/NOTICE': 'ROOT\n',
+    // Public, but ships no NOTICE. Deliberately NOT given one: whether it
+    // should ship one is check-tarball-compliance's call, not this script's.
+    'packages/nonotice/package.json': '{"name":"@x/nonotice","version":"0.0.0"}',
+  });
+
+  const targets = noticeTargets(dir).map((p) => p.slice(dir.length + 1));
+  check_('#711: root and every public package carrying a NOTICE is a target', targets.length, 3);
+  check_('#711: ...the private package is excluded', targets.includes('packages/hidden/NOTICE'), false);
+  check_(
+    '#711: ...and a public package with no NOTICE is not given one',
+    targets.includes('packages/nonotice/NOTICE'),
+    false,
+  );
+
+  // THE STALENESS PREDICATE — and note what this does NOT witness.
+  //
+  // These two assertions are over `staleNoticeTargets`, a pure predicate. They
+  // are correct and worth keeping, but an earlier version of this comment
+  // claimed they were "the drift probe" that caught the write-gating defect.
+  // THEY ARE NOT, and the gap was real: QA reintroduced `if (result.changed)`
+  // around the write loop and ran this suite — 44/0 before, 44/0 after, no
+  // assertion moved — while the regression was fully live underneath, the writer
+  // exiting 0 and `--check` still failing.
+  //
+  // The defect was never in the predicate. It was in the entry point's WRITE
+  // LOOP, which nothing in-process reaches. Prose asserting one thing over an
+  // assertion measuring another is how a probe claims a discrimination it does
+  // not have. The probe that does reach the write path is the spawned one below.
+  const stale = staleNoticeTargets(dir, 'ROOT\n').map((p) => p.slice(dir.length + 1));
+  check_('#711: a drifted copy is stale even when the ROOT is current', stale.join(','), 'packages/beta/NOTICE');
+
+  // THE CONTROL. Without it the assertion above is satisfied by a rule that
+  // calls every copy stale, which would rewrite all ten on every run and make
+  // "stale" mean nothing.
+  writeFileSync(join(dir, 'packages/beta/NOTICE'), 'ROOT\n');
+  check_('#711: ...and once it matches, nothing is stale', staleNoticeTargets(dir, 'ROOT\n').length, 0);
+}
+
+// ---------------------------------------------------------------------------
+// THE DRIFT PROBE, THROUGH THE WRITE PATH (#711)
+//
+// Asserts on BYTES READ BACK OFF DISK after running the real writer, because
+// the defect this probe exists to catch lives in the entry point's write loop
+// and no in-process assertion reaches it.
+//
+// THE SETUP IS THE WHOLE POINT. The root must be CURRENT and a package copy
+// DRIFTED — that is the exact state in which `result.changed` is false, so a
+// write loop gated on it does nothing while a drifted copy stays drifted. That
+// is #587 reproduced. Any fixture where the root is also stale would be
+// rewritten by the buggy version too, and would discriminate nothing.
+//
+// Verified RED-on-revert rather than assumed: with `if (result.changed)` put
+// back around the write loop, the byte assertion below fails.
+// ---------------------------------------------------------------------------
+
+console.log('\n# WITNESS: the write path, by reading the bytes back\n');
+
+{
+  const dir = scratch({
+    NOTICE: 'stale\n',
+    'packages/alpha/package.json': '{"name":"@x/alpha","version":"0.0.0"}',
+    'packages/alpha/NOTICE': 'stale\n',
+  });
+
+  // Pass 1 brings BOTH copies current, so that pass 2 runs with the root
+  // already up to date. Nothing is asserted here beyond it having worked —
+  // this is fixture construction through the real tool, not a claim.
+  const seed = runScript([dir]);
+  checkSpawned('#711: the writer brings a fresh tree current', seed, () => {
+    check_('#711: the writer brings a fresh tree current', seed.status, 0);
+  });
+
+  const rootAfterSeed = readFileSync(join(dir, 'NOTICE'), 'utf-8');
+
+  // Now drift ONLY the package copy. The root is untouched and current.
+  writeFileSync(join(dir, 'packages/alpha/NOTICE'), 'DRIFTED\n');
+
+  const run = runScript([dir]);
+  checkSpawned('#711: a drifted copy is REWRITTEN when the root is current', run, () => {
+    check_('#711: the writer exits 0 with the root current', run.status, 0);
+
+    // THE DISCRIMINATOR. Bytes off disk, not a predicate's opinion of them.
+    check_(
+      '#711: a drifted copy is REWRITTEN when the root is current',
+      readFileSync(join(dir, 'packages/alpha/NOTICE'), 'utf-8'),
+      rootAfterSeed,
+    );
+
+    // ...and the root was not disturbed while doing it.
+    check_(
+      '#711: ...and the already-current root is left byte-identical',
+      readFileSync(join(dir, 'NOTICE'), 'utf-8'),
+      rootAfterSeed,
+    );
+
+    // THE COUNT REPORTS WHAT WAS WRITTEN. One of the two targets was stale, so
+    // "Rewrote 1 of 2" is the honest report; the old count said the same number
+    // whether or not the write happened.
+    check_('#711: ...and the count names the write, not the intention', run.stdout.includes('Rewrote 1 of 2 copies.'), true);
+  });
+}
+
+{
+  // A WRITE THAT FAILS IS REPORTED AS FAILED, not counted as a rewrite.
+  //
+  // The unwritable target is a DIRECTORY at the NOTICE path. That makes both the
+  // read and the write fail deterministically (EISDIR) for any user — a
+  // read-only file would not, since a root-owned CI container writes through the
+  // permission bit and would silently invert this assertion.
+  const dir = scratch({
+    NOTICE: 'stale\n',
+    'packages/gamma/package.json': '{"name":"@x/gamma","version":"0.0.0"}',
+  });
+  mkdirSync(join(dir, 'packages/gamma/NOTICE'), { recursive: true });
+
+  const run = runScript([dir]);
+  checkSpawned('#711: an unwritable copy fails loudly', run, () => {
+    check_('#711: an unwritable copy exits non-zero', run.status, 1);
+    check_('#711: ...and stderr names it', run.stderr.includes('could not be written'), true);
+    check_('#711: ...and it is NOT counted as rewritten', run.stdout.includes('Rewrote'), false);
+  });
 }
 
 // ---------------------------------------------------------------------------

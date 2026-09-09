@@ -104,6 +104,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
+import { publicPackages } from './lib/public-packages.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_DIVERGENCE = 1;
@@ -273,25 +274,22 @@ export function readRootPackageName(repoRoot) {
   }
 }
 
-/** Public workspace packages, discovered rather than hardcoded. */
+/**
+ * Public workspace packages, discovered rather than hardcoded.
+ *
+ * The walk is shared (#711); skipping an unreadable manifest is this guard's
+ * own policy and stays here.
+ *
+ * ONE NARROWING, stated because it is a real difference rather than a rename:
+ * the shared predicate requires a STRING `name`, where this previously admitted
+ * a public manifest with no name at all and pushed `{ name: undefined }`. That
+ * entry would have flowed into `.map((p) => p.name)` downstream as `undefined`.
+ * No package in the tree is in that state, so this is latent either way — but
+ * it is a narrowing, not a no-op.
+ */
 export function discoverPublicPackages(repoRoot) {
-  const dir = join(repoRoot, 'packages');
-  if (!existsSync(dir)) return [];
-  const found = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true }).sort((a, b) => (a.name < b.name ? -1 : 1))) {
-    if (!entry.isDirectory()) continue;
-    const manifestPath = join(dir, entry.name, 'package.json');
-    if (!existsSync(manifestPath)) continue;
-    let manifest;
-    try {
-      manifest = JSON.parse(readFileSync(manifestPath, 'utf-8'));
-    } catch {
-      continue;
-    }
-    if (manifest.private === true) continue;
-    found.push({ name: manifest.name, manifest });
-  }
-  return found;
+  const { packages } = publicPackages(repoRoot);
+  return (packages ?? []).map(({ name, manifest }) => ({ name, manifest }));
 }
 
 /**

@@ -110,6 +110,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
+import { enumerateWorkspacePackages, isPublic } from './lib/public-packages.mjs';
 
 export const EXIT_OK = 0;
 export const EXIT_DIVERGENCE = 1;
@@ -132,24 +133,19 @@ export function versionOfTag(tag) {
  * missing. Reading `private` from each manifest cannot drift from the manifests.
  */
 export function discoverPublicPackages(rootDir) {
-  const dir = join(rootDir, 'packages');
-  let entries;
-  try {
-    entries = readdirSync(dir, { withFileTypes: true }).filter((d) => d.isDirectory());
-  } catch (err) {
-    return { packages: null, reason: `cannot read packages/ (${err?.message ?? err})` };
+  // The walk is shared (#711); the FAIL-CLOSED policy is this reconciler's own.
+  // An unparseable manifest refuses the whole answer rather than shrinking the
+  // set, because a set that silently lost a package cannot report it missing —
+  // which is the failure this reconciler exists for.
+  const { entries, error } = enumerateWorkspacePackages(rootDir);
+  if (entries === null) return { packages: null, reason: error };
+
+  const unreadable = entries.find((e) => e.unreadable !== null);
+  if (unreadable !== undefined) {
+    return { packages: null, reason: `cannot parse ${unreadable.dir}/package.json (${unreadable.unreadable})` };
   }
-  const packages = [];
-  for (const d of entries) {
-    const manifest = join(dir, d.name, 'package.json');
-    if (!existsSync(manifest)) continue;
-    try {
-      const pkg = JSON.parse(readFileSync(manifest, 'utf-8'));
-      if (pkg.private !== true && typeof pkg.name === 'string') packages.push(pkg.name);
-    } catch (err) {
-      return { packages: null, reason: `cannot parse ${d.name}/package.json (${err?.message ?? err})` };
-    }
-  }
+
+  const packages = entries.filter(isPublic).map((e) => e.name);
   if (packages.length === 0) {
     // The vacuity guard. An empty set makes every comparison below trivially
     // true, which is how a check rots into decoration (#63).

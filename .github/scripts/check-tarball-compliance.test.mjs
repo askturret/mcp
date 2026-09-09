@@ -524,6 +524,34 @@ function runGuard(repoRoot, binDir) {
   );
   const rTmpl = silently(() => main(['node', GUARD, tmpl], runnerWithFiles(COMPLIANT)));
   check('#826: ...and a template with the NAME swapped still collides', rTmpl.code, EXIT_DIVERGENCE);
+
+  // TYPED OUTCOME: A CANNOT-CHECK IS NOT OVERWRITTEN BY A COLLISION.
+  //
+  // This is the assertion that would have caught the defect. Distinctness is a
+  // CORPUS-WIDE property computed only over READMEs that could be read, so when
+  // any package is cannot-check the comparison ran over a SUBSET and cannot
+  // support a corpus-wide verdict. The collision is still REPORTED; what it must
+  // not do is turn "I could not check" into "I checked, and it is wrong".
+  //
+  // Driven with a real cannot-check — the root NOTICE removed, which is exactly
+  // the #587 case that went red — PLUS a deliberate collision, so both signals
+  // are present at once and the precedence is what decides.
+  const both = fixture(
+    { a: publicManifest('a', '@scope/a'), b: publicManifest('b', '@scope/b') },
+    { a: shared, b: shared },
+  );
+  rmSync(join(both, 'NOTICE'));
+  const rBoth = silently(() => main(['node', GUARD, both], runnerWithFiles(COMPLIANT)));
+  check('#826: a collision does NOT overwrite a cannot-check verdict', rBoth.code, EXIT_CANNOT_CHECK);
+  check('...and the collision is still REPORTED, not suppressed', rBoth.out.includes('@scope/a'), true);
+
+  // AND THE COUNTS ARE NOT CONFLATED. Sharing a bucket printed "1 README link
+  // issue(s)" with zero link issues present — a figure naming the wrong property.
+  check(
+    '#826: a collision counts as a distinctness issue, not a link issue',
+    /0 README link issue\(s\), 1 README distinctness issue\(s\)/.test(rTmpl.out),
+    true,
+  );
 }
 
 {

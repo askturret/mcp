@@ -514,6 +514,18 @@ export function main(argv, runner = defaultPackRunner) {
   const cannotCheck = [];
   const manifestIssues = [];
   const readmeIssues = [];
+  /**
+   * Distinctness findings, kept OUT of `readmeIssues` deliberately (#826).
+   *
+   * A different KIND of finding carrying a different verdict, and sharing a
+   * bucket got both wrong: the summary counted them as "README link issue(s)"
+   * when no link issue existed, the error section offered "make the link
+   * absolute" as the remedy for two identical documents, and — the one that
+   * matters — they inherited a precedence that let them overwrite a
+   * cannot-check verdict. The exit ladder says why that last one is not merely
+   * a mislabel.
+   */
+  const distinctnessIssues = [];
   /** Each package's shipped README, for the cross-package distinctness check (#826). */
   const readmeByPackage = new Map();
 
@@ -724,7 +736,7 @@ export function main(argv, runner = defaultPackRunner) {
   }
   for (const group of byNormalised.values()) {
     if (group.length < 2) continue;
-    readmeIssues.push(
+    distinctnessIssues.push(
       `${group.join(', ')}: these READMEs are byte-identical once the package name is normalised out. ` +
         'Each npm page is the only page most readers of that package will ever see, so a shared one ' +
         'answers a question they did not ask. Distinctness is asserted here; usefulness is not, and cannot be.',
@@ -735,7 +747,7 @@ export function main(argv, runner = defaultPackRunner) {
   console.log(
     `check-tarball-compliance: packed ${Math.max(checked, 0)} of ${packages.length} public package(s); ` +
       `${divergences.length} divergence(s), ${cannotCheck.length} cannot-check, ${manifestIssues.length} manifest issue(s), ` +
-      `${readmeIssues.length} README link issue(s).`,
+      `${readmeIssues.length} README link issue(s), ${distinctnessIssues.length} README distinctness issue(s).`,
   );
 
   // BOTH categories are always printed, whichever exit code wins below.
@@ -774,12 +786,41 @@ export function main(argv, runner = defaultPackRunner) {
     console.error('   Fix: make the link absolute (https://github.com/askturret/mcp/...). An npm page has');
     console.error('   no repository context, so a relative path has nothing to resolve against.');
   }
+  if (distinctnessIssues.length > 0) {
+    console.error('\n❌ README DISTINCTNESS — these packages ship the same document:');
+    for (const d of distinctnessIssues) console.error(`   ${d}`);
+    console.error('   Fix: write each package its own README, from that package\'s own public exports.');
+    console.error('   Distinctness is all that is asserted here — a green says nothing about quality.');
+  }
   if (cannotCheck.length > 0) {
     console.error('\n⚠️  CANNOT CHECK — packing did not produce a verdict for:');
     for (const c of cannotCheck) console.error(`   ${c}`);
     console.error('   This is NOT a pass. Nothing above was verified for these packages.');
   }
 
+  // THE LADDER, AND WHY DISTINCTNESS SITS BELOW CANNOT-CHECK RATHER THAN WITH
+  // THE OTHERS (#826).
+  //
+  // The first three are PER-PACKAGE facts about packages that WERE checked: a
+  // required entry absent from a tarball, a manifest missing a field, a README
+  // carrying a dead link. Each is confirmed on its own and stays true whatever
+  // happened to the other packages, so a confirmed failure rightly beats an
+  // unknown — the precedence this guard has always documented.
+  //
+  // DISTINCTNESS IS NOT THAT KIND OF FACT. It is a CORPUS-WIDE property,
+  // computed over `readmeByPackage`, which holds only the packages whose README
+  // could actually be read. If any package is cannot-check, the comparison ran
+  // over a SUBSET — so the guard cannot issue a corpus-wide verdict from it. A
+  // collision found among the readable ones is still real and is still printed
+  // above; what it must not do is convert "I could not check" into "I checked,
+  // and it is wrong".
+  //
+  // That is the same typed-outcome discipline #587 pins by name and ADR-011
+  // states generally: do not assert what you could not measure. Sharing a
+  // bucket with the link check had distinctness silently inheriting the
+  // opposite rule, so a run that genuinely could not check reported a failure
+  // verdict instead — inside the guard whose own header says an
+  // indistinguishable state must not resolve as success.
   if (divergences.length > 0 || manifestIssues.length > 0 || readmeIssues.length > 0) {
     console.error(
       `\n::error::${divergences.length + manifestIssues.length + readmeIssues.length} tarball compliance failure(s).`,
@@ -789,6 +830,10 @@ export function main(argv, runner = defaultPackRunner) {
   if (cannotCheck.length > 0) {
     console.error(`\n::error::CANNOT CHECK — ${cannotCheck.length} package(s) could not be verified.`);
     return EXIT_CANNOT_CHECK;
+  }
+  if (distinctnessIssues.length > 0) {
+    console.error(`\n::error::${distinctnessIssues.length} README distinctness failure(s).`);
+    return EXIT_DIVERGENCE;
   }
 
   console.log(

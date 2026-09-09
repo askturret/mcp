@@ -2,7 +2,7 @@
 
 What AskTurret MCP supports, and — just as importantly — what it does not.
 
-**Applies to release `0.1.2`. Matrix version `2.3.0`.**
+**Applies to release `0.1.2`. Matrix version `2.3.1`.**
 
 > **`2.3.0` makes the enforcement claim itself checkable** — check **I** compares
 > this document's check table, and the same list in the JSON, against the checks
@@ -54,6 +54,7 @@ point of the matrix, so it is stated explicitly rather than implied by a tick.
 | ✅ **Supported** | Declared as supported **and** exercised by CI on every pull request. |
 | ⚠️ **Declared, untested** | Declared in `peerDependencies` and expected to work, but **no CI job exercises it**. Use at your own risk; report breakage as a bug. |
 | 🔜 **Planned** | **Not implemented.** Tracked by the linked issue. Do not depend on it. |
+| ⏳ **Deprecated** | Still supported, with a **scheduled removal release**. |
 | 🚫 **Unsupported** | Explicitly rejected, and not planned. |
 
 ---
@@ -220,6 +221,14 @@ the split matters:
   | **G** | no ✅ row covers the major the lockfile actually installs |
   | **H** | a `verifiedBy` names a file that does not exist |
   | **I** | this table, or the same list in the JSON, disagrees with the checks the guard defines |
+  | **J** | the status vocabulary above and `statusLegend` in the JSON define different sets of statuses |
+
+  **J arrived in `2.3.1` (#775).** The status vocabulary above and `statusLegend` in
+  the JSON are two hand-maintained copies of one set, and they had already diverged —
+  the legend defined five statuses, this table listed four, and `deprecated` was in
+  one copy only. J compares the two as SETS OF NAMES. It deliberately does not compare
+  the descriptions: the two documents are written in different registers on purpose,
+  so byte-equality there would be wrong rather than strict.
 
   **I arrived in `2.3.0` (#630), and it is why this table can now be trusted.** Until
   it existed, `contract.enforcement` and this table were prose that no check compared

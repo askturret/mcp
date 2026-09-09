@@ -49,6 +49,10 @@
  *   I  ENFORCEMENT = CHECKS  `contract.enforcement` must enumerate the same
  *                        check letters this guard defines — set equality and
  *                        the count, not a reading of the prose. (#630)
+ *   J  ONE STATUS VOCABULARY  the statuses `statusLegend` defines and the ones
+ *                        the `.md`'s vocabulary table lists must be the same
+ *                        SET. Names, not descriptions — the two documents are
+ *                        different registers by design. (#775)
  *
  * CHECK A IS THE ONE THAT KEEPS THE REST HONEST. Without it the guard silently
  * covers only the entries somebody remembered to annotate — which is the opt-in
@@ -770,6 +774,98 @@ export function main(argv) {
           `contract.enforcement says it runs ${spelled[1]} checks, but this guard defines ${defined.length} ` +
             `(${defined.join(', ')}). The count and the enumeration must both come from the same place.`,
         );
+      }
+    }
+  }
+
+  // --- J: THE STATUS VOCABULARY IS ONE SET, NOT TWO (#775) ------------------
+  //
+  // `statusLegend` defines the vocabulary; the .md's "Status vocabulary" table
+  // states it again for humans. They had already diverged: the legend defined
+  // FIVE statuses and the table listed FOUR, with `deprecated` in one copy and
+  // absent from the other. Nothing compared them, so nothing could notice.
+  //
+  // WHY NOT GENERATE THE TABLE FROM THE LEGEND. That is this file's own
+  // recorded decision, in the header above: generating one document from the
+  // other "would destroy exactly what is worth keeping". The two are written in
+  // different REGISTERS on purpose — the .md carries emoji, bold and backticks
+  // for a reader, the .json plain text for a machine — and check E's reasoning
+  // already notes that ZERO of the statusLegend values appear verbatim in the
+  // .md for precisely that reason.
+  //
+  // SO THE NAMES ARE COMPARED AND THE DESCRIPTIONS ARE NOT. Which statuses
+  // exist is a fact and must be single-valued; how each is phrased for a human
+  // is presentation. That is the line check E already draws for notes —
+  // byte-equality only where `mirroredInMd` opts in, paraphrase everywhere else
+  // — applied to the vocabulary instead of to prose. Byte-equality here would
+  // be wrong rather than strict, and would redden a tree everyone agrees is
+  // correct.
+  //
+  // Matching is on a SLUG, so the emoji, the bold and the comma in
+  // "Declared, untested" normalise away while the row must still name the same
+  // status the legend does.
+  const legend = contract?.statusLegend;
+  const legendStatuses =
+    legend !== null && typeof legend === 'object' && !Array.isArray(legend) ? Object.keys(legend).sort() : null;
+
+  if (legendStatuses === null || legendStatuses.length === 0) {
+    cannotCheck.push(
+      'docs/compatibility.json carries no `statusLegend` object, so the status vocabulary could not be ' +
+        'compared against the .md — an absent legend is a claim nobody can check rather than agreement',
+    );
+  } else {
+    // Scoped to the section that owns the vocabulary. Matching every table in
+    // the file would collect version rows and report nonsense.
+    // Terminates on the next `## ` heading OR on end-of-input. The end-of-input
+    // arm is not hypothetical: without it a vocabulary section that happens to
+    // be LAST in the file matches nothing and the check reports cannot-check on
+    // a document that is perfectly correct. Found by the self-test, whose
+    // fixtures append the section at the end.
+    const section = /(?:^|\n)##[ \t]+Status vocabulary[ \t]*\n([\s\S]*?)(?=\n##[ \t]|$)/.exec(md);
+    if (section === null) {
+      cannotCheck.push(
+        'docs/compatibility.md carries no `## Status vocabulary` section, so its copy of the vocabulary ' +
+          'could not be located — it may have been retitled, which needs a human rather than a pass',
+      );
+    } else {
+      const slug = (cell) =>
+        cell
+          .replace(/\*\*/g, '')
+          .replace(/`/g, '')
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+
+      const inMd = [
+        ...new Set(
+          [...section[1].matchAll(/^\s*\|([^|]+)\|/gm)]
+            .map((m) => slug(m[1]))
+            // The header cell and the `|---|---|` separator are not statuses.
+            .filter((s) => s !== '' && s !== 'status'),
+        ),
+      ].sort();
+
+      if (inMd.length === 0) {
+        cannotCheck.push(
+          'the `## Status vocabulary` section carries no table rows, so the .md copy of the vocabulary ' +
+            'could not be compared',
+        );
+      } else {
+        const mdMissing = legendStatuses.filter((s) => !inMd.includes(s));
+        const mdExtra = inMd.filter((s) => !legendStatuses.includes(s));
+        if (mdMissing.length > 0) {
+          divergences.push(
+            `docs/compatibility.md's status vocabulary omits ${mdMissing.join(', ')}, which ` +
+              'docs/compatibility.json defines in `statusLegend`. Both copies are hand-maintained, and this ' +
+              'is the divergence #775 found.',
+          );
+        }
+        if (mdExtra.length > 0) {
+          divergences.push(
+            `docs/compatibility.md's status vocabulary lists ${mdExtra.join(', ')}, which ` +
+              'docs/compatibility.json does not define in `statusLegend`.',
+          );
+        }
       }
     }
   }

@@ -2,12 +2,30 @@
 /**
  * WHICH WORKSPACE PACKAGES ARE PUBLIC — one definition, imported (#711).
  *
- * Five files carried their own copy of this walk before this module existed:
- * `check-npx-invocations`, `check-release-registry-reconcile`,
- * `check-tarball-compliance`, `check-compatibility-contract` and
- * `check-readme-imports`. They agreed — measured, all five returned the same
- * nine names — which is exactly the state a sixth copy would have joined
- * without anyone noticing it had.
+ * FIVE READERS UNDER `.github/scripts/` carried their own copy of this walk
+ * before this module existed: `check-npx-invocations`,
+ * `check-release-registry-reconcile`, `check-tarball-compliance`,
+ * `check-compatibility-contract` and `check-readme-imports`. They agreed —
+ * measured, all five returned the same nine names — which is exactly the state a
+ * sixth copy would have joined without anyone noticing it had.
+ *
+ * THE BOUND IS PART OF THE CLAIM, not a qualifier on it. "Five" is the count
+ * UNDER `.github/scripts/` — the population this module serves — and it is not a
+ * repository-wide census. Naming the set you enumerated over is the standing
+ * mitigation for stated counts (the ADR recording it is not on `main` yet, so
+ * the number is deliberately not cited here). It is applied because reading a
+ * count taken over one population as though it were taken over another is the
+ * precise error that has cost this repository several findings in a single
+ * evening, including two of this author's.
+ *
+ * A SIXTH WALK EXISTS OUTSIDE THAT BOUND, and is deliberately NOT in scope.
+ * `migrate.test.ts` reads the root `workspaces` array and filters `!isPrivate`.
+ * Do not fold it in: it asks a WIDER question (all workspace patterns, not just
+ * `packages/*`) and an EXISTENTIAL one (`length > 0`), it explicitly refuses to
+ * pin membership or a count for the same reason this issue exists, and it could
+ * not import a builtins-only ESM module from `.github/scripts` in any case. It
+ * cannot go stale the way the five could — which is why it is recorded here as
+ * considered rather than left to look like an oversight.
  *
  * #711 was filed because `generate-notice.mjs` cannot write the per-package
  * NOTICE copies without knowing that list, and adding it there would have made

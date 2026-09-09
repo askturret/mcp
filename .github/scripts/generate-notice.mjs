@@ -200,11 +200,13 @@ export function generateNotice(rootDir = '.', options = {}) {
  * byte-identical to the root — but the guard can only REPORT the drift. This
  * writes the copies, so regeneration cannot leave one behind.
  *
- * THE LIST IS IMPORTED, NOT RESTATED, which is the whole of #711. Five files
- * carried their own copy of this walk; spelling a sixth out here would have
- * made the set of packages receiving a NOTICE a hand-maintained parallel to the
- * set of packages that exist — the shape #625, #700 and #704 are each removing
- * elsewhere.
+ * THE LIST IS IMPORTED, NOT RESTATED, which is the whole of #711. Five readers
+ * under `.github/scripts/` carried their own copy of this walk — that count is
+ * bounded to that directory, not a repository-wide census, and the bound is
+ * stated in `lib/public-packages.mjs` along with the sixth walk that sits
+ * outside it. Spelling a copy out here would have made the set of packages
+ * receiving a NOTICE a hand-maintained parallel to the set of packages that
+ * exist — the shape #625, #700 and #704 are each removing elsewhere.
  *
  * ONLY PACKAGES THAT ALREADY HAVE ONE. A public package with no NOTICE is not
  * given one here: whether it should ship one is a packaging decision that
@@ -270,11 +272,43 @@ if (isProcessEntryPoint(import.meta.url)) {
     process.exit(0);
   }
 
-  for (const target of stale) writeFileSync(target, result.next);
+  // COUNTED FROM THE WRITES, NOT FROM THE STALE LIST (#711).
+  //
+  // `Rewrote ${stale.length}` reported an INTENTION. It was computed before any
+  // write happened, so it announced the same number whether the writes occurred,
+  // were suppressed, or threw — and that is precisely why the #587 regression was
+  // SILENT rather than loud: with the write loop gated off, the tool still
+  // printed "Rewrote 1 of 10 copies" and exited 0 while `--check` went on
+  // failing. A count that cannot distinguish "did it" from "meant to" is not a
+  // report, and the drift it was hiding is the one this issue exists to close.
+  const written = [];
+  const unwritable = [];
+  for (const target of stale) {
+    try {
+      writeFileSync(target, result.next);
+      written.push(target);
+    } catch (e) {
+      unwritable.push(`${target}: ${e.message}`);
+    }
+  }
+
+  // A WRITE THAT FAILED IS NOT A REWRITE. Previously an exception here escaped
+  // uncaught, so the run died with a stack trace and no statement of what had
+  // and had not been updated — a partially-rewritten tree reported as neither
+  // success nor a named failure.
+  if (unwritable.length > 0) {
+    console.error(
+      `::error::wrote ${written.length} of ${stale.length} stale NOTICE cop(ies); ` +
+        `${unwritable.length} could not be written:\n` +
+        unwritable.map((p) => `  ${p}`).join('\n'),
+    );
+    process.exit(1);
+  }
+
   console.log(
-    stale.length === 0
+    written.length === 0
       ? `${result.message} All ${noticeTargets(rootDir).length} copies match.`
-      : `${result.message} Rewrote ${stale.length} of ${noticeTargets(rootDir).length} copies.`,
+      : `${result.message} Rewrote ${written.length} of ${noticeTargets(rootDir).length} copies.`,
   );
   process.exit(0);
 }

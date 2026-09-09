@@ -27,6 +27,8 @@ reconstruct the answer from commit archaeology.
 | [022](ADR-022-concealment-allowlist-is-evidence-bound.md) | The concealment allowlist is evidence-bound: no template without a captured message | written at the time (#276) |
 | [023](ADR-023-remedy-test-and-the-two-axes.md) | An issue is a unit of remedy, and a claim states exactly what it verified | written at the time (#566) |
 | [024](ADR-024-output-must-vary-with-the-fact.md) | A check's output must vary with the fact it reports | written at the time (#654) |
+| [025](ADR-025-derive-from-the-authority.md) | Derive from the authority, never from a reflection | written at the time (#780) |
+| [026](ADR-026-a-brief-premise-is-the-receivers-to-verify.md) | A brief's premise is the receiver's to verify | written at the time (#780) |
 
 ⚠ = the number is cited for more than one subject; the ADR records that
 ambiguity rather than resolving it by invention.

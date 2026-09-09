@@ -137,6 +137,23 @@ a world that moved out from under exactly the claims the world touched, and left
 the one it never touched standing. A reader checking only `fromFastify` would
 have confirmed the note and moved on.
 
+**The surviving clause is a third shape, and it needs a different remedy from
+the other two.** It was never falsified by anything shipping, because the thing
+it presupposes never shipped: a claim written against an intended future that
+then changed. The umbrella entry point `@askturret/mcp/express` is the same
+shape — listed as the Express entry point while `@askturret/mcp` has never been
+published at any moment (#598).
+
+> **Do not watch the plan. Assert the artifact the claim presupposes.**
+
+A plan changing produces no event, which is why such a claim can sit for months;
+but the artifact it presupposes is testable on every run — `@askturret/mcp`
+either resolves or 404s. So this shape needs no watcher on anyone's intent, and
+no new vocabulary either: the compatibility matrix already carries a `planned`
+status meaning *"not implemented — do not depend on it"*, which is what such a
+row should have used. Naming the shape matters; inventing a category for it does
+not.
+
 > **An earlier draft of this record said "every clause is false", and that was
 > itself an overstatement — asserted three clauses false where the source issue
 > had rebutted two.** Recorded rather than quietly corrected, because of where it
@@ -150,6 +167,28 @@ something the job of noticing when it expires."* A bound that names its own
 expiry condition — as the Express note does, in the words *until a CI job covers
 it* — is checkable. A bound that merely describes today's state is not, and it
 will go stale with nothing watching.
+
+> **Checkable is not checked, and naming an expiry is the precondition for a
+> remedy rather than the remedy.** A named expiry is worth more than an unnamed
+> one only IF something eventually acts on it. `compatibility.json` and
+> `compatibility.md` both stated *"not a CI-enforced guarantee"* — accurately,
+> in both copies, unprompted — and the SDK row then sat inside that
+> correctly-labelled bound until it named a range excluded for a security
+> advisory, with nothing noticing (#612). **So a bound that names its expiry
+> should also name what will act on it** — a check, an issue, a scheduled
+> review. When the answer is *"nothing"*, the bound is a **known debt rather
+> than a managed one**, and saying that is more honest than letting the label
+> imply the work was done. This record's own Q2 expiry, below, is an instance:
+> correctly named, and unwatched until an unrelated edit tripped over it.
+
+**The stronger remedy, where it is available, is to stop caching the answer.** A
+comparison that is **re-derived** on every run is *time-indifferent* — it does
+not care whether a row was wrong when written or became wrong later, because it
+recomputes rather than remembering. An assertion that re-derives therefore needs
+no separate decay watcher, which collapses "written wrong" and "decayed" into a
+single remedy and is why Axis 1 and this time dimension are one concern rather
+than two. Prose cannot re-derive; that is precisely why prose needs the watcher
+and a guard does not.
 
 This is the same mechanism as #587 one level up: a claim that asserts *present*
 where it needed to assert *current*, applied to prose rather than to a guard.
@@ -234,6 +273,24 @@ lifts, and — exactly as with the Fastify note — there is no diff at the mome
 becomes wrong, so nothing prompts a re-examination. The Express compatibility
 note is exemplary because it names *"until a CI job covers it"*; a Q2 merge owes
 the reader the same sentence.
+
+> **That expiry has since FIRED, and this paragraph is what acting on it looks
+> like.** Measured against `package-lock.json` while editing this record, not
+> inferred: the tree now holds a **single** `express@5.2.1` at top level
+> declaring `qs: ^6.14.0`, and `qs` is installed at **`6.16.0`** — the exact
+> version recorded above as *unresolvable while Express 4 is installed*. Express
+> 4 is no longer installed. The upgrade landed in `7c074c1` (#707), not the #585
+> anticipated here. **The two observations are two issues now, exactly as
+> predicted.** Nothing above is retracted: it was true when written, and it said
+> so, which is the entire point of recording a constraint with its expiry.
+
+Note what it cost to notice, stated as dates rather than a duration, since a
+duration is itself a decaying claim. The constraint lifted on **2026-09-06**
+(`7c074c1`); this record still described it as current on **2026-09-09**, and it
+surfaced then only because an unrelated edit to this file happened to re-measure
+the tree. The expiry was named correctly, in the right place, and nothing was
+watching it. That is the gap recorded above under Axis 2: **a bound that names
+its expiry is checkABLE, which is not the same as checked.**
 
 **This record initially failed to say so**, presenting the coupling as though it
 were permanent. It was found in review, which the author had invited to attack
@@ -364,6 +421,25 @@ which sometimes means reading a lockfile before filing. The `qs` case was only
 settled by finding `~6.15.1`. Filing is now occasionally more expensive than it
 was.
 
+> **A lockfile is indexed by POSITION in the dependency tree, not by version.**
+> Ask it about *"express"* and it answers about whichever express sits at the
+> position you looked. A registry is indexed by version, so naming
+> `express@5.2.1` cannot return a different package's answer.
+
+When the `qs` case was settled, two expresses were installed — `4.22.2` at top
+level and `5.2.1` nested under the MCP SDK — and both figures this record quotes
+were true simultaneously, of different packages. **Neither source lied; one of
+them was asked an ambiguous question.**
+
+This does not weaken the recommendation above, and it is not the caveat the
+filing for this clause expected. Reading the lockfile was right, and it returned
+the right answer: `~6.15.1` is a tilde range capping below `6.16.0`, which is
+exactly the Q2 verdict *"can this land alone?"* and correct for the tree as it
+then stood. What needs stating is not a bound on the method but a bound on the
+**question** — **say which position you read, because the artifact will not say
+it for you.** That is [ADR-025](ADR-025-derive-from-the-authority.md)'s *"state
+the set you enumerated over"* applied to a version rather than to a list.
+
 **Bad, and NOT mitigated.** Nothing detects a violation of either axis. These
 are review criteria applied by whoever reads the diff, and the Axis-1 family is
 five instances of what happens when careful reviewers apply them
@@ -398,8 +474,13 @@ both are recorded above where they apply rather than only here. The
 `fromFastify` was confirmed absent repo-wide, and the source issue had rebutted
 two clauses while this record asserted three. Q2's time-indexing was also QA's,
 from checking the registry rather than the lockfile: `express@5.2.1` declares
-`qs: ^6.14.0`. Both were re-verified here against the registry and the tree
-before being written down.
+`qs: ^6.14.0` — where the `~6.15.1` quoted in Consequences is what the
+**top-level `express@4.22.2`** declared. **Two expresses were installed at the
+time**, 5.2.1 nested under the MCP SDK. **The two sources never disagreed**;
+they were read at different positions in the tree, and a reader who takes the
+phrase *"registry rather than the lockfile"* to mean the lockfile was wrong has
+been misled by this record rather than by the lockfile. Both were re-verified
+here against the registry and the tree before being written down.
 
 The footer below reads *Operum Engineer* on every record in this directory,
 including those written by other roles. **It is a directory-wide convention

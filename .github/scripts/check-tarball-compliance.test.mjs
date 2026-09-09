@@ -108,7 +108,22 @@ function fixture(packages, readmes = {}, mirrors = {}) {
     const pkgDir = join(dir, 'packages', name);
     mkdirSync(pkgDir, { recursive: true });
     writeFileSync(join(pkgDir, 'package.json'), JSON.stringify(manifest, null, 2));
-    writeFileSync(join(pkgDir, 'README.md'), readmes[name] ?? CLEAN_README);
+    // DEFAULT READMEs ARE DISTINCT PER PACKAGE (#826). Every fixture package
+    // used to get the same `CLEAN_README`, which the distinctness check reads as
+    // exactly the copy-paste it exists to refuse — so a two-package fixture
+    // testing something else entirely (an unreadable root NOTICE) reddened, and
+    // its cannot-check verdict was outranked by the resulting divergence. That
+    // is the widening-reddens-a-correct-tree trap, and this is the remedy used
+    // for it elsewhere: complete the fixture from ONE source so the defaults
+    // cannot collide with each other.
+    //
+    // The DIRECTORY name is what varies, deliberately. The check normalises the
+    // MANIFEST name out before hashing, so seeding with `manifest.name` would
+    // normalise straight back to identical and collide again.
+    //
+    // An explicitly supplied README is untouched, so the cases that drive README
+    // content — including the collision controls — still say what they mean.
+    writeFileSync(join(pkgDir, 'README.md'), readmes[name] ?? `${CLEAN_README}\nFixture package directory: ${name}.\n`);
     const m = mirrors[name] ?? {};
     if (m.NOTICE !== null) writeFileSync(join(pkgDir, 'NOTICE'), m.NOTICE ?? ROOT_NOTICE);
     if (m.LICENSE !== null) writeFileSync(join(pkgDir, 'LICENSE'), m.LICENSE ?? ROOT_LICENSE);
@@ -468,6 +483,75 @@ function runGuard(repoRoot, binDir) {
   check('#596 regression: a shipped README with a relative link exits 1', r.code, EXIT_DIVERGENCE);
   check('...and names the offending target', r.out.includes('../../README.md'), true);
   check('...and says it resolves to nothing on the npm page', r.out.includes('resolves to nothing on the npm page'), true);
+}
+
+// ---------------------------------------------------------------------------
+// #826 — TWO PACKAGES MAY NOT SHIP THE SAME README
+//
+// Six of nine shipped a README that was byte-identical once the package name
+// was normalised out. Every one passed presence, and passed the link rule.
+//
+// This control is here BECAUSE the fixture helper now completes each package
+// with a distinct default (see `fixture`): that change is what stops unrelated
+// multi-package cases reddening, and it also means nothing would notice if this
+// check stopped firing. The collision is therefore stated explicitly rather than
+// arriving by accident.
+// ---------------------------------------------------------------------------
+{
+  const shared = '# a package\n\nPart of the project. See the [main README](https://example.invalid/#readme).\n';
+  const dir = fixture(
+    { a: publicManifest('a', '@scope/a'), b: publicManifest('b', '@scope/b') },
+    { a: shared, b: shared },
+  );
+  const r = silently(() => main(['node', GUARD, dir], runnerWithFiles(COMPLIANT)));
+  check('#826: two packages shipping the same README exits 1', r.code, EXIT_DIVERGENCE);
+  check('...and names BOTH packages, not just the second', r.out.includes('@scope/a') && r.out.includes('@scope/b'), true);
+  check('...and says distinctness is what is asserted, not quality', r.out.includes('usefulness is not, and cannot be'), true);
+
+  // THE POSITIVE CONTROL. Without it the case above is satisfied by a rule that
+  // flags every multi-package tree, which would redden every fixture here.
+  const ok = fixture({ a: publicManifest('a', '@scope/a'), b: publicManifest('b', '@scope/b') });
+  const rOk = silently(() => main(['node', GUARD, ok], runnerWithFiles(COMPLIANT)));
+  check('#826: ...while two DIFFERENT READMEs pass', rOk.code, EXIT_OK);
+
+  // AND THE NORMALISATION IS LOAD-BEARING: one template with each package's own
+  // name substituted in is still one document, and must still collide. This is
+  // the shape a well-meaning author actually produces.
+  const templated = (n) => `# ${n}\n\nPart of the project. See the [main README](https://example.invalid/#readme).\n`;
+  const tmpl = fixture(
+    { a: publicManifest('a', '@scope/a'), b: publicManifest('b', '@scope/b') },
+    { a: templated('@scope/a'), b: templated('@scope/b') },
+  );
+  const rTmpl = silently(() => main(['node', GUARD, tmpl], runnerWithFiles(COMPLIANT)));
+  check('#826: ...and a template with the NAME swapped still collides', rTmpl.code, EXIT_DIVERGENCE);
+
+  // TYPED OUTCOME: A CANNOT-CHECK IS NOT OVERWRITTEN BY A COLLISION.
+  //
+  // This is the assertion that would have caught the defect. Distinctness is a
+  // CORPUS-WIDE property computed only over READMEs that could be read, so when
+  // any package is cannot-check the comparison ran over a SUBSET and cannot
+  // support a corpus-wide verdict. The collision is still REPORTED; what it must
+  // not do is turn "I could not check" into "I checked, and it is wrong".
+  //
+  // Driven with a real cannot-check — the root NOTICE removed, which is exactly
+  // the #587 case that went red — PLUS a deliberate collision, so both signals
+  // are present at once and the precedence is what decides.
+  const both = fixture(
+    { a: publicManifest('a', '@scope/a'), b: publicManifest('b', '@scope/b') },
+    { a: shared, b: shared },
+  );
+  rmSync(join(both, 'NOTICE'));
+  const rBoth = silently(() => main(['node', GUARD, both], runnerWithFiles(COMPLIANT)));
+  check('#826: a collision does NOT overwrite a cannot-check verdict', rBoth.code, EXIT_CANNOT_CHECK);
+  check('...and the collision is still REPORTED, not suppressed', rBoth.out.includes('@scope/a'), true);
+
+  // AND THE COUNTS ARE NOT CONFLATED. Sharing a bucket printed "1 README link
+  // issue(s)" with zero link issues present — a figure naming the wrong property.
+  check(
+    '#826: a collision counts as a distinctness issue, not a link issue',
+    /0 README link issue\(s\), 1 README distinctness issue\(s\)/.test(rTmpl.out),
+    true,
+  );
 }
 
 {

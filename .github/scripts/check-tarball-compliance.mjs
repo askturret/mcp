@@ -174,6 +174,7 @@
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
@@ -513,6 +514,20 @@ export function main(argv, runner = defaultPackRunner) {
   const cannotCheck = [];
   const manifestIssues = [];
   const readmeIssues = [];
+  /**
+   * Distinctness findings, kept OUT of `readmeIssues` deliberately (#826).
+   *
+   * A different KIND of finding carrying a different verdict, and sharing a
+   * bucket got both wrong: the summary counted them as "README link issue(s)"
+   * when no link issue existed, the error section offered "make the link
+   * absolute" as the remedy for two identical documents, and — the one that
+   * matters — they inherited a precedence that let them overwrite a
+   * cannot-check verdict. The exit ladder says why that last one is not merely
+   * a mislabel.
+   */
+  const distinctnessIssues = [];
+  /** Each package's shipped README, for the cross-package distinctness check (#826). */
+  const readmeByPackage = new Map();
 
   // Checked BEFORE the per-package work, and independently of it: the root is
   // not one of the discovered packages — it is the one that must never become
@@ -680,6 +695,7 @@ export function main(argv, runner = defaultPackRunner) {
         );
       }
       if (readme !== undefined) {
+        readmeByPackage.set(pkg.name, readme);
         for (const target of findRelativeLinks(readme)) {
           readmeIssues.push(
             `${pkg.name}: README links to "${target}", a repository-relative path that resolves to nothing on the npm page`,
@@ -689,11 +705,49 @@ export function main(argv, runner = defaultPackRunner) {
     }
   }
 
+  // NO TWO PACKAGES MAY SHIP THE SAME README (#826)
+  //
+  // A THIRD narrow property, in the spirit of the two above — still not
+  // "useful", which this guard says plainly it cannot check. What it CAN check
+  // is that nine pages are not one page repeated, and they were: six of the
+  // nine shipped a README byte-identical once the package name was stripped —
+  // a title, "part of the AskTurret MCP project", and a link away. Every
+  // tarball passed presence, passed the link rule, and the npm page for the
+  // flagship package still read as three lines of nothing.
+  //
+  // DISTINCTNESS IS NOT QUALITY, and a green here is NOT an endorsement. Six
+  // genuinely different bad READMEs would satisfy it completely. It refuses one
+  // specific regression — the copy-paste that has already happened once — and
+  // claims nothing beyond that.
+  //
+  // NOT A LENGTH THRESHOLD. A byte count is the tally trap ADR-024 names: it
+  // would pass a 400-byte README that is wrong about the package, and it would
+  // need re-tuning every time a document legitimately shrank.
+  //
+  // The comparison DERIVES from the tree rather than listing known-bad text, so
+  // it cannot go stale the way an allowlist does. The package name is
+  // normalised out precisely so that one template filled in with nine different
+  // names still collides.
+  const byNormalised = new Map();
+  for (const [name, text] of readmeByPackage) {
+    const digest = createHash('sha256').update(text.split(name).join('<PACKAGE>')).digest('hex');
+    if (!byNormalised.has(digest)) byNormalised.set(digest, []);
+    byNormalised.get(digest).push(name);
+  }
+  for (const group of byNormalised.values()) {
+    if (group.length < 2) continue;
+    distinctnessIssues.push(
+      `${group.join(', ')}: these READMEs are byte-identical once the package name is normalised out. ` +
+        'Each npm page is the only page most readers of that package will ever see, so a shared one ' +
+        'answers a question they did not ask. Distinctness is asserted here; usefulness is not, and cannot be.',
+    );
+  }
+
   const checked = packages.length - cannotCheck.length;
   console.log(
     `check-tarball-compliance: packed ${Math.max(checked, 0)} of ${packages.length} public package(s); ` +
       `${divergences.length} divergence(s), ${cannotCheck.length} cannot-check, ${manifestIssues.length} manifest issue(s), ` +
-      `${readmeIssues.length} README link issue(s).`,
+      `${readmeIssues.length} README link issue(s), ${distinctnessIssues.length} README distinctness issue(s).`,
   );
 
   // BOTH categories are always printed, whichever exit code wins below.
@@ -732,12 +786,41 @@ export function main(argv, runner = defaultPackRunner) {
     console.error('   Fix: make the link absolute (https://github.com/askturret/mcp/...). An npm page has');
     console.error('   no repository context, so a relative path has nothing to resolve against.');
   }
+  if (distinctnessIssues.length > 0) {
+    console.error('\n❌ README DISTINCTNESS — these packages ship the same document:');
+    for (const d of distinctnessIssues) console.error(`   ${d}`);
+    console.error('   Fix: write each package its own README, from that package\'s own public exports.');
+    console.error('   Distinctness is all that is asserted here — a green says nothing about quality.');
+  }
   if (cannotCheck.length > 0) {
     console.error('\n⚠️  CANNOT CHECK — packing did not produce a verdict for:');
     for (const c of cannotCheck) console.error(`   ${c}`);
     console.error('   This is NOT a pass. Nothing above was verified for these packages.');
   }
 
+  // THE LADDER, AND WHY DISTINCTNESS SITS BELOW CANNOT-CHECK RATHER THAN WITH
+  // THE OTHERS (#826).
+  //
+  // The first three are PER-PACKAGE facts about packages that WERE checked: a
+  // required entry absent from a tarball, a manifest missing a field, a README
+  // carrying a dead link. Each is confirmed on its own and stays true whatever
+  // happened to the other packages, so a confirmed failure rightly beats an
+  // unknown — the precedence this guard has always documented.
+  //
+  // DISTINCTNESS IS NOT THAT KIND OF FACT. It is a CORPUS-WIDE property,
+  // computed over `readmeByPackage`, which holds only the packages whose README
+  // could actually be read. If any package is cannot-check, the comparison ran
+  // over a SUBSET — so the guard cannot issue a corpus-wide verdict from it. A
+  // collision found among the readable ones is still real and is still printed
+  // above; what it must not do is convert "I could not check" into "I checked,
+  // and it is wrong".
+  //
+  // That is the same typed-outcome discipline #587 pins by name and ADR-011
+  // states generally: do not assert what you could not measure. Sharing a
+  // bucket with the link check had distinctness silently inheriting the
+  // opposite rule, so a run that genuinely could not check reported a failure
+  // verdict instead — inside the guard whose own header says an
+  // indistinguishable state must not resolve as success.
   if (divergences.length > 0 || manifestIssues.length > 0 || readmeIssues.length > 0) {
     console.error(
       `\n::error::${divergences.length + manifestIssues.length + readmeIssues.length} tarball compliance failure(s).`,
@@ -747,6 +830,10 @@ export function main(argv, runner = defaultPackRunner) {
   if (cannotCheck.length > 0) {
     console.error(`\n::error::CANNOT CHECK — ${cannotCheck.length} package(s) could not be verified.`);
     return EXIT_CANNOT_CHECK;
+  }
+  if (distinctnessIssues.length > 0) {
+    console.error(`\n::error::${distinctnessIssues.length} README distinctness failure(s).`);
+    return EXIT_DIVERGENCE;
   }
 
   console.log(

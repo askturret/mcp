@@ -264,6 +264,76 @@ try {
       'a DIFFERENT private package is NOT exempt — the entries are named, not a pattern',
       runGuard(other).status === EXIT_UNKNOWN_PACKAGE,
     );
+
+    // --- AN EXEMPTION IS NOT INHERITED BY EXTENSION (#759) --------------------
+    //
+    // The capture used to be `[a-z0-9][a-z0-9-]*`, which excludes `_` and `.` —
+    // both LEGAL npm name characters. It truncated at the first one, and the
+    // exemption lookup is an exact `Object.hasOwn`, so the TRUNCATED name
+    // matched: a package inherited an exemption by merely STARTING with an
+    // exempt name, and was suppressed.
+    //
+    // These are the direct pins. Each name below extends the exempt entry by a
+    // character the old class could not hold, so each captured as the exempt
+    // entry and returned exit 0. They must now be FOUND, and finding them means
+    // failing, because the extended name is not a published package.
+    for (const [suffix, shape] of [
+      ['_v2', 'underscore'],
+      ['.v2', 'dot'],
+      ['_', 'a TRAILING underscore — the name must not truncate back onto the exemption'],
+    ]) {
+      const extended = fixture(`exempt-extended-${shape.replace(/\W+/g, '-')}`, {
+        privatePkgs: [DECLARED],
+        docs: { 'docs/adapters.md': `npx ${DECLARED}${suffix} ./my-adapter\n` },
+      });
+      const r = runGuard(extended);
+      check(
+        `a name extending the exempt entry by ${shape} is FLAGGED, not suppressed`,
+        r.status === EXIT_UNKNOWN_PACKAGE,
+        `exit ${r.status}\n${r.out.trim()}`,
+      );
+      check(
+        `...and the report names the FULL extended name, not the exempt prefix`,
+        r.out.includes(`${DECLARED}${suffix}`),
+        r.out.trim(),
+      );
+    }
+
+    // THE POSITIVE CONTROL, and it is what stops all of the above being
+    // satisfied by a guard that simply exempts nothing: the exact exempt name,
+    // unextended, must still be suppressed. Asserted at the top of this block
+    // too — repeated here deliberately, because these two claims are only
+    // meaningful as a pair and a future edit will read them together.
+    const exact = fixture('exempt-exact-control', {
+      privatePkgs: [DECLARED],
+      docs: { 'docs/adapters.md': `npx ${DECLARED} ./my-adapter\n` },
+    });
+    check(
+      '...while the exact exempt name is STILL suppressed — the exemption still works',
+      runGuard(exact).status === EXIT_OK,
+      runGuard(exact).out.trim(),
+    );
+
+    // THE OTHER DIRECTION OF THE SAME CHOICE. The name may end with `_` or `-`
+    // but NOT with a dot, because a sentence-ending period is the common
+    // neighbour of a package name in prose. Admitting a trailing dot would
+    // capture `<published>.` and report a package that does not exist — a
+    // noisy false accusation on a correct document, traded for the silent
+    // suppression above. This pins that trade.
+    // NOTE THE ABSENCE OF BACKTICKS, and it is the whole assertion. The first
+    // version of this fixture wrote ``npx <pkg>`.`` — the closing backtick sits
+    // between the name and the period, so the capture ended at the backtick and
+    // the period was never adjacent to the name. It passed under a pattern that
+    // DOES admit a trailing dot, which means it was pinning nothing. Caught by
+    // running the mutation rather than by reading the fixture.
+    const prose = fixture('prose-trailing-period', {
+      docs: { 'docs/guide.md': `Install it with npx ${PUBLISHED}.\n` },
+    });
+    check(
+      'a sentence-ending period after a PUBLISHED name is not read as part of it',
+      runGuard(prose).status === EXIT_OK,
+      runGuard(prose).out.trim(),
+    );
   }
 
   // --- stale exemptions are reported -----------------------------------------

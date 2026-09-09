@@ -13,9 +13,80 @@
  * release. So the wiring is asserted by READING the workflows, which is a
  * check that runs on every PR.
  *
- * Deliberately dependency-free: the `readiness` job runs without `npm ci` at
- * all, and a test that cannot run everywhere its subject runs is a test that
- * silently stops running.
+ * ## WHERE IT RUNS, and why one lane is the right answer (#750)
+ *
+ * It runs in `test-integrity` in `test.yml`, on every pull request. That is the
+ * whole of its wiring, and it is not a prose claim: `check-guards.test.mjs`'s
+ * #381 check asserts every guard script is named by a workflow step, over an
+ * exemption list that is currently EMPTY. Delete the step and that check fails
+ * BY NAME — verified by mutation rather than assumed.
+ *
+ * This header used to justify the dependency-free constraint by saying "a test
+ * that cannot run everywhere its subject runs is a test that silently stops
+ * running", which reads as a coverage claim the wiring does not deliver. The
+ * constraint stays; the reasoning was wrong, in a way worth writing down.
+ *
+ * ONE LANE IS SUFFICIENT BECAUSE THE SUBJECT IS LANE-INDEPENDENT. This test
+ * READS workflow files. For a given commit those bytes are the same in every
+ * job, so running it a second time somewhere else re-reads the same input and
+ * cannot reach a different verdict. Extra lanes would add executions, not
+ * coverage.
+ *
+ * AND WIRING IT INTO `readiness` WOULD NOT CATCH THE FAILURE THIS FILE EXISTS
+ * FOR — which is the argument that settles it. The failure is deleting
+ * `readiness` from `publish`'s `needs:`. Delete that word and:
+ *
+ *   - `readiness` STILL RUNS. It is gated on `if: github.event_name ==
+ *     'release'`, not on being needed by anything.
+ *   - so a wiring test living there would go red, correctly.
+ *   - and `publish` would publish anyway, because it no longer waits on
+ *     `readiness`.
+ *
+ * The backstop fails in exactly the case it exists for. And that word was the
+ * only thing ORDERING the two jobs, so once it is gone they run concurrently:
+ * the red need not even land beside the publish, it can arrive AFTER it, on a
+ * version already public. Nothing sequences them. `publish` is the one
+ * GitHub-hosted job here while `readiness` queues for the self-hosted pool, so
+ * that order is an ordinary schedule rather than a contrived one. Either way it
+ * is a red X on a release nothing actually refused — the overclaim
+ * `tag-readiness-advisory.yml` already rules against in the other direction.
+ *
+ * THE RESIDUAL, stated rather than implied: one lane cannot catch a workflow
+ * change that reaches the release ref WITHOUT passing the PR lane. Every path
+ * this repository uses goes through a pull request, so that is narrow.
+ *
+ * Two things this header does NOT get to say about it.
+ *
+ * FIRST, not "`readiness` could not block it either". Finding 1 proves
+ * `readiness` cannot block ONE failure — its own deletion from `publish`'s
+ * `needs:`, which is the case that severs the edge. The residual is a different
+ * scenario: some other workflow change arriving off the PR lane, with the edge
+ * INTACT. There a red `readiness` WOULD block `publish`, exactly as designed.
+ * Generalising finding 1 from the single case it proves to every case is a
+ * claim it does not support.
+ *
+ * SECOND, not "closing it would need a check that does not exist". One exists:
+ * `supply-chain`, in this same workflow file. It runs on `release` — its `if:`
+ * excludes only dependabot pull requests, and the comment above it says push
+ * and release must never be skipped by that condition — and `publish` NEEDS it.
+ * A wiring assertion hosted there would go red on the needs-deletion AND block
+ * the publish, covering finding 1's case and this residual together.
+ *
+ * It is not wired there, and that is a TRADE rather than an absence.
+ * `supply-chain` is the licence, NOTICE and SBOM job: every step in it is about
+ * what the product ships, and a red there is read as a compliance failure. A
+ * workflow-wiring assertion would be the one step that is about something else,
+ * making that job's red mean two unrelated things — paid for a path this
+ * repository does not use. If that stops being true, this is the lane, recorded
+ * here so the option is revisited rather than rediscovered.
+ *
+ * STILL DEPENDENCY-FREE, for the reason that is actually true rather than the
+ * one above: it keeps this file eligible for the install-less lanes, where its
+ * sibling `check-readiness-matrix.test.mjs` already runs inside `readiness`
+ * with no `npm ci`. If it is ever wired into such a job, `check-install-less-
+ * deps.mjs` (#743) enforces builtins-only automatically — so the constraint is
+ * machine-checked the moment it becomes load-bearing, and costs nothing while
+ * it is not.
  *
  * That reasoning is unchanged by PR #742, but the provenance sentence it used
  * to open with is: `js-yaml` was described here as "only hoisted into the root

@@ -105,8 +105,32 @@ const NAMED_EXPORTS_SCRIPT = `
   process.stdout.write(JSON.stringify(Object.keys(m).sort()));
 `;
 
-// The README's own example, transcribed. If this stops running, the documented
-// snippet is broken regardless of whether the subpath resolves.
+/**
+ * A RUNNABLE ADAPTATION of the README's policy example — not the example itself,
+ * and the name of the test below now says so (#710).
+ *
+ * WHY IT IS AN ADAPTATION AND NOT THE README'S TEXT. The documented snippet is
+ * illustrative prose, not a program: it writes `sources: [...]`, which is a
+ * literal ellipsis and a syntax error, and it calls `createMcpServer` and
+ * `openTelemetry` without importing either. There is no extraction that turns it
+ * into something Node can execute. Anything runnable has to supply scaffolding
+ * the README never wrote — and a test that runs invented scaffolding while
+ * claiming to run the README is the SAME defect one level up, which is what
+ * #710 caught here in the first place.
+ *
+ * WHAT TIES THE TWO TOGETHER INSTEAD. The test below derives, from the README,
+ * the two things this adaptation actually claims to share with it — the symbols
+ * imported from the core package, and the effect names handed to
+ * `confirmationForEffects` — and asserts the executed script uses exactly those.
+ * That is an equality on the load-bearing content rather than on formatting, so
+ * it survives a reflowed comment and still reddens when the documented API
+ * changes.
+ *
+ * The transcription defect this replaces: this constant was described as "the
+ * README's own example, transcribed", and the test that ran it was named as
+ * though the README were covered. Nothing compared the two, so the README could
+ * change and the test would keep passing against the old copy.
+ */
 const README_EXAMPLE_SCRIPT = `
   const { confirmationForEffects, authenticated, allOf } = await import(process.env.SUBPATH_SPEC);
   const policy = allOf([
@@ -116,6 +140,63 @@ const README_EXAMPLE_SCRIPT = `
   if (!policy || typeof policy !== 'object') throw new Error('allOf did not return a policy');
   process.stdout.write('BUILT ' + String(policy.id ?? ''));
 `;
+
+/**
+ * The README's policy example, located by the call that is UNIQUE to it (#710).
+ *
+ * Selected by content rather than by position. README.md carries two `ts` blocks
+ * that call `allOf(`, and "the first one" would silently follow whichever moved
+ * — a positional selector is the same fragility this issue is about. Only one
+ * block calls `confirmationForEffects(`, so that is the anchor, and finding any
+ * number of matches other than exactly one THROWS rather than picking. A
+ * selector that quietly resolves an ambiguity is how the wrong block gets tested
+ * for months.
+ */
+function readmePolicyExample(): string {
+  const readme = readFileSync(join(REPO_ROOT, 'README.md'), 'utf-8');
+  const blocks = [...readme.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1] as string);
+  const matching = blocks.filter((b) => /confirmationForEffects\s*\(/.test(b));
+  if (matching.length !== 1) {
+    throw new Error(
+      `expected exactly one README fenced block calling confirmationForEffects(), found ${String(matching.length)}`,
+    );
+  }
+  return matching[0] as string;
+}
+
+/**
+ * The symbols a snippet pulls out of the core package, however it pulls them.
+ *
+ * Matches the README's `import { … } from '@askturret/mcp-core'` and the
+ * script's `const { … } = await import(…)` with one pattern, because the
+ * QUESTION is which symbols are used — not which syntax fetched them. Sorted, so
+ * reordering the list in either place is not a failure.
+ */
+function coreSymbols(snippet: string): string[] {
+  const m = /(?:import|const)\s*\{([^}]*)\}/.exec(snippet);
+  if (!m) return [];
+  return (m[1] as string)
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .sort();
+}
+
+/**
+ * The effect names handed to `confirmationForEffects(...)`.
+ *
+ * Quote style is normalised away and the list is sorted: the documented VALUES
+ * are the claim, not how they were typed.
+ */
+function confirmationEffects(snippet: string): string[] {
+  const m = /confirmationForEffects\(\s*\[([^\]]*)\]/.exec(snippet);
+  if (!m) return [];
+  return (m[1] as string)
+    .split(',')
+    .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean)
+    .sort();
+}
 
 /** Every markdown file in the repo, excluding dependency and build output. */
 function markdownFiles(dir: string, found: string[] = []): string[] {
@@ -209,7 +290,32 @@ describe('documented subpath exports resolve', () => {
     expect(names).toEqual(expect.arrayContaining(['allOf', 'authenticated', 'confirmationForEffects']));
   });
 
-  it("runs the README's policy example against the resolved subpath", () => {
+  it("the executed script's symbols and effects are DERIVED from the README's example (#710)", () => {
+    // WHAT THIS PINS, and what it deliberately does not. It does not claim the
+    // README's block is executable — it is not (see README_EXAMPLE_SCRIPT). It
+    // pins the two things the adaptation genuinely shares with the documentation,
+    // so the two cannot drift apart in silence. Before this, the constant was
+    // labelled a transcription and the test below was named as though the README
+    // were covered, while nothing compared them at all.
+    const example = readmePolicyExample();
+
+    const documentedSymbols = coreSymbols(example);
+    const executedSymbols = coreSymbols(README_EXAMPLE_SCRIPT);
+
+    // GUARD THE GUARD. Both extractions returning [] would make the equality
+    // below vacuously true, which is the failure mode this file's other
+    // non-vacuity check already exists to refuse.
+    expect(documentedSymbols.length).toBeGreaterThan(0);
+    expect(executedSymbols.length).toBeGreaterThan(0);
+    expect(executedSymbols).toEqual(documentedSymbols);
+
+    const documentedEffects = confirmationEffects(example);
+    const executedEffects = confirmationEffects(README_EXAMPLE_SCRIPT);
+    expect(documentedEffects.length).toBeGreaterThan(0);
+    expect(executedEffects).toEqual(documentedEffects);
+  });
+
+  it('runs that adapted policy example against the resolved subpath', () => {
     const { stdout, stderr, status } = runInNode(README_EXAMPLE_SCRIPT, '@askturret/mcp/policies');
     expect(stderr).toBe('');
     expect(status).toBe(0);

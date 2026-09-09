@@ -87,7 +87,39 @@ const defaultEnforcement = () =>
   `runs ${NUMBER_WORD[LETTERS.length].toUpperCase()} checks: ${LETTERS.map((l) => `(${l}) a check`).join('; ')}.`;
 const defaultCheckTable = () => LETTERS.map((l) => `  | **${l}** | a check |`).join('\n');
 
-function fixture({ contract, md = '', lock = { packages: {} }, packages = {}, rootManifest = {} }) {
+// Check J's equivalent of the two above, and for the same reason: without it,
+// every fixture that does not care about the status vocabulary reports
+// cannot-check, and 13 cases about something else go red. Measured, not
+// predicted — that is exactly what happened on the first run.
+//
+// The legend and the section are generated from ONE list, so the completed pair
+// always agrees. A fixture completion that fails its own guard would be a trap
+// rather than a convenience.
+const DEFAULT_STATUSES = ['supported', 'unsupported'];
+const defaultStatusLegend = () => Object.fromEntries(DEFAULT_STATUSES.map((s) => [s, 'a status']));
+const defaultVocabulary = () =>
+  [
+    '',
+    '## Status vocabulary',
+    '',
+    '| Status | Meaning |',
+    '|---|---|',
+    ...DEFAULT_STATUSES.map((s) => `| **${s}** | a status |`),
+    '',
+  ].join('\n');
+
+// `completeVocabulary: false` is the opt-out a case needs when the ABSENCE of
+// the vocabulary section is the thing under test. Without it the completion
+// above helpfully adds the section back and the case measures the opposite of
+// what it says — which it did, on the first run.
+function fixture({
+  contract,
+  md = '',
+  lock = { packages: {} },
+  packages = {},
+  rootManifest = {},
+  completeVocabulary = true,
+}) {
   const dir = mkdtempSync(join(tmpdir(), 'compat-contract-'));
   tmpDirs.push(dir);
   mkdirSync(join(dir, 'docs'), { recursive: true });
@@ -96,9 +128,15 @@ function fixture({ contract, md = '', lock = { packages: {} }, packages = {}, ro
     contract && typeof contract === 'object' && contract.contract === undefined
       ? { ...contract, contract: { enforcement: defaultEnforcement() } }
       : contract;
+  const withLegend =
+    withEnforcement && typeof withEnforcement === 'object' && withEnforcement.statusLegend === undefined
+      ? { ...withEnforcement, statusLegend: defaultStatusLegend() }
+      : withEnforcement;
   const withTable = md.includes('| **') ? md : `${md}\n${defaultCheckTable()}\n`;
-  writeFileSync(join(dir, 'docs', 'compatibility.json'), JSON.stringify(withEnforcement, null, 2));
-  writeFileSync(join(dir, 'docs', 'compatibility.md'), withTable);
+  const withVocabulary =
+    !completeVocabulary || withTable.includes('## Status vocabulary') ? withTable : `${withTable}${defaultVocabulary()}`;
+  writeFileSync(join(dir, 'docs', 'compatibility.json'), JSON.stringify(withLegend, null, 2));
+  writeFileSync(join(dir, 'docs', 'compatibility.md'), withVocabulary);
   writeFileSync(join(dir, 'package-lock.json'), JSON.stringify(lock, null, 2));
   // `rootManifest` lets an adapter fixture supply the peer range its `source`
   // points at — without it check B reports cannot-check and the row-level
@@ -743,6 +781,98 @@ const run = (dir) => silently(() => main(['node', 'guard', dir]));
   // cannot quietly become false.
   const rReworded = run(withEnforcement(`runs ${word} checks: ${LETTERS.map((l) => `(${l}) something entirely different and wrong`).join('; ')}.`));
   check('BOUND: rewording what a check MEANS does not fire — descriptions are unchecked', rReworded.code, EXIT_OK);
+}
+
+// ---------------------------------------------------------------------------
+// J — ONE STATUS VOCABULARY (#775)
+//
+// The real divergence, reproduced: `statusLegend` defined five statuses and the
+// .md's vocabulary table listed four, with `deprecated` in one copy only. Both
+// directions are asserted, because a check that only notices a SHORT .md would
+// miss a status invented in the .md and never defined.
+// ---------------------------------------------------------------------------
+{
+  // The check table is supplied EXPLICITLY. The fixture helper appends it only
+  // when the md carries no `| **`, and a vocabulary row like
+  // `| ✅ **Supported** |` satisfies that test — so without this, check I sees
+  // no check table, reports cannot-check, and every case below returns 2
+  // instead of the code it is asserting. Measured: that is exactly what the
+  // first run of these cases did.
+  // The md must ALSO carry the check table and the declared value, and the
+  // contract a `declared` entry — otherwise check I and the contract-walk
+  // guard-the-guard report cannot-check and every case here returns 2 rather
+  // than the code it asserts. Measured: that is what the first run did, twice.
+  const jBase = { runtime: { node: { declared: '>=20.0.0', source: 'package.json#engines.node' } } };
+  const vocab = (rows) =>
+    ['>=20.0.0', defaultCheckTable(), '', '## Status vocabulary', '', '| Status | Meaning |', '|---|---|', ...rows, ''].join(
+      '\n',
+    );
+
+  // The legend and the table are supplied EXPLICITLY here, so these cases drive
+  // check J rather than the fixture completion above.
+  const withVocab = (legend, rows) =>
+    fixture({ contract: { ...jBase, statusLegend: legend }, md: vocab(rows) });
+
+  const bothWays = { supported: 'a status', deprecated: 'a status' };
+
+  const rShort = run(withVocab(bothWays, ['| ✅ **Supported** | a status |']));
+  check('a legend status missing from the .md table -> exit 1', rShort.code, EXIT_DIVERGENCE);
+  check(
+    '...and NAMES the status that is missing',
+    rShort.out.includes('omits deprecated'),
+    true,
+  );
+
+  const rExtra = run(
+    withVocab({ supported: 'a status' }, ['| ✅ **Supported** | a status |', '| 🧪 **Experimental** | a status |']),
+  );
+  check('a .md status the legend does not define -> exit 1', rExtra.code, EXIT_DIVERGENCE);
+  check('...and NAMES the undefined status', rExtra.out.includes('lists experimental'), true);
+
+  // THE POSITIVE CONTROL. Without it both cases above are satisfied by a check
+  // that always fires — which would make every correct vocabulary a failure.
+  const rOk = run(
+    withVocab(bothWays, ['| ✅ **Supported** | a status |', '| ⏳ **Deprecated** | a status |']),
+  );
+  check('a vocabulary matching the legend -> exit 0', rOk.code, EXIT_OK);
+
+  // THE BOUND, MADE EXECUTABLE. J compares NAMES, never descriptions — the two
+  // documents are different registers by design, and check E's own reasoning
+  // records that zero legend values appear verbatim in the .md. Asserted so the
+  // claim cannot quietly become false.
+  const rReworded = run(
+    withVocab(bothWays, [
+      '| ✅ **Supported** | wording that matches the legend nowhere at all |',
+      '| ⏳ **Deprecated** | likewise entirely different prose |',
+    ]),
+  );
+  check('BOUND: differing DESCRIPTIONS do not fire — only the name set is compared', rReworded.code, EXIT_OK);
+
+  // CANNOT-CHECK, NOT A PASS. Both halves can go missing, and neither may be
+  // reported as agreement.
+  const rNoLegend = run(fixture({ contract: { ...jBase, statusLegend: {} }, md: vocab(['| ✅ **Supported** | a status |']) }));
+  check('a contract with an empty statusLegend -> cannot check, never 0', rNoLegend.code, EXIT_CANNOT_CHECK);
+
+  const rNoSection = run(
+    fixture({
+      contract: { ...jBase, statusLegend: bothWays },
+      md: `>=20.0.0\n${defaultCheckTable()}\n\n## Something Else\n\ntext\n`,
+      completeVocabulary: false,
+    }),
+  );
+  check('a .md with no Status vocabulary section -> cannot check, never 0', rNoSection.code, EXIT_CANNOT_CHECK);
+
+  // REGRESSION: the section is the LAST thing in the file. An earlier version of
+  // this check required a following `## ` heading to terminate the section, so a
+  // vocabulary at end-of-input matched nothing and reported cannot-check on a
+  // correct document. Found by this suite, pinned here.
+  const rAtEof = run(
+    fixture({
+      contract: { ...jBase, statusLegend: { supported: 'a status' } },
+      md: `>=20.0.0\n${defaultCheckTable()}\n\n## Status vocabulary\n\n| Status | Meaning |\n|---|---|\n| ✅ **Supported** | a status |`,
+    }),
+  );
+  check('a vocabulary section at END OF FILE is still found -> exit 0', rAtEof.code, EXIT_OK);
 }
 
 for (const dir of tmpDirs) rmSync(dir, { recursive: true, force: true });

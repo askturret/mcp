@@ -807,6 +807,25 @@ jobs:
       - name: Every workflow file is loadable YAML
         run: node .github/scripts/check-workflows-parse.mjs
 
+      # #721 — the CONVERSE of the per-leg express check, and it has to live
+      # here rather than in the matrix job.
+      #
+      # The per-leg check runs inside `test-adapters-express` and asserts that
+      # the major a leg INSTALLED is one the adapter declares. A leg knows only
+      # its own major, so it cannot ask whether every DECLARED major has a leg —
+      # that is a statement about the whole matrix. Widening the peer range and
+      # adding no leg leaves every existing check green while the new major is
+      # advertised to consumers and executed by nothing.
+      #
+      # Running it HERE also makes it UNFILTERED: `test-adapters-express` is
+      # gated on a path filter, and this invariant should hold on every PR.
+      # It reads the matrix with js-yaml rather than becoming a third
+      # hand-rolled reader of this file (#698); this job runs `npm ci`, so the
+      # parser is present, and the guard exits 2 rather than passing if it ever
+      # is not.
+      - name: Every declared Express major has a matrix leg
+        run: node .github/scripts/check-express-resolution.mjs --matrix .
+
       # #743: a script that runs in a job with no `npm ci` has no node_modules,
       # so one bare import is a crash on a line that looks fine in review. Which
       # scripts those are was documented as a hand-maintained count in four

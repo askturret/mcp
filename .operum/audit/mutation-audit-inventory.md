@@ -21,16 +21,19 @@ which `env: node` fails in child processes — several guards then go
 precondition for reproducing anything below. Re-run with a sane `PATH` before
 treating a difference as a real change.
 
-- measured guards: **26**
-- failure sites: **172**
-- witnessed: **124**
-- unwitnessed: **48**
+- measured guards: **41**
+- failure sites: **204**
+- witnessed: **182**
+- unwitnessed: **21**
 - unreachable (no self-test, #431): **0** sites across 0 scripts
 - cannot check (non-green baseline): **0** scripts
 - cannot check, as sites: **0**
-- exemptions on the ledger (#532): **0** — 48 unwitnessed site(s) carry no entry
+- not mutatable (ledger-gated, #558): **1**
+- unparseable mutation: **0**
+- mutation did not terminate: **0**
+- exemptions on the ledger (#532): **3** — 19 unwitnessed site(s) carry no entry
 
-`witnessed + unwitnessed + cannot-check sites = failure sites`. The site-level
+`witnessed + unwitnessed + not-mutatable + unparseable + did-not-terminate + cannot-check sites = failure sites`. The site-level
 figure is what closes that identity, and it is what makes a fall in `witnessed`
 legible as a change of CATEGORY rather than a loss of coverage (#438).
 
@@ -41,7 +44,14 @@ previous run. Two runs of the same code in different environments legitimately
 differ — see caveat 2 — so a delta between a local run and a CI one would report
 movement that is an artifact of where it ran. This says which it compared.
 
-**No headline figure moved** since the previous revision.
+| figure | before | after | change |
+|---|---|---|---|
+| failure sites | 172 | 204 | **+32** |
+| witnessed | 124 | 182 | **+58** |
+| unwitnessed | 48 | 21 | **-27** |
+| measured guards | 26 | 41 | **+15** |
+
+**The measured population changed**, so the movement above is not only a change of category.
 
 The first recorded movement predates this section and is kept so that it is not
 the undocumented one: **witnessed 73 -> 74** between `8bc9641` and `f2d0fda`.
@@ -53,31 +63,46 @@ line-number diff, which is why this section exists.
 | script | sites | witnessed | unwitnessed | status |
 |---|---|---|---|---|
 | `check-adr-citations.mjs` | 3 | 3 | 0 | measured |
-| `check-audit-append-only.mjs` | 5 | 4 | 1 | measured |
-| `check-codeowners.mjs` | 5 | 4 | 1 | measured |
-| `check-concealment-captures.mjs` | 18 | 16 | 2 | measured |
-| `check-concealment-templates.mjs` | 42 | 27 | 15 | measured |
+| `check-audit-append-only.mjs` | 5 | 5 | 0 | measured |
+| `check-codeowners.mjs` | 5 | 5 | 0 | measured |
+| `check-compatibility-contract.mjs` | 1 | 0 | 1 | measured |
+| `check-concealment-captures.mjs` | 19 | 17 | 2 | measured |
+| `check-concealment-templates.mjs` | 42 | 40 | 1 | measured |
 | `check-dashboard-metrics.mjs` | 12 | 7 | 5 | measured |
-| `check-doc-types.mjs` | 3 | 2 | 1 | measured |
+| `check-doc-surfaces.mjs` | 1 | 1 | 0 | measured |
+| `check-doc-types.mjs` | 3 | 3 | 0 | measured |
+| `check-express-resolution.mjs` | 3 | 3 | 0 | measured |
+| `check-install-less-deps.mjs` | 1 | 1 | 0 | measured |
 | `check-jest-flag-forwarding.mjs` | 1 | 1 | 0 | measured |
-| `check-licenses.mjs` | 4 | 0 | 4 | measured |
+| `check-label-dependence.mjs` | 1 | 1 | 0 | measured |
+| `check-licenses.mjs` | 4 | 4 | 0 | measured |
 | `check-markdown-links.mjs` | 2 | 2 | 0 | measured |
 | `check-metric-cardinality.mjs` | 5 | 5 | 0 | measured |
-| `check-mutation-audit.mjs` | 17 | 11 | 6 | measured |
+| `check-mutation-audit.mjs` | 18 | 12 | 6 | measured |
 | `check-network-imports.mjs` | 5 | 5 | 0 | measured |
+| `check-npx-invocations.mjs` | 1 | 1 | 0 | measured |
 | `check-nul-bytes.mjs` | 5 | 5 | 0 | measured |
 | `check-path-filters.mjs` | 2 | 2 | 0 | measured |
 | `check-placeholder-tests.mjs` | 4 | 4 | 0 | measured |
+| `check-platform-claims.mjs` | 7 | 7 | 0 | measured |
 | `check-readiness-matrix.mjs` | 4 | 4 | 0 | measured |
+| `check-readme-imports.mjs` | 1 | 1 | 0 | measured |
+| `check-release-registry-reconcile.mjs` | 1 | 0 | 1 | measured |
 | `check-runners.mjs` | 3 | 3 | 0 | measured |
 | `check-runtime-marker-ignored.mjs` | 2 | 2 | 0 | measured |
-| `check-sdk-boundary.mjs` | 3 | 2 | 1 | measured |
+| `check-sdk-boundary.mjs` | 3 | 3 | 0 | measured |
+| `check-tarball-compliance.mjs` | 3 | 3 | 0 | measured |
 | `check-test-execution.mjs` | 3 | 3 | 0 | measured |
+| `check-version-literals.mjs` | 1 | 1 | 0 | measured |
+| `check-workflows-parse.mjs` | 1 | 1 | 0 | measured |
 | `check-workspace-artifacts.mjs` | 1 | 1 | 0 | measured |
-| `ci-coverage-status.mjs` | 7 | 6 | 1 | measured |
+| `ci-coverage-status.mjs` | 7 | 7 | 0 | measured |
+| `ci-throughput-metric.mjs` | 1 | 1 | 0 | measured |
 | `generate-notice.mjs` | 3 | 3 | 0 | measured |
-| `generate-sbom.mjs` | 5 | 1 | 4 | measured |
-| `sdk-upgrade-drill.mjs` | 8 | 1 | 7 | measured |
+| `generate-sbom.mjs` | 5 | 5 | 0 | measured |
+| `nightly-integrated-tree.mjs` | 5 | 3 | 2 | measured |
+| `notify-nightly-status.mjs` | 2 | 0 | 2 | measured |
+| `sdk-upgrade-drill.mjs` | 8 | 7 | 1 | measured |
 
 ## Unwitnessed sites
 
@@ -85,54 +110,27 @@ Neutralising these changed nothing their self-test could see.
 
 | script | line | kind |
 |---|---|---|
-| `check-audit-append-only.mjs` | 165 | result-code |
-| `check-codeowners.mjs` | 255 | process-exit |
-| `check-concealment-captures.mjs` | 651 | errors-push |
-| `check-concealment-captures.mjs` | 855 | errors-push |
+| `check-compatibility-contract.mjs` | 819 | process-exit |
+| `check-concealment-captures.mjs` | 797 | errors-push |
+| `check-concealment-captures.mjs` | 1003 | errors-push |
 | `check-concealment-templates.mjs` | 208 | throw |
-| `check-concealment-templates.mjs` | 218 | throw |
-| `check-concealment-templates.mjs` | 232 | throw |
-| `check-concealment-templates.mjs` | 238 | throw |
-| `check-concealment-templates.mjs` | 249 | throw |
-| `check-concealment-templates.mjs` | 275 | throw |
-| `check-concealment-templates.mjs` | 285 | throw |
-| `check-concealment-templates.mjs` | 287 | throw |
-| `check-concealment-templates.mjs` | 293 | throw |
-| `check-concealment-templates.mjs` | 303 | throw |
-| `check-concealment-templates.mjs` | 599 | errors-push |
-| `check-concealment-templates.mjs` | 606 | errors-push |
-| `check-concealment-templates.mjs` | 611 | errors-push |
-| `check-concealment-templates.mjs` | 616 | errors-push |
-| `check-concealment-templates.mjs` | 695 | errors-push |
 | `check-dashboard-metrics.mjs` | 75 | throw |
 | `check-dashboard-metrics.mjs` | 84 | throw |
 | `check-dashboard-metrics.mjs` | 122 | throw |
 | `check-dashboard-metrics.mjs` | 212 | throw |
 | `check-dashboard-metrics.mjs` | 421 | process-exit |
-| `check-doc-types.mjs` | 434 | process-exit |
-| `check-licenses.mjs` | 105 | process-exit |
-| `check-licenses.mjs` | 110 | process-exit |
-| `check-licenses.mjs` | 145 | process-exit |
-| `check-licenses.mjs` | 183 | process-exit |
-| `check-mutation-audit.mjs` | 320 | errors-push |
-| `check-mutation-audit.mjs` | 715 | throw |
-| `check-mutation-audit.mjs` | 1081 | errors-push |
-| `check-mutation-audit.mjs` | 1117 | errors-push |
-| `check-mutation-audit.mjs` | 1153 | return-code |
-| `check-mutation-audit.mjs` | 1166 | process-exit |
-| `check-sdk-boundary.mjs` | 215 | process-exit |
-| `ci-coverage-status.mjs` | 74 | errors-push |
-| `generate-sbom.mjs` | 109 | process-exit |
-| `generate-sbom.mjs` | 117 | process-exit |
-| `generate-sbom.mjs` | 124 | process-exit |
-| `generate-sbom.mjs` | 132 | process-exit |
-| `sdk-upgrade-drill.mjs` | 158 | result-code |
-| `sdk-upgrade-drill.mjs` | 169 | result-code |
+| `check-mutation-audit.mjs` | 475 | errors-push |
+| `check-mutation-audit.mjs` | 1220 | throw |
+| `check-mutation-audit.mjs` | 1749 | errors-push |
+| `check-mutation-audit.mjs` | 1797 | errors-push |
+| `check-mutation-audit.mjs` | 1833 | return-code |
+| `check-mutation-audit.mjs` | 1845 | process-exit |
+| `check-release-registry-reconcile.mjs` | 384 | process-exit |
+| `nightly-integrated-tree.mjs` | 362 | process-exit |
+| `nightly-integrated-tree.mjs` | 382 | throw |
+| `notify-nightly-status.mjs` | 235 | throw |
+| `notify-nightly-status.mjs` | 360 | process-exit |
 | `sdk-upgrade-drill.mjs` | 191 | process-exit |
-| `sdk-upgrade-drill.mjs` | 204 | result-code |
-| `sdk-upgrade-drill.mjs` | 225 | result-code |
-| `sdk-upgrade-drill.mjs` | 238 | result-code |
-| `sdk-upgrade-drill.mjs` | 283 | process-exit |
 
 ## Self-tests that observe no failure at all
 
@@ -141,7 +139,9 @@ nothing in it depends on the guard failing. This is the aggregate of "every
 site here is unwitnessed", reported rather than failed, because it is the
 measurement and not an integrity fault.
 
-- `check-licenses.mjs`
+- `check-compatibility-contract.mjs`
+- `check-release-registry-reconcile.mjs`
+- `notify-nightly-status.mjs`
 
 ---
 *Operum Engineer · [operum.ai](https://operum.ai)*

@@ -1690,11 +1690,14 @@ process.exit(0);
 // ---------------------------------------------------------------------------
 // THE PARTITION MUST CLOSE, AND MUST NAME WHAT ESCAPES IT (#651)
 //
-// The partition summed witnessed + unwitnessed + cannot-check sites. `auditGuard`
-// emits FIVE verdicts, so `not-mutatable`, `unparseable` and `did-not-terminate`
-// fell through it. Only the first occurs today, at exactly one ledger-gated site
-// (#558) — which is why the gap read as an off-by-one for three days rather than
-// as a missing class of three.
+// The partition summed only three of the buckets:
+//
+//   witnessed + unwitnessed + cannot-check sites  partition-identity-exempt: the superseded form, quoted as history
+//
+// `auditGuard` emits FIVE verdicts, so `not-mutatable`, `unparseable` and
+// `did-not-terminate` fell through it. Only the first occurs today, at exactly
+// one ledger-gated site (#558) — which is why the gap read as an off-by-one for
+// three days rather than as a missing class of three.
 //
 // The check now NAMES the sites. Reporting only that a sum is wrong hands the
 // next reader the whole search, which is exactly what it cost here.
@@ -1772,11 +1775,14 @@ process.exit(0);
   // THE PRINTED IDENTITY MUST NAME EVERY BUCKET THE CODE SUMS (#651)
   //
   // Adding the three missing buckets closed the arithmetic and left the
-  // inventory still printing `witnessed + unwitnessed + cannot-check sites =
-  // failure sites` — directly beneath totals reading 167 + 17 + 0 against 185.
-  // The sum was fixed; the artifact went on asserting the identity the sum had
-  // just abandoned. That is #651 one level up, and it is how the first one
-  // survived three days: the document and the code each looked right alone.
+  // inventory still printing the superseded sentence:
+  //
+  //   `witnessed + unwitnessed + cannot-check sites = failure sites`  partition-identity-exempt: the superseded form, quoted as history
+  //
+  // ...directly beneath totals reading 167 + 17 + 0 against 185. The sum was
+  // fixed; the artifact went on asserting the identity the sum had just
+  // abandoned. That is #651 one level up, and it is how the first one survived
+  // three days: the document and the code each looked right alone.
   //
   // MEMBERSHIP, not a fixed sentence. Pinning the expected string would pass
   // whatever the code sums, which is the failure being guarded — the identity
@@ -1794,10 +1800,22 @@ process.exit(0);
   const doc = rendered(TOTALS);
   check('identity: the rendered inventory prints that identity', doc.includes(partitionIdentity()), true);
   // CONTROL: the superseded three-term sentence is genuinely gone from the
-  // artifact, not merely joined by a longer one elsewhere in the document.
+  // RENDER, not merely joined by a longer one elsewhere in the document.
+  //
+  // SCOPE, stated because it was read wider than it is (#664): `doc` is
+  // `rendered(TOTALS)` — a FRESH render, so this pins what the generator EMITS.
+  // It does NOT pin the committed inventory, and the two genuinely diverged: this
+  // assertion was true and green for the whole period in which the committed
+  // file carried the superseded sentence in the present tense. A check whose
+  // subject is not the artifact that lands is its own defect class — #741 is
+  // writing it up; the ADR number is deliberately not cited here because the
+  // record is not on `main` yet.
+  //
+  // The committed file is asserted in `check-guards.test.mjs`'s #664 block,
+  // which opens it from disk. Neither check subsumes the other — keep both.
   check(
     'identity: CONTROL — the superseded three-term sentence is absent',
-    doc.includes('`witnessed + unwitnessed + cannot-check sites = failure sites`'),
+    doc.includes('`witnessed + unwitnessed + cannot-check sites = failure sites`'), // partition-identity-exempt: the superseded form, asserted ABSENT
     false,
   );
 }

@@ -174,6 +174,7 @@
  */
 
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { isProcessEntryPoint } from './lib/entry-point.mjs';
@@ -513,6 +514,8 @@ export function main(argv, runner = defaultPackRunner) {
   const cannotCheck = [];
   const manifestIssues = [];
   const readmeIssues = [];
+  /** Each package's shipped README, for the cross-package distinctness check (#826). */
+  const readmeByPackage = new Map();
 
   // Checked BEFORE the per-package work, and independently of it: the root is
   // not one of the discovered packages — it is the one that must never become
@@ -680,6 +683,7 @@ export function main(argv, runner = defaultPackRunner) {
         );
       }
       if (readme !== undefined) {
+        readmeByPackage.set(pkg.name, readme);
         for (const target of findRelativeLinks(readme)) {
           readmeIssues.push(
             `${pkg.name}: README links to "${target}", a repository-relative path that resolves to nothing on the npm page`,
@@ -687,6 +691,44 @@ export function main(argv, runner = defaultPackRunner) {
         }
       }
     }
+  }
+
+  // NO TWO PACKAGES MAY SHIP THE SAME README (#826)
+  //
+  // A THIRD narrow property, in the spirit of the two above — still not
+  // "useful", which this guard says plainly it cannot check. What it CAN check
+  // is that nine pages are not one page repeated, and they were: six of the
+  // nine shipped a README byte-identical once the package name was stripped —
+  // a title, "part of the AskTurret MCP project", and a link away. Every
+  // tarball passed presence, passed the link rule, and the npm page for the
+  // flagship package still read as three lines of nothing.
+  //
+  // DISTINCTNESS IS NOT QUALITY, and a green here is NOT an endorsement. Six
+  // genuinely different bad READMEs would satisfy it completely. It refuses one
+  // specific regression — the copy-paste that has already happened once — and
+  // claims nothing beyond that.
+  //
+  // NOT A LENGTH THRESHOLD. A byte count is the tally trap ADR-024 names: it
+  // would pass a 400-byte README that is wrong about the package, and it would
+  // need re-tuning every time a document legitimately shrank.
+  //
+  // The comparison DERIVES from the tree rather than listing known-bad text, so
+  // it cannot go stale the way an allowlist does. The package name is
+  // normalised out precisely so that one template filled in with nine different
+  // names still collides.
+  const byNormalised = new Map();
+  for (const [name, text] of readmeByPackage) {
+    const digest = createHash('sha256').update(text.split(name).join('<PACKAGE>')).digest('hex');
+    if (!byNormalised.has(digest)) byNormalised.set(digest, []);
+    byNormalised.get(digest).push(name);
+  }
+  for (const group of byNormalised.values()) {
+    if (group.length < 2) continue;
+    readmeIssues.push(
+      `${group.join(', ')}: these READMEs are byte-identical once the package name is normalised out. ` +
+        'Each npm page is the only page most readers of that package will ever see, so a shared one ' +
+        'answers a question they did not ask. Distinctness is asserted here; usefulness is not, and cannot be.',
+    );
   }
 
   const checked = packages.length - cannotCheck.length;

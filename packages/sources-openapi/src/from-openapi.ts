@@ -157,9 +157,18 @@ export function fromOpenApi(
         // error, still no exception — only now a distinct one.
         // WHICH DOCUMENTS ACTUALLY REACH HERE — measured, not assumed (#628).
         // `SwaggerParser.dereference` above rejects most unsupported versions
-        // itself, throwing before this check ever runs: `openapi: "2.0.0"`,
-        // a bare `"3.0"` or `"3.1"`, `"3.2.0"`, `"4.0.0"` and a document with no
-        // `openapi` field all fail inside the parser and land in the catch.
+        // itself, throwing before this check ever runs. An `openapi` field of
+        // 2.0.0, of a bare 3.0 or 3.1, of 3.2.0 or 4.0.0, and a document
+        // carrying no `openapi` field at all, every one of them fails inside
+        // the parser and lands in the catch.
+        //
+        // Those versions are deliberately written UNQUOTED. Quoting a
+        // three-component version anywhere under packages/<pkg>/src — comment
+        // prose included — makes check-version-literals demand it be declared
+        // in .github/version-literals.json as mirroring some manifest. These
+        // are example inputs, not a version this package publishes, so the
+        // registry is the wrong home for them and dropping the quotes is the
+        // honest fix rather than a silenced entry.
         //
         // The case that DOES arrive here is a genuine Swagger 2.0 document in
         // its native form — `swagger: "2.0"` and no `openapi` field. The parser

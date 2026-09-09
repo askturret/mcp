@@ -295,17 +295,33 @@ export function fromOpenApi(
         // inferred a throw and wrote `rejects.toThrow()`, which failed — the
         // cheap version of the same mistake.
         //
-        // THAT GAP IS NOW CLOSED, and note WHERE it was closed (#628). A version
-        // refusal used to arrive here and log 'OpenAPI discovery failed',
-        // differing from a genuine fault only in error.message — which
-        // compatibility-policy.md forbids parsing. The fix was not made in this
-        // catch: the refusal now returns above under its own event, so it never
-        // reaches here at all.
+        // #628 NARROWED THAT GAP, AND THE REMAINDER IS NAMED RATHER THAN
+        // IMPLIED. A version refusal RAISED BY OUR OWN CHECK used to arrive
+        // here and log 'OpenAPI discovery failed', differing from a genuine
+        // fault only in error.message — which compatibility-policy.md forbids
+        // parsing. That one returns above under its own event now, so it never
+        // reaches this catch.
         //
-        // The consequence is what this catch MEANS. Everything arriving here is
-        // now genuinely unexpected, so 'OpenAPI discovery failed' says exactly
-        // that and nothing else. Do not route an expected outcome back through
-        // it — handle it where it is known, as the version check does.
+        // WHAT STILL DOES, and is an expected outcome wearing this event: the
+        // version refusals the PARSER makes before our check ever runs — an
+        // `openapi` field of 2.0.0, of a bare 3.0 or 3.1, of 3.2.0 or 4.0.0,
+        // and a document carrying no `openapi` field at all, per the
+        // measurement recorded at the version check above. For those inputs
+        // 'OpenAPI discovery failed' still means either "we decline this
+        // document" or "something broke", exactly as it did before.
+        //
+        // SO DO NOT READ THIS CATCH AS "everything here is a defect". An
+        // earlier draft of this comment said exactly that, and it was false by
+        // this file's own measurement 140 lines above. QA caught it before the
+        // PR landed. That sentence did NORMATIVE work — it would have sent the
+        // next person debugging a 4.0.0 refusal hunting a bug that does not
+        // exist, which costs more than a wrong number does.
+        //
+        // Closing the remainder would mean classifying the parser's own
+        // rejection, which is a different change from this one. The narrower
+        // claim is the one that holds: nothing WE refuse routes back through
+        // here any more. Do not route a refusal of ours into it again — handle
+        // it where the cause is known, as the version check does.
         return [];
       }
     },

@@ -2048,11 +2048,56 @@ export function spawningScripts(scriptsDir) {
   const out = [];
   for (const f of readdirSync(scriptsDir).filter((n) => n.endsWith('.mjs') && !n.endsWith('.test.mjs')).sort()) {
     const code = strip(readFileSync(join(scriptsDir, f), 'utf-8'));
-    if (!/\b(spawnSync|execFileSync|execSync)\s*\(|\bspawn\s*\(/.test(code)) continue;
+
+    // TWO WAYS A SCRIPT SPAWNS, and the second was invisible here (#661).
+    //
+    // Directly — `spawnSync('npm', ...)` — or INJECTED: the spawner is taken as
+    // a default parameter and called through that name. `check-readme-imports`
+    // is the second shape (`run = spawnSync`, then `run('npm', ...)`), and a
+    // literal-call test does not see it.
+    //
+    // IT THEREFORE ENTERED NO POPULATION AT ALL. It was not probed, and it was
+    // not reported undeclared either — because "every unprobeable script is
+    // declared" can only speak for the scripts this deriver RETURNS. A stale
+    // declaration is caught; a script missing from the derivation is silent by
+    // construction. That is why the derivation is widened here rather than an
+    // entry simply being added below: adding an entry would have recorded the
+    // symptom while leaving the next injected spawner just as invisible.
+    const injected = [
+      ...new Set(
+        [...code.matchAll(/([A-Za-z_$][\w$]*)\s*=\s*(?:spawnSync|execFileSync|execSync)\b/g)].map((m) => m[1]),
+      ),
+    ];
+    const spawnsDirectly = /\b(spawnSync|execFileSync|execSync)\s*\(|\bspawn\s*\(/.test(code);
+    if (!spawnsDirectly && injected.length === 0) continue;
+
     // A bare name resolves through PATH, so an unresolvable PATH reaches the
     // never-started branch. `process.execPath` is absolute and always resolves,
     // so no PATH manipulation can reach it — a real limit, declared below.
-    const byName = /\b(?:spawnSync|execFileSync|spawn)\s*\(\s*'[^']+'/.test(code);
+    //
+    // INJECTED CALL SITES COUNT TOO, and only with a LITERAL first argument.
+    // `run('npm', ...)` resolves through PATH exactly as `spawnSync('npm', ...)`
+    // does, so the distinction was never the spawner's NAME — it is whether the
+    // command is a literal that PATH must resolve.
+    //
+    // The literal requirement is what keeps the #435 protection intact:
+    // `check-mutation-audit`'s injected call passes `process.execPath`, which is
+    // not a quoted literal, so it stays unprobeable and its 330-second
+    // guard-mutating run is still never triggered by this suite.
+    //
+    // AN EARLIER REVISION OF THIS COMMENT DECLINED THE WIDENING, on the ground
+    // that probing `check-readme-imports` would run its clean-room `npm pack`
+    // for real because it ALSO spawns `process.execPath`. That reasoning was
+    // wrong, and the refutation is measurable in under a tenth of a second: run
+    // it under the probe's conditions and it exits 2, reached, uncrashed, in
+    // ~75ms. It bails at the FIRST spawn — `run('npm', ...)` cannot resolve, the
+    // clean room is never built, and the `process.execPath` calls downstream of
+    // that build are never reached. Same ingredients as #435, opposite
+    // consequence: there `execPath` is the primary action, here it is GATED
+    // behind a step that needs npm.
+    const byName = ['spawnSync', 'execFileSync', 'spawn', ...injected].some((fn) =>
+      new RegExp(`\\b${fn}\\s*\\(\\s*'[^']+'`).test(code),
+    );
     out.push({ name: f, byName });
   }
   return out;
@@ -2099,6 +2144,36 @@ const PROBE_UNREACHABLE = Object.freeze({
   'sdk-upgrade-drill.mjs':
     'spawns process.execPath, same as above. It is the reference implementation of didNotStart, and its ' +
     'classifier is exercised directly — including against a genuinely SIGKILLed child — in its own self-test.',
+  // check-readme-imports.mjs WAS BRIEFLY DECLARED HERE and never should have
+  // been (#661). The record is kept for the same reason check-path-filters'
+  // is, below: the way it was wrong is instructive.
+  //
+  // It claimed the script was PATH-reachable but UNSAFE to probe, because it
+  // also spawns `process.execPath` and the probe would therefore run its
+  // clean-room `npm pack` for real — citing #435, where exactly that had to be
+  // killed after 330 seconds.
+  //
+  // THE HAZARD DOES NOT EXIST, and disproving it takes under a tenth of a
+  // second. Run under the probe's own conditions the script exits 2, reached,
+  // uncrashed, in ~75ms: it bails at the FIRST spawn, `run('npm', ...)`, so the
+  // clean room is never built and the `execPath` calls DOWNSTREAM of that build
+  // are never reached. #435's precedent does not transfer, and the reason is
+  // the discrimination the entry missed — there `execPath` is the PRIMARY
+  // action, so a broken PATH cannot stop it; here the `execPath` spawns are
+  // GATED behind a step that requires npm. Same ingredients, opposite
+  // consequence.
+  //
+  // So the remedy was never a declaration: it was widening `byName` to injected
+  // call sites with a literal first argument, which is what the deriver above
+  // now does. The script is probed like any other, and the ledger carries one
+  // fewer claim.
+  //
+  // WORTH KEEPING BECAUSE THE HEADER ALREADY SAID SO. This ledger's own
+  // instruction — "QA caught it by RUNNING the script under the probe's
+  // conditions. Do the same before you write an entry: the ledger will not" —
+  // is exactly the check that was skipped. An unverified declaration in a
+  // ledger about unverified claims is the shape this file exists to refuse, and
+  // it got in anyway.
   // check-path-filters.mjs WAS DECLARED HERE and no longer is (#563). The record
   // is kept rather than deleted, because the reason it was true is the reason
   // the probe now supplies a fixture payload.

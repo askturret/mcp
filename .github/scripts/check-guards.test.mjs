@@ -2717,6 +2717,16 @@ function probeSpawnSafety(scriptPath, cwd) {
       .map((line, i) => ({ line, at: `${label}:${i + 1}` }))
       .filter(({ line }) => line.includes(' + ') && terms.filter((t) => line.includes(t)).length >= 2);
 
+  /**
+   * Copies in a prose ARTIFACT that are neither the current rendering nor
+   * marked. Named rather than inlined so the controls below drive the SAME
+   * function the live assertion does.
+   */
+  const staleInArtifact = (label, text) =>
+    identityLines(label, text)
+      .filter(({ line }) => !line.includes(partitionIdentity()) && !line.includes(IDENTITY_MARKER))
+      .map(({ at }) => at);
+
   /** Occurrences of the identity SHAPE in guard SOURCES, classified. */
   const scanIdentity = (dir) => {
     const found = { derived: [], marked: [], bare: [] };
@@ -2768,10 +2778,13 @@ function probeSpawnSafety(scriptPath, cwd) {
   // WHY READ THE FILE RATHER THAN RENDER IT. `check-mutation-audit.test.mjs`
   // already asserts the superseded sentence is absent — from `rendered(TOTALS)`,
   // a FRESH render. That assertion is true, and it will STAY true while the
-  // committed file it is named for says otherwise: its subject is the generator,
-  // not the artifact that lands. That is ADR-027's class, and it is why a
-  // generator test cannot stand in for this one. Both are kept: the generator
-  // test pins what the writer emits, this pins what is actually committed.
+  // committed file it is named for says otherwise: ITS SUBJECT IS THE GENERATOR,
+  // NOT THE ARTIFACT THAT LANDS, which is why a generator test cannot stand in
+  // for this one. (#741 is writing that class up; the number is deliberately not
+  // cited here because the record is not on `main` yet, and a citation that
+  // resolves to nothing is worse than a description that stands alone.) Both are
+  // kept: the generator test pins what the writer emits, this pins what is
+  // actually committed.
   //
   // ACCEPTANCE DIFFERS BY POPULATION, which is why only the shape detector is
   // shared. In guard SOURCES a hand-written copy of the CURRENT identity is
@@ -2806,10 +2819,7 @@ function probeSpawnSafety(scriptPath, cwd) {
 
   check(
     'identity: ...and every copy in it is the CURRENT identity or marked (#664)',
-    inInventory
-      .filter(({ line }) => !line.includes(partitionIdentity()) && !line.includes(IDENTITY_MARKER))
-      .map(({ at }) => at)
-      .join(', '),
+    staleInArtifact(INVENTORY_REL, inventory ?? '').join(', '),
     '',
   );
 
@@ -2843,6 +2853,34 @@ function probeSpawnSafety(scriptPath, cwd) {
   tmpDirs.push(excused);
   writeFileSync(join(excused, 'check-relapse.mjs'), `${removed} ${IDENTITY_MARKER}: history\n`);
   check('identity: ...while the SAME line carrying a marker is not', scanIdentity(excused).bare.length, 0);
+
+  // CONTROLS FOR THE ARTIFACT ARM, and they are the reason it is not decorative.
+  //
+  // The live assertion above proved itself once, loudly, by catching the real
+  // stale sentence in the committed inventory. That evidence is spent the moment
+  // the inventory is regenerated: from then on the assertion is green, and green
+  // is exactly what it looked like while the defect was live. So the ability to
+  // go RED is pinned here rather than left to the next regression to discover.
+  //
+  // The fixture is `removed` — ASSEMBLED FROM THE IMPORTED TERMS, for the reason
+  // recorded above: written out literally it would be a hand-copied identity
+  // sitting in the guard against hand-copied identities, and the source scan
+  // would flag this very file (#740).
+  check(
+    'identity: ARTIFACT CONTROL — a superseded copy in the artifact is CAUGHT',
+    staleInArtifact('inventory.md', `${removed}\n`).join(', '),
+    'inventory.md:1',
+  );
+  check(
+    'identity: ...and the CURRENT rendering in the artifact is accepted',
+    staleInArtifact('inventory.md', `\`${partitionIdentity()}\`. The site-level\n`).length,
+    0,
+  );
+  check(
+    'identity: ...and a superseded copy carrying a marker is accepted',
+    staleInArtifact('inventory.md', `${removed} ${IDENTITY_MARKER}: history\n`).length,
+    0,
+  );
 }
 
 for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });

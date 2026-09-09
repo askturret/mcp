@@ -1807,7 +1807,9 @@ process.exit(0);
   // It does NOT pin the committed inventory, and the two genuinely diverged: this
   // assertion was true and green for the whole period in which the committed
   // file carried the superseded sentence in the present tense. A check whose
-  // subject is not the artifact that lands is ADR-027's class.
+  // subject is not the artifact that lands is its own defect class — #741 is
+  // writing it up; the ADR number is deliberately not cited here because the
+  // record is not on `main` yet.
   //
   // The committed file is asserted in `check-guards.test.mjs`'s #664 block,
   // which opens it from disk. Neither check subsumes the other — keep both.

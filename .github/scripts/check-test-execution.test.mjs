@@ -36,10 +36,49 @@
  * `execPath` becomes the link's own path. That is the trick, and it is stated
  * because it looks like a workaround and is load-bearing.
  *
- * Cross-device hardlinks fail, so the ladder is hardlink -> copy -> declare.
- * The declaration is a CANNOT CHECK that says which rung failed; it is never a
- * silent skip, because a case that quietly does not run is the empty pass this
- * repository has spent the week removing.
+ * THE RELOCATION IS A COPY, AND THE CHILD IS GIVEN `DYLD_LIBRARY_PATH`. Both,
+ * because either alone is worse than the pair (#674). The ladder is therefore
+ * copy -> declare; the declaration is a CANNOT CHECK that says which rung
+ * failed, and is never a silent skip, because a case that quietly does not run
+ * is the empty pass this repository has spent the week removing.
+ *
+ * A HARDLINK WAS THE PREVIOUS FIRST RUNG AND HAS BEEN REMOVED. It is not a
+ * cheaper copy: the link and the real binary are the SAME INODE, and that is
+ * the configuration in which spawning the relocated child poisons the next
+ * spawn of the REAL one in this process. Measured cold on this host, 30 trials
+ * per variant, each trial a fresh process whose first spawn is the relocated
+ * interpreter:
+ *
+ *   variant             relocated child ran   next REAL spawn poisoned
+ *   hardlink + plain           10/30                    0/30
+ *   hardlink + DYLD            30/30                    8/30
+ *   copy     + plain            0/30                    0/30
+ *   copy     + DYLD            30/30                    0/30
+ *
+ * READ THE SECOND ROW BEFORE REACHING FOR THE ONE-LINE FIX. Adding
+ * `DYLD_LIBRARY_PATH` alone repairs this site perfectly and INTRODUCES the
+ * poisoning — 0/30 to 8/30. The mechanism is visible in the first row: today
+ * the relocated child usually dies, so it never gets far enough to leave
+ * anything behind. Make it succeed without changing the inode and it does.
+ *
+ * Copy alone is not enough either — 0/30, because the library lookup is
+ * independent of how the binary arrived. Only the pair gives a site that runs
+ * AND leaves the next spawn alone.
+ *
+ * The cost objection does not survive measurement: the binary is 68,384 bytes
+ * (66.8 KB) because the bulk lives in `libnode.*.dylib`, and the copy measured
+ * 0.2 ms mean over 20 runs.
+ *
+ * The library directory is DERIVED, `dirname(dirname(execPath))/lib`, so no
+ * version is hardcoded — it resolves to the `lib` beside the `bin` that
+ * `execPath` names, and Node has already resolved `execPath` through symlinks,
+ * which is the same fact the hardlink note above relies on.
+ *
+ * ONLY macOS IS MEASURED. `LD_LIBRARY_PATH` is deliberately NOT set: nothing
+ * here has measured Linux, the copy rung may behave differently there, and
+ * adding an unmeasured knob to a file about unmeasured claims would be the
+ * wrong shape. If this site proves flaky on Linux, that is the analogous knob
+ * and it wants its own measurement first.
  *
  * ## The control is not decorative
  *
@@ -59,7 +98,6 @@ import {
   readFileSync,
   rmSync,
   existsSync,
-  linkSync,
   copyFileSync,
   chmodSync,
 } from 'node:fs';
@@ -269,17 +307,31 @@ function noStatusDetail(label, r) {
 //   only PATH varied:        control / relocated / control  ->  0 / 0 / 0
 //   only interpreter varied: control / relocated / control  ->  0 / 0 / SIGABRT
 //
-// The relocation is a HARDLINK, so the temp name and the real binary are the
-// SAME INODE. The shape is consistent with dyld caching loader state per inode
-// and retaining the temp directory as the `@rpath` base — which is INFERRED,
-// not read. What is MEASURED is the ordering effect, and that is all this
-// comment relies on: a spawn placed after the site cannot be trusted on macOS.
+// THE HAZARD IS MEASURED GONE, AND THIS COMMENT STAYS ANYWAY (#674).
 //
-// So do not move these below the site, and think twice before adding any new
-// spawning case there — it would fail for a reason unrelated to what it
-// asserts. Repairing the relocation so the child can resolve its libraries is
-// deliberately NOT in this change (#581 acceptance 4): making the failure
-// legible is a different piece of work from making it stop.
+// The relocation was a HARDLINK when the above was measured, so the temp name
+// and the real binary were the SAME INODE. #674 changed it to a COPY and gave
+// the child `DYLD_LIBRARY_PATH`, and the ordering effect goes to 0/30 on this
+// host — see the header table.
+//
+// It goes away ONLY in the copy variant. Repairing the library lookup alone,
+// leaving the hardlink, takes it from 0/30 to 8/30: the effect tracks the
+// INODE, not the library path. So the comment is retained with its claim
+// updated rather than deleted. The hazard is measured absent on this host in
+// this harness, which is not the same as impossible, the comment costs nothing,
+// and this file has already been burned once by an author adding a spawning
+// case in the wrong place.
+//
+// So: still do not move these below the site, and still think twice before
+// adding a spawning case there — but the reason is now precaution rather than a
+// live failure.
+//
+// THE EPISTEMIC SPLIT IS UNCHANGED. What is MEASURED is the ordering effect and
+// its disappearance. That dyld caches loader state per inode, and retains the
+// temp directory as the `@rpath` base, remains INFERRED — the hardlink-versus-
+// copy comparison at a constant success rate (30/30 both ways) supports the
+// inference more directly than anything previously available, and it is still
+// not promoted to a read fact.
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
@@ -393,15 +445,10 @@ function noStatusDetail(label, r) {
   // null while the site has not run; the run()'s outcome once it has (#581).
   let siteOutcome = null;
   try {
-    linkSync(process.execPath, relocated);
-    rung = 'hardlink';
+    copyFileSync(process.execPath, relocated);
+    rung = 'copy';
   } catch {
-    try {
-      copyFileSync(process.execPath, relocated);
-      rung = 'copy';
-    } catch {
-      rung = null;
-    }
+    rung = null;
   }
 
   // THE PRECONDITION THIS CASE RESTS ON, checked across EVERY directory the
@@ -442,7 +489,7 @@ function noStatusDetail(label, r) {
     // empty pass this repository has spent the week removing.
     cannotCheck(
       'site: npm-cannot-start is unwitnessed here — the interpreter could not be ' +
-        'relocated (hardlink and copy both failed), so `dirname(process.execPath)` could not be ' +
+        'relocated (the copy failed), so `dirname(process.execPath)` could not be ' +
         'made npm-free. The site is reachable; this ENVIRONMENT could not reach it.',
     );
   } else if (npmFoundIn.length > 0) {
@@ -462,7 +509,20 @@ function noStatusDetail(label, r) {
       npmFoundIn.length,
       0,
     );
-    const r = run(dir, { execPath: relocated, env: { PATH: binDir } });
+    // THE COPIED INTERPRETER CANNOT FIND ITS OWN LIBRARY WITHOUT THIS (#674).
+    // Homebrew's node reaches `libnode` through `@rpath`, which resolves
+    // relative to the binary — so from a temp directory it finds nothing and
+    // dyld kills the child before the guard is ever consulted. Derived, never
+    // hardcoded: the `lib` beside the `bin` that `execPath` names.
+    //
+    // Set only when it exists. Pointing dyld at a directory that is not there
+    // buys nothing and would put a bogus path in the child's environment on any
+    // layout that does not match this one.
+    const libDir = join(dirname(dirname(process.execPath)), 'lib');
+    const childEnv = { PATH: binDir };
+    if (existsSync(libDir)) childEnv.DYLD_LIBRARY_PATH = libDir;
+
+    const r = run(dir, { execPath: relocated, env: childEnv });
     siteOutcome = r.outcome;
 
     if (r.outcome !== 'exited') {
@@ -489,6 +549,58 @@ function noStatusDetail(label, r) {
         ),
       );
     } else {
+      // LIBRARY RESOLUTION, DEMONSTRATED RATHER THAN ASSUMED (#674).
+      //
+      // The site above is ONE spawn, and one spawn cannot tell a repair from
+      // luck: before this change the relocated child ran 10 times in 30 cold
+      // trials, so a single green run had a one-in-three chance of proving
+      // nothing. This loop spawns the relocated interpreter directly — no
+      // guard, no fixture, just "can it start" — enough times that the old
+      // behaviour could not have survived it.
+      //
+      // SIZED AGAINST A MEASUREMENT, AND THE MEASUREMENT CORRECTED A GUESS.
+      //
+      // Cold — a fresh process whose first spawn is the relocated binary —
+      // measured 67% failure here; the issue reports 72%, the Architect 83%.
+      //
+      // But THIS SITE IS NOT COLD. Every case above has already spawned the
+      // real interpreter, so dyld is warm by the time it runs. Measured against
+      // the OLD relocation in exactly that state, 15 suite-equivalent runs:
+      //
+      //   the single site spawn   passed 15/15   <- no detector at all
+      //   a 20-spawn loop         caught 15/15   <- only 1 to 4 of 20 ran
+      //
+      // So the warm rate is not the ~5% the issue quotes. After the FIRST
+      // relocated spawn — which tends to succeed, the real binary's inode being
+      // warm — the rest fail nearly always. That is how the site could pass 15
+      // times running while the interpreter it spawns was broken, and it is why
+      // this is a loop rather than one more single assertion.
+      //
+      // These spawns are the relocated interpreter, so they sit AFTER the site
+      // and are subject to the ordering note above — which is now measured
+      // clean for this configuration, and is the property being demonstrated.
+      const LIBRARY_TRIALS = 20;
+      const started = Array.from({ length: LIBRARY_TRIALS }, () =>
+        spawnSync(relocated, ['-e', "process.stdout.write('OK')"], { encoding: 'utf-8', env: { ...process.env, ...childEnv } }),
+      ).filter((t) => !t.error && t.status === 0 && t.stdout === 'OK').length;
+
+      check(
+        `site: the relocated interpreter resolves its libraries on all ${LIBRARY_TRIALS} spawns (#674)`,
+        started,
+        LIBRARY_TRIALS,
+      );
+
+      // AND THE REAL INTERPRETER STILL WORKS AFTERWARDS. The hazard this change
+      // removes is not the site failing — it is the site's spawn breaking the
+      // NEXT one. Asserted here rather than left to the ordering comment,
+      // because a comment cannot notice a regression.
+      const afterReal = spawnSync(process.execPath, ['-e', "process.stdout.write('OK')"], { encoding: 'utf-8' });
+      check(
+        'site: ...and the REAL interpreter still spawns cleanly afterwards',
+        !afterReal.error && afterReal.status === 0 && afterReal.stdout === 'OK',
+        true,
+      );
+
       check('site: npm that cannot start exits 2', r.code, 2);
       check('site: ...and says it COULD NOT BE CHECKED', /COULD NOT BE CHECKED/.test(r.out), true);
       // THE DISTINCTION THIS SITE EXISTS FOR (#429): a measurement that could not

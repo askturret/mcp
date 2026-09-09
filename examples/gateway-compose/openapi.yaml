@@ -7,6 +7,29 @@ info:
 servers:
   - url: https://petstore.example.com/api/v1
 
+# WHERE MCP METADATA GOES — read this before adding an `x-mcp` key to ANY
+# operation below (#764).
+#
+# It goes in a NESTED `x-mcp:` object (effects, annotations). The OpenAPI source
+# extracts `operation['x-mcp']` and nothing else, so a FLAT `x-mcp-*` key is not
+# read by discovery at all — silently ignored rather than rejected, which is what
+# makes the mistake attractive. `docs/overlays.md` has where it sits in the
+# precedence chain (level 3).
+#
+# THIS SITS ABOVE `paths:` RATHER THAN BESIDE ONE OPERATION. It was written at
+# `listPets`, because that is where #736 removed a flat `x-mcp-input-schema` —
+# so a reader adding a key at `getPetById` never met it, which is the exact
+# reader it was written for. Hoisting reaches both operations, and any added
+# later, with ONE copy. Repeating it per operation would be a second
+# hand-maintained copy of one claim, the arrangement that goes stale (#775).
+#
+# ONE CONTRADICTION, RECORDED RATHER THAN SMOOTHED OVER (#764). `turret doctor`
+# reads a FLAT `x-mcp-effects` off the operation object and warns when a mutating
+# operation lacks one, suggesting "Add x-mcp-effects to operation object" — the
+# shape discovery ignores. The tree ships both instructions. An earlier version
+# of this comment said flat keys are read by "nothing", which is false of
+# `doctor`. Until that is settled, prefer nested `x-mcp:` here: it is the form
+# the compiled tool actually receives.
 paths:
   /pets:
     get:
@@ -24,10 +47,9 @@ paths:
             minimum: 1
             maximum: 100
             default: 20
-      # MCP metadata goes in a NESTED `x-mcp:` object (effects, annotations) —
-      # never in flat `x-mcp-*` keys, which nothing reads. See docs/overlays.md
-      # for where it sits in the precedence chain. This operation needs none:
-      # its input schema is derived from the `parameters` above.
+      # This operation needs no `x-mcp:` at all: its input schema is derived
+      # from the `parameters` above. #736 removed a flat `x-mcp-input-schema`
+      # here that duplicated `limit`. The general rule is above `paths:`.
       responses:
         '200':
           description: A list of pets

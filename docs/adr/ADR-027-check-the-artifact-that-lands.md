@@ -102,12 +102,45 @@ have, so no second instance exists. Promoting them would spend the serial signin
 runner, the scarcest capacity in the build, to re-assert properties that cannot
 have changed.
 
-**Building the two identified gaps now.** Recorded rather than built, because
-[#661](https://github.com/askturret/mcp/issues/661) reports guards that detect
-cannot-check and exit 0 anyway. Promoting one of those installs a gate that
-**cannot refuse** — worse than not promoting it, because the release lane would
-then carry a green check asserting something nobody verified. The remedy is
-sequenced behind #661, not abandoned.
+**Building the two identified gaps now.** Recorded rather than built, on two
+grounds, both measured:
+
+- **Neither gap has produced a demonstrated failure.** #670 had one — a PR-lane
+  check that could not stop a bad publish. Nobody has yet shown a README that
+  passes `check-readme-imports` and breaks for a reader, or an `npx` line that
+  passes and names a package the registry lacks. Promoting on a reasoned gap
+  rather than an observed one inverts the standard the two demonstrated instances
+  set.
+- **The release lane is the serial signing runner**, the scarcest capacity in the
+  build. Two more guards there is a permanent cost paid on every release, against
+  an unobserved failure.
+
+> **An earlier draft deferred on a different ground, and that ground was false.**
+> It said [#661](https://github.com/askturret/mcp/issues/661) reported guards
+> that detect cannot-check and exit `0` anyway, so promoting one would install a
+> gate that cannot refuse. **#661 was refuted as filed, on this record's own
+> issue, nine hours before the record was written.** Measured here with `node` on
+> `PATH` and `git` absent: `check-readme-imports` returns **2** — *"CANNOT CHECK
+> — the clean room could not be built"* — and `check-npx-invocations` returns
+> `0` legitimately, because it has **zero spawn sites** and so has no
+> cannot-check condition to swallow, while still wiring `EXIT_CANNOT_CHECK = 2`
+> and returning it. The stated ground applied to **neither** guard it was used to
+> defer.
+>
+> Recorded rather than quietly replaced, because the failure is instructive: the
+> claim was carried forward from this author's own earlier comment instead of
+> from the issue thread as it then stood — **a reflection, in the sense
+> [ADR-025](ADR-025-derive-from-the-authority.md) means it, and the authority had
+> not moved. It had simply never been read.** An ADR outlives the review that
+> produced it, so **re-reading the issue thread belongs in the last step before
+> committing one.**
+>
+> #661's *actual* finding — that the fail-closed property is held by many
+> implementations and asserted by nothing — is cited here **as #661's and not as
+> this record's**: a crude proxy run while writing this correction (guards
+> defining `EXIT_CANNOT_CHECK`, and which of them assert it in their own tests)
+> did not reproduce its numbers, and adopting a count this author cannot
+> reproduce would repeat the defect being corrected.
 
 **A guard for the class.** It would have to know what transforms each artifact,
 which is not recoverable from the repository — GitHub's squash behaviour is not
@@ -139,12 +172,31 @@ Written at the time, from the 2026-09-08 session.
 **Verified independently for this ADR:** #696's 6-of-6 failure, by running
 `dco-check.sh origin/main~6 origin/main` and reading the author, committer and
 trailer of each commit; `dco.yml`'s `pull_request`-only trigger; #670's workflow
-comment, quoted from `supply-chain.yml`; the 34 / 26 / 8 guard counts, re-derived
-on `3570bd7` rather than carried from the earlier report; and the four
-previously-undecided guards' inputs, read from their implementations.
+comment, quoted from `supply-chain.yml`; the 34 / 26 / 8 guard counts; and the
+four previously-undecided guards' inputs, read from their implementations.
 
-**Reported and NOT reproduced here:** nothing. Every claim above was measured in
-this repository.
+**The set the counts were enumerated over**, since naming only the commit leaves
+them unreproducible — a reviewer's reasonable proxy returned 30 / 4 against these
+26 / 8, and the difference was the definition, not the tree:
+
+```
+# 34 — non-test guards
+git ls-tree -r --name-only origin/main .github/scripts/ \
+  | grep '^\.github/scripts/check-.*\.mjs$' | grep -v '\.test\.mjs$'
+
+# 26 — of those, invoked by test.yml and by NO other workflow
+#      (per guard: grep -rl "$basename" .github/workflows/ | grep -cv 'test\.yml'  == 0)
+```
+
+**"PR-lane-only" means invoked by `test.yml` and by no other workflow file** —
+not "absent from `supply-chain.yml`", which is the narrower proxy and yields a
+different split. Re-derives exactly on `ebd15fd7` as it did on `3570bd7`.
+
+**Reported and NOT reproduced here:** #661's finding that the fail-closed
+property is held by many implementations and asserted by nothing. It is cited in
+*What was deliberately rejected* as #661's own, because a proxy run while writing
+this record did not reproduce its numbers. Every other claim above was measured
+in this repository.
 
 **Not established:** that squash is the only merge path in use. Six commits is a
 consistent sample, not a proof of configuration, and the repository's

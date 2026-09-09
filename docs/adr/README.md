@@ -29,6 +29,7 @@ reconstruct the answer from commit archaeology.
 | [024](ADR-024-output-must-vary-with-the-fact.md) | A check's output must vary with the fact it reports | written at the time (#654) |
 | [025](ADR-025-derive-from-the-authority.md) | Derive from the authority, never from a reflection | written at the time (#780) |
 | [026](ADR-026-a-brief-premise-is-the-receivers-to-verify.md) | A brief's premise is the receiver's to verify | written at the time (#780) |
+| [027](ADR-027-check-the-artifact-that-lands.md) | A check must examine the artifact that lands, not a pre-transformation proxy | written at the time (#741) |
 
 ⚠ = the number is cited for more than one subject; the ADR records that
 ambiguity rather than resolving it by invention.

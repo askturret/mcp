@@ -2769,11 +2769,18 @@ function probeSpawnSafety(scriptPath, cwd) {
   // bare occurrence out of scope is indistinguishable, from inside the scan,
   // from "no bare copies exist". THE GREEN WAS THE SYMPTOM.
   //
-  // It survived only because the three missing buckets are all zero today, so
-  // 124 + 48 + 0 = 172 still closes. The file defining the partition says
-  // `not-mutatable` occurs at one ledger-gated site (#558) — so the artifact was
-  // ONE SITE away from stating an identity its own totals contradict, which is
-  // #651's defect verbatim, inside #651's own artifact.
+  // It survived only because the three missing buckets were all zero WHEN THIS
+  // WAS FOUND, so 124 + 48 + 0 = 172 still closed. The artifact was ONE SITE
+  // away from stating an identity its own totals contradict — #651's defect
+  // verbatim, inside #651's own artifact.
+  //
+  // IT IS NO LONGER ONE SITE AWAY, and the past tense above is deliberate.
+  // Regenerating the inventory in this same change measured `not-mutatable` at
+  // one ledger-gated site (#558), so the superseded sentence stopped closing:
+  // 182 + 21 + 0 = 203 against 204 failure sites. A comment describing a state
+  // its own commit ENDED is the observer effect #805 and #806 each had to
+  // correct, and this is the last file that gets to make it — the whole subject
+  // here is a claim left behind by the change that outdated it.
   //
   // WHY READ THE FILE RATHER THAN RENDER IT. `check-mutation-audit.test.mjs`
   // already asserts the superseded sentence is absent — from `rendered(TOTALS)`,
@@ -2785,6 +2792,18 @@ function probeSpawnSafety(scriptPath, cwd) {
   // resolves to nothing is worse than a description that stands alone.) Both are
   // kept: the generator test pins what the writer emits, this pins what is
   // actually committed.
+  //
+  // THE RESIDUAL — WHAT NEITHER BOUND COVERS, recorded here rather than only in
+  // a PR body, because a bound that outlives the review is the only kind that
+  // does any good. Two populations are scanned and no others: the identity's
+  // AUTHORITY, `.github/scripts/*.mjs`, and its PUBLISHED ARTIFACT, the
+  // inventory. A copy appearing in a THIRD location — a future ADR, a README,
+  // any doc under `docs/` — sits outside BOTH and would go undetected. Measured
+  // over every tracked file (`git ls-files`) at the time of writing: five
+  // occurrences repo-wide, all five inside the two bounds. Closing the gap needs
+  // a repo-wide walk whose exclusion set would itself be the hand-maintained
+  // enumeration #556 removes, so it is deliberately NOT taken — and this
+  // paragraph is the trigger to revisit if a third location ever appears.
   //
   // ACCEPTANCE DIFFERS BY POPULATION, which is why only the shape detector is
   // shared. In guard SOURCES a hand-written copy of the CURRENT identity is

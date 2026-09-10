@@ -88,6 +88,39 @@ function parseFilters(workflow: string): Record<string, string[]> {
 
 const filters = parseFilters(readFileSync(WORKFLOW, 'utf-8'));
 
+/**
+ * Does `filter` carry an entry that re-runs on ANY non-README file under `dir`?
+ *
+ * ## Why this is not `toContain('<dir>/**')` any more (#731)
+ *
+ * It was, and that spelling broke. #731 carved package READMEs out of ten
+ * filters, rewriting `packages/core/**` to `packages/core/** /!(README.md)`
+ * (without the space). Six of this file's seven assertions pinned the OLD
+ * literal and went red, inside `packages/adapters-express`, for a change that
+ * touched only `.github/`.
+ *
+ * The property #153 is about survived that edit untouched: a change to any
+ * source file under `packages/core` still re-runs both adapters, because the
+ * carve-out excludes exactly one basename. Only the string moved. So the
+ * assertion now states the property and tolerates either spelling.
+ *
+ * IT IS STILL NOT A "PASSES IF ANYTHING IS THERE" CHECK. The entry has to be
+ * the recursive glob rooted at that exact directory: a missing entry fails, and
+ * so does one narrowed to a subdirectory (`packages/core/src/**`) or rooted at a
+ * sibling whose name merely starts the same way (`packages/core-extras/**`).
+ * Those are the ways #153's near-miss could come back, and they still fail here.
+ *
+ * THIS FILE IS THE SECOND PARSER OF THAT BLOCK. `.github/scripts/check-path-filters.mjs`
+ * is the first, and it was taught the new spelling by the same change that
+ * forgot this one. Anyone re-spelling those globs again has TWO places to
+ * update, and only one of them lives next to the workflow.
+ */
+function covers(filter: string[] | undefined, dir: string): boolean {
+  return (filter ?? []).some(
+    (entry) => entry === `${dir}/**` || entry.startsWith(`${dir}/**/`),
+  );
+}
+
 describe('CI path filters for the adapters (#153)', () => {
   it('parsed the filter block it is meant to be checking', () => {
     // Guards the guard. A parser that silently matched nothing would make every
@@ -102,7 +135,7 @@ describe('CI path filters for the adapters (#153)', () => {
     // has now been re-scoped once and may be again.
     expect(Object.keys(filters).length).toBeGreaterThanOrEqual(12);
     expect(filters['workspace']).toContain('package.json');
-    expect(filters['adapters-express']).toContain('packages/adapters-express/**');
+    expect(covers(filters['adapters-express'], 'packages/adapters-express')).toBe(true);
   });
 
   it.each(['adapters-express', 'adapters-fastify'])(
@@ -111,20 +144,24 @@ describe('CI path filters for the adapters (#153)', () => {
       // The acceptance criterion, as an executable statement. Both adapters are
       // built from both packages, so a change to either can break them without
       // touching an adapter file.
-      expect(filters[filter]).toContain('packages/core/**');
-      expect(filters[filter]).toContain('packages/transports/**');
+      expect(covers(filters[filter], 'packages/core')).toBe(true);
+      expect(covers(filters[filter], 'packages/transports')).toBe(true);
     },
   );
 
   it.each([
-    ['adapters-express', 'packages/explorer/**'],
-    ['adapters-express', 'examples/petstore-light/**'],
-    ['adapters-fastify', 'packages/explorer/**'],
-  ])('%s keeps its existing trigger on %s', (filter, path) => {
+    ['adapters-express', 'packages/explorer'],
+    ['adapters-express', 'examples/petstore-light'],
+    ['adapters-fastify', 'packages/explorer'],
+  ])('%s keeps its existing trigger on %s', (filter, dir) => {
     // "Existing filter behavior for adapter-only changes is unaffected" — the
     // second half of the acceptance criterion. Widening a filter by replacing
     // it would satisfy the first half and quietly lose these.
-    expect(filters[filter]).toContain(path);
+    //
+    // `examples/petstore-light` is deliberately in this list even though #731
+    // did NOT carve it: the assertion should not depend on which entries happen
+    // to carry a carve-out today.
+    expect(covers(filters[filter], dir)).toBe(true);
   });
 
   it('the #213 filters have since been widened too', () => {
@@ -138,7 +175,23 @@ describe('CI path filters for the adapters (#153)', () => {
     // package declares — is now enforced from package.json by
     // .github/scripts/check-path-filters.mjs, which is where a new package gets
     // caught. This file stays scoped to #153's near-miss.
-    expect(filters['cli']).toContain('packages/core/**');
-    expect(filters['explorer']).toContain('packages/core/**');
+    expect(covers(filters['cli'], 'packages/core')).toBe(true);
+    expect(covers(filters['explorer'], 'packages/core')).toBe(true);
+  });
+
+  it('covers() rejects the ways #153 could come back', () => {
+    // The helper is the load-bearing part of every assertion above, so its
+    // NEGATIVE cases are asserted rather than assumed. Without this, a `covers`
+    // that returned true unconditionally would make the whole file vacuous —
+    // the same trap the parser canary guards against one level up.
+    expect(covers(['packages/core/**'], 'packages/core')).toBe(true);
+    expect(covers(['packages/core/**/!(README.md)'], 'packages/core')).toBe(true);
+    expect(covers(undefined, 'packages/core')).toBe(false);
+    expect(covers([], 'packages/core')).toBe(false);
+    // Narrowed to a subdirectory: a change to packages/core/index.ts would not
+    // re-run, which is exactly #153's near-miss.
+    expect(covers(['packages/core/src/**'], 'packages/core')).toBe(false);
+    // A sibling whose name merely starts the same way must not satisfy it.
+    expect(covers(['packages/core-extras/**'], 'packages/core')).toBe(false);
   });
 });

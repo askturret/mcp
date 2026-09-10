@@ -494,11 +494,20 @@ function changedFiles(baseRef) {
 /**
  * Does one `dorny/paths-filter` glob match this path?
  *
- * Only the two shapes the filters block actually uses: a literal path, and a
- * `dir/**` prefix. Anything else would be silently mismatched, so it is refused
- * rather than guessed at.
+ * Only the three shapes the filters block actually uses: a literal path, a
+ * `dir/**` prefix, and the `dir/**​/!(README.md)` carve-out (#731). Anything
+ * else would be silently mismatched, so it is refused rather than guessed at.
  */
 function globMatches(glob, file) {
+  // The README carve-out, checked BEFORE the bare prefix because it is the
+  // more specific shape. Mirrors what picomatch does with the extglob: any
+  // file under the tree EXCEPT one whose basename is README.md, at any depth.
+  // Verified against picomatch rather than assumed — see the self-test.
+  const CARVE = '/**/!(README.md)';
+  if (glob.endsWith(CARVE)) {
+    const prefix = glob.slice(0, -CARVE.length);
+    return file.startsWith(`${prefix}/`) && !file.endsWith('/README.md');
+  }
   if (glob.endsWith('/**')) return file.startsWith(`${glob.slice(0, -3)}/`);
   if (glob.includes('*')) {
     cannotCheck(`filters use an unsupported glob shape '${glob}' — the lane check cannot match it`);
@@ -635,7 +644,21 @@ for (const [name, globs] of Object.entries(filters)) {
 
   for (const depDir of transitiveDeps(name, byName, closureCache)) {
     const required = `packages/${depDir}/**`;
-    if (globs.includes(required)) continue;
+    // TWO ACCEPTED SPELLINGS, AND DELIBERATELY ONLY TWO (#731).
+    //
+    // The carve-out form covers the dependency's whole tree EXCEPT its
+    // top-level README.md, which is the one file two suites read and ten do
+    // not. It satisfies this invariant just as well as the bare form: a change
+    // to any of the dependency's SOURCE still re-runs the suite.
+    //
+    // An exact-string allowlist rather than a semantic probe, on purpose. The
+    // tempting generalisation — "does any glob match packages/<dep>/src/index.ts"
+    // — would also accept `packages/<dep>/src/**`, which silently stops covering
+    // top-level files like package.json. That is a weakening of the #213
+    // invariant dressed as a generalisation. Two literal spellings cannot be
+    // gamed; a matcher can.
+    const readmeCarveOut = `packages/${depDir}/**/!(README.md)`;
+    if (globs.includes(required) || globs.includes(readmeCarveOut)) continue;
 
     // Both vocabularies, deliberately: the npm name is what the manifest
     // declares and what a maintainer greps for, the directory is what the

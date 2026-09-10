@@ -202,6 +202,99 @@ export const siteSource = (src, index) => {
   return src.slice(start, end === -1 ? src.length : end).trim().replace(/\s+/g, ' ');
 };
 
+/**
+ * How far `siteStatement` will scan for a terminator before giving up.
+ *
+ * A bound rather than a trust: an unterminated scan must stop somewhere, and
+ * stopping means falling back to the line form rather than returning a
+ * half-statement. The longest statement in this repository's guards is well
+ * under this; the cap exists for the malformed case, not the large one.
+ */
+const STATEMENT_SCAN_LIMIT = 8000;
+
+/**
+ * The site's own STATEMENT, whitespace-normalised (#559).
+ *
+ * ## Why the line form was not enough, and what actually went wrong
+ *
+ * `siteSource` above keys on the site's first PHYSICAL LINE. For a statement
+ * written across several lines that first line is often pure syntax — a bare
+ * `throw new Error(` or `errors.push(` — carrying none of the text that
+ * distinguishes one site from another.
+ *
+ * Measured on `check-dashboard-metrics.mjs`: THREE `throw` sites at 122, 201
+ * and 212 all render as `throw new Error(`, so the ledger refuses an entry for
+ * any of them as AMBIGUOUS — correctly, since one entry cannot cover three
+ * sites nobody examined individually. #559's `:212` needed an exemption and
+ * could not have one written.
+ *
+ * The three sites DO NOT SHARE A STATEMENT. They are each uniquely identified
+ * by their own text — just not by its first 17 characters:
+ *
+ *     :122   "parsed N of M metric definitions; could not read..."
+ *     :201   "multi-line `expr:` blocks are not supported..."
+ *     :212   "read N of M `expr:` entries"
+ *
+ * So the ambiguity was an ARTIFACT OF TRUNCATION, not a real collision. This
+ * does not widen the identity contract so much as stop truncating it: still
+ * content-addressed, still drift-immune, no positional field added. And it
+ * fixes the CLASS — every multi-line throw or push in every guard carried the
+ * same latent collision.
+ *
+ * ## Why not witness `:212` instead
+ *
+ * Ruled out explicitly. That branch is unreachable behind a lockstep-counter
+ * invariant, so a test could only reach it by going THROUGH the invariant that
+ * makes it unreachable — the fabricated witness #543 declined. A MECHANISM
+ * LIMITATION IS NOT A REASON TO MANUFACTURE A WITNESS.
+ *
+ * ## The scan, and where it fails closed
+ *
+ * Scanning happens over MASKED source, so a `;` or a bracket inside a string,
+ * a template literal or a comment cannot end the statement early. That matters
+ * here specifically: `:122`'s own message contains "metric definitions; could
+ * not read", and an unmasked scan would cut the statement at that semicolon.
+ *
+ * From the site's line start, the statement ends at the first `;` seen at
+ * bracket depth zero. THREE CASES FALL BACK TO THE LINE FORM rather than
+ * guessing, which is the fail-closed direction #559 asks for where a position
+ * must be used at all:
+ *
+ *   - depth goes negative (the line starts inside a construct we did not open)
+ *   - no depth-zero `;` within `STATEMENT_SCAN_LIMIT`
+ *   - no `;` at all before the source ends
+ *
+ * A SINGLE-LINE STATEMENT IS UNCHANGED, which is what makes this safe to land
+ * on a live ledger: `process.exit(130);` and both `check-concealment-templates`
+ * entries are single statements on one line, so their keys are byte-identical
+ * under both functions. No existing entry is invalidated by this change.
+ *
+ * KNOWN LIMITATION, unchanged rather than introduced: two statements on ONE
+ * line still collide, because the scan starts at the line rather than at the
+ * previous statement boundary. That was equally true of the line form, so this
+ * is not a regression — and prettier's one-statement-per-line output is why no
+ * guard in this repository currently hits it.
+ */
+export const siteStatement = (src, index, masked = maskCode(src)) => {
+  const lineStart = src.lastIndexOf('\n', index - 1) + 1;
+  const asLine = () => siteSource(src, index);
+
+  let depth = 0;
+  const limit = Math.min(masked.length, lineStart + STATEMENT_SCAN_LIMIT);
+  for (let i = lineStart; i < limit; i += 1) {
+    const c = masked[i];
+    if (c === '(' || c === '[' || c === '{') {
+      depth += 1;
+    } else if (c === ')' || c === ']' || c === '}') {
+      depth -= 1;
+      if (depth < 0) return asLine();
+    } else if (c === ';' && depth === 0) {
+      return src.slice(lineStart, i + 1).trim().replace(/\s+/g, ' ');
+    }
+  }
+  return asLine();
+};
+
 /* -------------------------------------------------------------------------
  * The exemption ledger (#532, conditions 3-6)
  * ---------------------------------------------------------------------- */
@@ -403,6 +496,81 @@ export const MUTATION_EXEMPT = Object.freeze([
       'returning a constant `false`) reddens the same suite to 38 passed, 2 failed. So the suite does load ' +
       'this module, does execute against it, and does report its failures — the three routes by which a red ' +
       'could have been masked are excluded by demonstration rather than by assertion.',
+  },
+
+  // D2's LAST TWO SITES (#559). Both are kinds the class rules would ordinarily
+  // send to a witness, and each is here for a DIFFERENT reason. Read them as a
+  // pair: the first was blocked by the identity key and is unblocked by
+  // `siteStatement`; the second was never in its class at all.
+  {
+    script: 'check-dashboard-metrics.mjs',
+    kind: 'throw',
+    // Only ADDRESSABLE since #559 taught the ledger to key on the whole
+    // STATEMENT. Under the old first-physical-line key this read
+    // `throw new Error(` and collided with two sibling throws, so the ledger
+    // refused it as AMBIGUOUS and no entry could be written at all.
+    source:
+      'throw new Error( `read ${String(expressions.length)} of ${String(declared)} \\`expr:\\` entries`, );',
+    reason:
+      'UNREACHABLE by a LOCKSTEP-COUNTER invariant, which is a property of the loop rather than of a guard ' +
+      'standing in front of it. In `parseRuleFile`, every line matching `expr:` increments `declared` and ' +
+      'then does exactly one of two things: throws the block-scalar refusal, or pushes exactly one entry to ' +
+      '`expressions`. There is no path between the increment and the end of the loop body that does ' +
+      'neither — no `continue`, no early `return`, no second push. So `declared` and `expressions.length` ' +
+      'advance together and cannot diverge, which makes `declared !== expressions.length` unsatisfiable. ' +
+      'This names the INVARIANT, not a neighbouring check that happens to sit in front of a different ' +
+      'path — the distinction #543 turned on.',
+    unblockedBy:
+      'Any path that increments `declared` without pushing: a new `continue` after the increment, a second ' +
+      'push site, or making the block-scalar branch recoverable instead of throwing. Any of the three makes ' +
+      'divergence possible, and the existing rule-file fixtures would then reach this line without a new ' +
+      'test being written. Deliberately NOT witnessed by exporting the counters or invoking the loop body ' +
+      'directly with a hand-built state: that reaches THROUGH the invariant that makes the branch ' +
+      'unreachable, which is the fabricated witness #543 declined. A mechanism limitation is not a reason ' +
+      'to manufacture a witness.',
+    maskingExcluded:
+      'Instrumented the branch — a `process.stderr.write` immediately above the throw — and ran the full ' +
+      'self-test: 0 firings across 50 passing assertions. THE POSITIVE CONTROL: the same instrumentation on ' +
+      'the multi-line-`expr:` throw eleven lines above, a site the corpus DOES reach, records 1 in the same ' +
+      'run and the same configuration. So the zero is a measurement rather than a probe that cannot see, ' +
+      'and a suppressed red would still have executed the branch. Guard restored byte-identical after both ' +
+      'probes, verified rather than assumed.',
+  },
+  {
+    script: 'check-mutation-audit.mjs',
+    kind: 'errors-push',
+    // The site #559's disposition calls `:475`. It has since read `:536`,
+    // `:568` and `:629` — four positions for one line in a single day, three of
+    // the moves caused by edits to THIS file's own comments. Addressed by text
+    // for exactly that reason.
+    source:
+      "errors.push(`${where}: STALE — the site could not be resolved from this run's measurement.`);",
+    reason:
+      'NOT IN THE errors-push CLASS AT ALL, which is stronger than an exception to it — the class rule ' +
+      '"witness, never exempt" holds absolutely and this site is outside its subject. THE MEMBERSHIP TEST, ' +
+      'stated so the next reader can apply it rather than re-derive it: IF THIS PUSH FIRED, WOULD IT REPORT ' +
+      'A DEFECT IN THE THING BEING AUDITED, OR A BUG IN THE AUDITOR ITSELF? A push carrying a VERDICT about ' +
+      'the subject is the refusal path and must be WITNESSED — `errors.push(...ledger.errors)` and the ' +
+      'THE-EXEMPTION-IS-FALSE push both are, and both were witnessed by #559 rather than exempted. This one ' +
+      "reports that the auditor lost track of its own `matches` array: a GUARD-RAIL over internal state, " +
+      "which the site's own comment already calls one — \"the stale branch still produces the useful " +
+      'message; this only makes its absence degrade to a report."\n\n' +
+      'It is also unreachable on the invariant standard. Every array in `byKey` is built solely by ' +
+      '`push(r)` on the same line that dereferences `r.kind` and `r.source` to compute the key, so no ' +
+      'element can be `undefined`; and the length checks immediately above have already refused 0 matches ' +
+      '(STALE) and more than 1 (AMBIGUOUS). So `matches[0]` is always a site object by construction.',
+    unblockedBy:
+      'A second producer of those arrays, or an indexing path that inserts into `byKey` without ' +
+      'dereferencing `r` first — either can leave a hole that the length checks would still pass. The ' +
+      'existing `evaluateExemptions` fixtures build reports directly, so they would reach this line at once ' +
+      'if such a path existed, with no new test written. Removing the `matches.length === 0` check above ' +
+      'would also re-open it, and surviving exactly that edit is why the site was written.',
+    maskingExcluded:
+      'Instrumented the branch — a `process.stderr.write` immediately above the push — and ran the full ' +
+      'self-test: 0 firings across 206 passing assertions. THE POSITIVE CONTROL: the same instrumentation ' +
+      'on the AMBIGUOUS push in the same function, a site the corpus DOES reach, records 1 in the same run ' +
+      'and the same configuration. So the zero is a measurement rather than a probe that cannot see. Guard ' +
+      'restored byte-identical after both probes, verified rather than assumed.',
   },
 ]);
 
@@ -618,13 +786,13 @@ export function enumerateSites(src) {
   for (const m of masked.matchAll(/\berrors\.push\s*\(/g)) {
     const start = m.index;
     const end = start + 'errors.push'.length;
-    sites.push({ kind: 'errors-push', start, end, token: 'errors.push', replacement: '(()=>{})', line: lineOf(src, start), source: siteSource(src, start) });
+    sites.push({ kind: 'errors-push', start, end, token: 'errors.push', replacement: '(()=>{})', line: lineOf(src, start), source: siteStatement(src, start, masked) });
   }
 
   // throw X -> void X. Still constructs the value, then discards it.
   for (const m of masked.matchAll(/\bthrow\b/g)) {
     const start = m.index;
-    sites.push({ kind: 'throw', start, end: start + 5, token: 'throw', replacement: 'void', line: lineOf(src, start), source: siteSource(src, start) });
+    sites.push({ kind: 'throw', start, end: start + 5, token: 'throw', replacement: 'void', line: lineOf(src, start), source: siteStatement(src, start, masked) });
   }
 
   // process.exit(<arg>) -> process.exit(0). Replacing the ARGUMENT rather than
@@ -642,7 +810,7 @@ export function enumerateSites(src) {
       token: src.slice(open + 1, close),
       replacement: '0',
       line: lineOf(src, open),
-      source: siteSource(src, open),
+      source: siteStatement(src, open, masked),
     });
   }
 
@@ -656,7 +824,7 @@ export function enumerateSites(src) {
       token: m[1],
       replacement: '0',
       line: lineOf(src, numStart),
-      source: siteSource(src, numStart),
+      source: siteStatement(src, numStart, masked),
     });
   }
 
@@ -686,7 +854,7 @@ export function enumerateSites(src) {
       token: m[1],
       replacement: '0',
       line: lineOf(src, numStart),
-      source: siteSource(src, numStart),
+      source: siteStatement(src, numStart, masked),
     });
   }
 

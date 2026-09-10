@@ -104,6 +104,7 @@ import {
   inventoryDelta,
   evaluateExemptions,
   siteSource,
+  siteStatement,
   MUTATION_EXEMPT,
   SITE_KINDS,
 } from './check-mutation-audit.mjs';
@@ -1423,6 +1424,86 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
       siteSource(edited, edited.indexOf('errors.push')) === siteSource(src, src.indexOf('errors.push')),
       false,
     );
+  }
+
+  // --- THE KEY IS THE STATEMENT, NOT THE FIRST PHYSICAL LINE (#559) --------
+  //
+  // The defect, asserted rather than described: `throw` sites written across
+  // several lines all render as `throw new Error(` under the line form, so the
+  // ledger refuses each as AMBIGUOUS and #559's `:212` could not be
+  // dispositioned at all. They do not share a STATEMENT.
+  {
+    const two = [
+      'function f() {',
+      '  if (a) {',
+      '    throw new Error(',
+      '      `parsed ${n} of ${m} definitions; could not read: ${x}`,',
+      '    );',
+      '  }',
+      '  if (b) {',
+      '    throw new Error(',
+      "      'multi-line blocks are not supported by this reader',",
+      '    );',
+      '  }',
+      '}',
+      '',
+    ].join('\n');
+    const first = two.indexOf('throw');
+    const second = two.indexOf('throw', first + 1);
+
+    check(
+      'key: under the LINE form two multi-line throws are INDISTINGUISHABLE',
+      siteSource(two, first) === siteSource(two, second),
+      true,
+    );
+    check(
+      'key: ...and the value they share is pure syntax',
+      siteSource(two, first),
+      'throw new Error(',
+    );
+    check(
+      'key: under the STATEMENT form they are DISTINCT',
+      siteStatement(two, first) === siteStatement(two, second),
+      false,
+    );
+    // Not merely different — the WHOLE statement, so the message that
+    // identifies the site is inside the key rather than truncated away.
+    check(
+      'key: ...and the key carries the whole statement, message included',
+      siteStatement(two, first),
+      'throw new Error( `parsed ${n} of ${m} definitions; could not read: ${x}`, );',
+    );
+    // A SEMICOLON INSIDE THE MESSAGE MUST NOT END THE STATEMENT, and this is
+    // not hypothetical: check-dashboard-metrics:122's own text contains
+    // "metric definitions; could not read", so an unmasked scan cuts it there.
+    check(
+      'key: a `;` inside a string does not terminate the statement early',
+      siteStatement(two, first).includes('could not read'),
+      true,
+    );
+  }
+
+  // --- FAIL CLOSED, WHICH IS THE WHOLE LICENCE FOR SCANNING AT ALL (#559) --
+  {
+    const unterminated = 'function f() {\n  throw new Error(\n    `never closed`\n';
+    check(
+      'key: an undelimitable statement falls back to the line form',
+      siteStatement(unterminated, unterminated.indexOf('throw')),
+      siteSource(unterminated, unterminated.indexOf('throw')),
+    );
+
+    // A single-line statement is IDENTICAL under both forms. This is what made
+    // #559 safe to land on a ledger that already had entries: every one of
+    // those keys is a one-line statement, so none was invalidated.
+    for (const stmt of ['process.exit(130);', "errors.push('boom');", 'return 1;']) {
+      const src2 = `a();\n  ${stmt}\nb();\n`;
+      const idx = src2.indexOf(stmt);
+      check(
+        `key: single-line statement unchanged by the statement form — ${stmt}`,
+        siteStatement(src2, idx),
+        siteSource(src2, idx),
+      );
+    }
   }
 
 

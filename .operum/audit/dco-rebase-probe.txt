@@ -1,0 +1,3 @@
+Throwaway probe for #696: measures what GitHub's rebase-merge button does to a
+commit's author, committer and trailers. Merged into a throwaway base branch,
+never into main. Both branches are deleted once the shape has been read.

@@ -597,24 +597,50 @@ git diff --numstat origin/main..HEAD  -- <path>     # main's CURRENT TIP..HEAD �
 Two dots compare against main's tip *as it is now*, so every commit main has
 gained since your branch forked renders as a **deletion you never made**.
 
-**Measured on one real branch, twice, an hour apart** — the capture branch that
-became PR #844:
+**Measured on one real branch** — `c4cf6fe`, the capture branch that became PR
+#844. Every column names the predicate that produced it, because a figure whose
+metric is implicit is the defect this whole section is about:
 
-| | files in the diff | rendered as pure deletions |
-|---|---|---|
-| three-dot | 4 | **0** |
-| two-dot, as QA measured it | — | **14** |
-| two-dot, one hour later | 27 | **18** |
+| | `files`<br>numstat rows | `any-deletions`<br>`awk '$2>0'` | `pure-deletions`<br>`awk '$2>0 && $1==0'` | `deleted-lines`<br>sum of col 2 |
+|---|---|---|---|---|
+| **three-dot** | 4 | **0** | 0 | **0** |
+| **two-dot** | 27 | **27** | 18 | **858** |
 
-**The number GREW while the branch sat unchanged.** That is the whole point, and
-it is why a static figure would understate the hazard: the two-dot count is not
-a property of your branch at all — it is a property of how far main has moved,
-so it climbs on its own and is largest exactly when review takes longest.
+**27 of 27 files in the two-dot diff render deletions, totalling 858 lines. The
+three-dot diff renders none.** The branch deleted nothing; `main` had simply
+moved 9 commits past the point it forked from.
 
-Several of those phantom deletions were files that had merged to main *the same
-day*, through PRs from this same session. So the reading is not merely noisy: it
-names real files, with real line counts, in a plausible-looking table. It is the
-#7952 near-miss reproduced live, and it nearly failed a correct PR once already.
+### The count is not a property of your branch, and it grows
+
+An earlier reading of this same unchanged ref, about an hour before the one
+above, gave **14** under the `any-deletions` predicate. It is now **27**.
+
+That earlier figure is **no longer reproducible** — and the reason is the point
+rather than a caveat. Two dots compare against main's tip *as it is now*, so the
+number is a function of how far main has moved, not of anything in your branch.
+It climbs on its own, and it is **largest exactly when review takes longest**.
+
+Several of those phantom deletions name files that merged to main *the same day*
+through unrelated PRs. So the wrong reading is not merely noisy: it names real
+files, with real line counts, in a plausible-looking table. It is the #7952
+near-miss reproduced live, and it nearly failed a correct PR once already.
+
+### The first version of this table was itself the defect it warns about
+
+Worth keeping, because it is the cheapest possible demonstration. That version
+had one column headed *"rendered as pure deletions"* carrying **two different
+metrics**: the 14 came from `any-deletions` and the 18 from `pure-deletions`.
+Both figures were real; the comparison between them was not, because the rows
+did not measure the same thing.
+
+It made the hazard look **three times smaller** than it is — a consistent
+predicate gives 14 → 27, not 14 → 18 — and it did so while arguing that a number
+must say what it measured. QA failed the PR over the column heading and was
+right to: in this document, a mislabelled metric is not a presentation slip.
+
+**Which is why the predicates are in the table now.** Not as decoration — as the
+thing that makes each cell checkable, and that would have made the original error
+visible at a glance instead of an hour later.
 
 Keep the line-count check alongside it — `git show origin/main:<path> | wc -l`
 against the working copy. It is immune to the two-dot/three-dot distinction

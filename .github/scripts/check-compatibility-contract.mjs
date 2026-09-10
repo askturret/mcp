@@ -373,8 +373,26 @@ export function main(argv) {
   // times on a tree everyone agrees is correct — and the eleven are not drift.
   // The two documents are written in different REGISTERS: the .md is formatted
   // markdown (`**and**`, `` `peerDependencies` ``) and the .json is plain text,
-  // so most pairs are paraphrase BY DESIGN. Zero of the five statusLegend values
-  // appear verbatim for exactly that reason.
+  // so most pairs are paraphrase BY DESIGN. None of the statusLegend values
+  // appears verbatim for exactly that reason.
+  //
+  // EVERY FIGURE ABOVE IS DERIVED, AND NOTHING ASSERTS IT (#771). The authority
+  // is `docs/compatibility.json` — the file this guard already parses — so
+  // re-derive rather than trust: count the `note` fields, test each against
+  // `docs/compatibility.md` with `includes`, and "eleven" is the remainder. The
+  // legend figure is the same walk over `Object.values(contract.statusLegend)`.
+  //
+  // Re-derived for #771, and all of it was still true: 13 notes, 2 verbatim, 11
+  // remainder, 5 legend values, 0 verbatim. Recorded because "still true" IS the
+  // hazard — a count that is right on the day it is written and parses nothing
+  // goes silently false on the next edit, and this one sits inside the guard
+  // whose own subject is that legend.
+  //
+  // THE CARDINALITY IS GONE FROM THE SENTENCE ON PURPOSE. It read "the five
+  // statusLegend values", which a sixth status falsifies while every check in
+  // this file stays green: check J compares the status NAMES as a set, so adding
+  // one to both documents passes. "None appears verbatim" is the claim actually
+  // being made, and it does not encode a number that drifts.
   //
   // So byte-equality is not a property of notes in general, and a guard asserting
   // it would be wrong rather than strict. It IS a property of the ones #625

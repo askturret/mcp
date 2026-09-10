@@ -669,9 +669,23 @@ check(
 // #576's full-tree obligation actually rests on.
 //
 // The realistic inverting edit is `f === 0 && c === 0` — #434's fail-closed
-// direction applied here. Every `c` below is non-zero for exactly that reason:
-// a truth table whose cannot-check column were always 0 would survive that
-// mutation unchanged and pin nothing.
+// direction applied here. TWO of the five rows below discriminate it, and they
+// are the f=0 / c-non-zero pair: `exitCodeFor(0, 1)` and `exitCodeFor(0, 18)`.
+// Under that mutant both return 1 where 0 is correct, so both redden. Measured
+// by applying the edit and reading which assertions failed.
+//
+// The other three do not discriminate it and are not there for that: (0, 0) and
+// (1, 0) are the baselines the pair is read against, and (1, 5) pins that a
+// failure still gates when cannot-checks are present. A truth table carrying NO
+// f=0 / c-non-zero row would survive the mutation unchanged and pin nothing.
+//
+// THIS SENTENCE USED TO READ "Every `c` below is non-zero" (#771). That was
+// false of the table three lines beneath it — (0, 0) and (1, 0) use c=0 — and it
+// shipped in a committed comment, where the next reader has no reason to
+// re-measure. The property it reached for HOLDS; only its claim about the rows
+// was wrong, which is why the table is untouched and the sentence is not
+// deleted. Naming the two rows is checkable against them at a glance; a
+// quantifier over all five was not.
 // ---------------------------------------------------------------------------
 check('verdict: a clean run exits 0', exitCodeFor(0, 0), 0);
 check('verdict: a cannot-check ALONE does not gate', exitCodeFor(0, 1), 0);

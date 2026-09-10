@@ -594,6 +594,70 @@ check(
   0,
 );
 
+// --- the README carve-out (#731) -------------------------------------------
+//
+// `packages/<dep>/**/!(README.md)` satisfies the #213 invariant: a change to
+// any of the dependency's SOURCE still re-runs the suite, and only its
+// top-level README is exempt. Without these four cases the second accepted
+// spelling would be an untested branch.
+
+check(
+  'the carve-out spelling satisfies the dependency invariant',
+  withFixture(
+    { core: [], cli: [CORE] },
+    `            core:
+              - 'packages/core/**'
+            cli:
+              - 'packages/cli/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'`,
+  ).code,
+  0,
+);
+
+check(
+  'the carve-out does NOT excuse omitting the dependency altogether',
+  withFixture(
+    { core: [], cli: [CORE] },
+    `            core:
+              - 'packages/core/**'
+            cli:
+              - 'packages/cli/**/!(README.md)'`,
+  ).code,
+  1,
+);
+
+check(
+  'a NARROWER glob is still refused — the carve-out is not a licence to subset',
+  withFixture(
+    { core: [], cli: [CORE] },
+    `            core:
+              - 'packages/core/**'
+            cli:
+              - 'packages/cli/**'
+              - 'packages/core/src/**'`,
+  ).code,
+  1,
+);
+
+{
+  // The lane check must be able to MATCH the new shape. Before this shape was
+  // taught to globMatches it hit cannotCheck and exited 2 — which is honest,
+  // but it took nine unrelated lane cases down with it.
+  const r = withFixture(
+    { core: [], cli: [CORE] },
+    `            core:
+              - 'packages/core/**'
+            cli:
+              - 'packages/cli/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'`,
+  );
+  check(
+    'the carve-out is not reported as an unsupported glob shape',
+    r.out.includes('unsupported glob shape'),
+    false,
+  );
+}
+
 check(
   'every violation is reported in one pass, not just the first',
   withFixture(

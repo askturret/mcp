@@ -125,6 +125,41 @@ jobs:
         id: filter
         with:
           filters: |
+            # `**/!(README.md)` IS A README CARVE-OUT, AND IT IS PER-PACKAGE (#731).
+            #
+            # A README edit under packages/core/** used to trip all twelve package
+            # filters. Measured: two runs on one branch (docs/issue-826-package-readmes),
+            # both cancelled, consumed 182 of 460 runner-minutes across 28 runs — 40%
+            # of all runner time, for one PR class revised twice that produced nothing.
+            # cancel-in-progress frees the slot but does NOT recover minutes already
+            # burned, and the replacement schedules the whole matrix again.
+            #
+            # NEVER BLANKET. Two suites genuinely read package READMEs at run time, and
+            # both reach the file through an INDIRECTION, which is why this needed an
+            # audit rather than a pattern-match:
+            #
+            #   core — subpath-export.test.ts walks EVERY .md in the repo from the root
+            #          and extracts @askturret/* import specifiers from each, asserting
+            #          they resolve. A README edit can therefore break it.
+            #   cli  — migrate.test.ts's claimSites() readdirSync's packages/ and reads
+            #          each <pkg>/README.md hunting a stale publishing claim; its
+            #          doctor-readme.test.ts also reads packages/cli/README.md.
+            #
+            # So `core` and `cli` deliberately KEEP the bare `packages/<x>/**`. Carving
+            # them out would silently drop real coverage — #774 in a new place, and
+            # `silently` is the word that matters.
+            #
+            # DO NOT "SIMPLIFY" THIS TO A NEGATION. `- '!packages/*/README.md'` is the
+            # obvious form and it is CATASTROPHIC here. dorny/paths-filter@v3 builds ONE
+            # picomatch matcher PER PATTERN and ORs them (`patterns.some(...)`); it has
+            # no negation handling at all. A `!` pattern is therefore evaluated on its
+            # own and matches every path that is NOT a package README. Verified against
+            # picomatch: adding it to `core` leaves packages/core/README.md still
+            # matching AND newly matches packages/cli/src/x.ts, docs/**, the root
+            # README.md and .github/workflows/test.yml. Every suite would run on every
+            # PR, while the diff read like a tightening.
+            #
+            # The extglob sits INSIDE a single positive pattern, which is why it works.
             core:
               - 'packages/core/**'
               # versions.test.ts READS both compatibility files and asserts the
@@ -136,10 +171,10 @@ jobs:
               - 'docs/compatibility.json'
               - 'docs/compatibility.md'
             adapters-express:
-              - 'packages/adapters-express/**'
+              - 'packages/adapters-express/**/!(README.md)'
               # adapters-express serves the Explorer, so an explorer-only
               # change must re-run these tests too.
-              - 'packages/explorer/**'
+              - 'packages/explorer/**/!(README.md)'
               # petstore-example.test.ts compiles the example's REAL spec, so a
               # change to the example must re-run these tests — otherwise the
               # guard cannot fire on the thing it guards (#99).
@@ -151,52 +186,52 @@ jobs:
               # only because #42's adapter-conformance filter happens to include
               # these two. That is coverage by side effect — it would disappear
               # the day that filter is narrowed.
-              - 'packages/core/**'
-              - 'packages/transports/**'
+              - 'packages/core/**/!(README.md)'
+              - 'packages/transports/**/!(README.md)'
               # Also built from the OpenAPI source (#213) — declared in
               # package.json, so a change there can break this adapter without
               # touching a file the other entries match.
-              - 'packages/sources-openapi/**'
+              - 'packages/sources-openapi/**/!(README.md)'
             adapters-fastify:
-              - 'packages/adapters-fastify/**'
+              - 'packages/adapters-fastify/**/!(README.md)'
               # Same reasoning as adapters-express: this adapter serves the
               # Explorer too, so an explorer-only change must re-run it.
-              - 'packages/explorer/**'
+              - 'packages/explorer/**/!(README.md)'
               # And the same dependency reality (#153) — built from core and
               # transports, so both must re-run it.
-              - 'packages/core/**'
-              - 'packages/transports/**'
+              - 'packages/core/**/!(README.md)'
+              - 'packages/transports/**/!(README.md)'
               # Same OpenAPI-source dependency as adapters-express (#213).
-              - 'packages/sources-openapi/**'
+              - 'packages/sources-openapi/**/!(README.md)'
             adapter-conformance:
               # The conformance suite asserts PARITY, so it must re-run when any
               # adapter changes, and when the shared machinery underneath them
               # does. Narrowing this to its own directory would let an adapter
               # or transport change break parity without the suite noticing.
-              - 'packages/adapter-conformance/**'
-              - 'packages/adapters-express/**'
-              - 'packages/adapters-fastify/**'
-              - 'packages/core/**'
-              - 'packages/transports/**'
+              - 'packages/adapter-conformance/**/!(README.md)'
+              - 'packages/adapters-express/**/!(README.md)'
+              - 'packages/adapters-fastify/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'
+              - 'packages/transports/**/!(README.md)'
               # The suite drives the adapters through a real OpenAPI source, so
               # a change there can break parity with no adapter file touched (#213).
-              - 'packages/sources-openapi/**'
+              - 'packages/sources-openapi/**/!(README.md)'
               # Both adapters serve the Explorer, so parity depends on it even
               # though adapter-conformance never names it (#282). "The shared
               # machinery underneath them", above, is transitive — this is the
               # entry that makes the comment true.
-              - 'packages/explorer/**'
+              - 'packages/explorer/**/!(README.md)'
             gateway:
-              - 'packages/gateway/**'
+              - 'packages/gateway/**/!(README.md)'
               # The gateway is assembled ENTIRELY from these packages and adds
               # no runtime of its own, so a change to any of them can break it
               # without touching a gateway file. Its own suite is also what
               # covers the compose example's config and spec, so those count
               # too — an example that stops working is a shipped defect.
-              - 'packages/core/**'
-              - 'packages/transports/**'
-              - 'packages/sources-openapi/**'
-              - 'packages/observability/**'
+              - 'packages/core/**/!(README.md)'
+              - 'packages/transports/**/!(README.md)'
+              - 'packages/sources-openapi/**/!(README.md)'
+              - 'packages/observability/**/!(README.md)'
               - 'examples/gateway-compose/**'
             reliability:
               # The suite asserts on INTERACTIONS between the resilience
@@ -204,13 +239,13 @@ jobs:
               # merely when its own directory does. Narrowing this to
               # packages/reliability/** would let a bulkhead or breaker change
               # silently alter a seam the suite exists to guard.
-              - 'packages/reliability/**'
-              - 'packages/core/**'
-              - 'packages/transports/**'
+              - 'packages/reliability/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'
+              - 'packages/transports/**/!(README.md)'
               # The reference-Petstore layer compiles this spec through the
               # OpenAPI source, so a change to either can break the suite
               # without touching anything above it.
-              - 'packages/sources-openapi/**'
+              - 'packages/sources-openapi/**/!(README.md)'
               - 'examples/petstore-light/**'
             adapter-test:
               # The kit RUNS the real adapters through the real bank, so it
@@ -218,38 +253,38 @@ jobs:
               # directory does. Narrowing this to packages/adapter-test/**
               # would let an adapter or bank change alter a published
               # conformance result with nothing noticing.
-              - 'packages/adapter-test/**'
-              - 'packages/adapter-conformance/**'
-              - 'packages/adapters-express/**'
-              - 'packages/adapters-fastify/**'
-              - 'packages/core/**'
-              - 'packages/transports/**'
+              - 'packages/adapter-test/**/!(README.md)'
+              - 'packages/adapter-conformance/**/!(README.md)'
+              - 'packages/adapters-express/**/!(README.md)'
+              - 'packages/adapters-fastify/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'
+              - 'packages/transports/**/!(README.md)'
               # Reached through adapter-conformance, which the kit runs (#282).
               # A published conformance result depends on both, and neither
               # appears in this package's own manifest — which is exactly why
               # the guard now walks the closure rather than direct deps.
-              - 'packages/sources-openapi/**'
-              - 'packages/explorer/**'
+              - 'packages/sources-openapi/**/!(README.md)'
+              - 'packages/explorer/**/!(README.md)'
             # The five filters below each declare a dependency on core and, until
             # #213, listed only their own directory — so a core change did not
             # re-run any of them. check-path-filters.mjs now asserts this from
             # each package.json, which is why the entries are no longer a matter
             # of remembering.
             sources-openapi:
-              - 'packages/sources-openapi/**'
-              - 'packages/core/**'
+              - 'packages/sources-openapi/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'
               # from-openapi.test.ts reads the same versioned contract to assert
               # which OpenAPI versions are published as supported (#774).
               - 'docs/compatibility.json'
             transports:
-              - 'packages/transports/**'
-              - 'packages/core/**'
+              - 'packages/transports/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'
             observability:
-              - 'packages/observability/**'
-              - 'packages/core/**'
+              - 'packages/observability/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'
             explorer:
-              - 'packages/explorer/**'
-              - 'packages/core/**'
+              - 'packages/explorer/**/!(README.md)'
+              - 'packages/core/**/!(README.md)'
             cli:
               - 'packages/cli/**'
               - 'packages/core/**'

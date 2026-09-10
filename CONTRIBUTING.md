@@ -404,9 +404,32 @@ Read the full [DCO text](https://developercertificate.org/).
 
 ### DCO Enforcement
 
-All pull requests are automatically checked for DCO sign-off via CI. The check is the **DCO sign-off** job in [`.github/workflows/dco.yml`](.github/workflows/dco.yml), which runs [`.github/scripts/dco-check.sh`](.github/scripts/dco-check.sh) against every commit the pull request adds. Pull requests with unsigned commits **will not be merged**. There is one pull request that fails this check permanently and by design — see [Dependabot pull requests](#dependabot-pull-requests-convert-and-close) at the end of this section.
+All pull requests are automatically checked for DCO sign-off via CI. The check is the **DCO sign-off** job in [`.github/workflows/dco.yml`](.github/workflows/dco.yml), which runs [`.github/scripts/dco-check.sh`](.github/scripts/dco-check.sh) against every commit the pull request adds. There is one pull request that fails this check permanently and by design — see [Dependabot pull requests](#dependabot-pull-requests-convert-and-close) at the end of this section.
 
 The check requires each commit — merge commits excepted, since the forge generates those — to carry a `Signed-off-by` trailer matching that commit's author or committer. The match is case-insensitive.
+
+#### A green pull request does not mean a signed commit on `main` (#696)
+
+This section previously said that pull requests with unsigned commits "will not be merged." **That was not true, and stating it was part of why the failure stayed invisible for so long.** Two facts to hold onto instead:
+
+1. **The gate is advisory in practice.** A red `DCO sign-off` does not mechanically block the merge button, and on this repository's single serialized runner the verdict frequently arrives *after* the merge decision was taken — PR #686 merged at 14:50:55Z and its verdict landed at 15:10:57Z. A reader checking the board saw *absent*, not *red*.
+2. **A squash or rebase merge composes a new commit that no pull request ever contained.** So a green pull request is not a measurement of what lands. Squash sets the author to whoever clicked and the committer to GitHub whilst the trailer still names the original author — matching neither identity, and therefore failing.
+
+Measured consequence: **73.1% of merged commits on `main` fail DCO** (n=540), and always did.
+
+Three jobs now measure this, and the split is deliberate:
+
+| Job | Trigger | What it answers |
+|---|---|---|
+| `DCO sign-off` | `pull_request` | is the *proposal* signed? |
+| `DCO sign-off on main` | `push` to `main` | is what *actually landed* signed? |
+| `DCO sweep on main` | weekly + manual | what is the rate, and has anything slipped past the push job? |
+
+`DCO sign-off on main` is **expected to be red until the repository's merge method changes**, because the merge method is what composes the offending commit. That red is the finding rather than a fault to suppress, it blocks nothing (it runs after the merge), and it goes green on its own once the author is preserved.
+
+The sweep reports the historical rate as a number that is always visible but **enforces only from a cutoff date**. Existing non-compliance is not repairable — rewriting a public `main` to add trailers is not on the table — and a check that can only ever be red is read as "that one is always red" and stops carrying information.
+
+**Measured, not assumed: GitHub's rebase-merge button preserves the author.** A probe merge through the button took a commit whose author, committer and trailer were all the same identity and produced a commit with the **author preserved**, only the **committer** changed to the merging actor, and the message including `Signed-off-by` **byte-identical**. `dco-check.sh` accepts a trailer matching author *or* committer, so author-preservation alone is sufficient for it to pass.
 
 To add a sign-off to a commit retroactively:
 

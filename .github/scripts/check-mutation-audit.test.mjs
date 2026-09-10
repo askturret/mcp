@@ -81,8 +81,9 @@ import {
   lstatSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawn, spawnSync } from 'node:child_process';
 
 import {
   maskCode,
@@ -386,9 +387,25 @@ process.exit(0);
       result.results.some((r) => r.verdict === 'witnessed'),
       false,
     );
+    // THE VACUOUS CONJUNCT IS GONE, and only it (#559).
+    //
+    // This read `(await audit(dir, { exempt: [] })).errors.length >= 0 &&
+    // result.results[0]?.detail !== undefined`. A length is never negative, so
+    // the first conjunct was TRUE for every possible audit — including one that
+    // raised no error at all — while the description promised "it is an
+    // audit-integrity error". The half that carried the claim asserted nothing,
+    // and it also ran a whole extra `audit()` to do it.
+    //
+    // The second conjunct is REAL and is kept, under a description of what it
+    // actually checks: an unparseable verdict has to carry a `detail`, or the
+    // report cannot say why the mutation did not parse.
+    //
+    // The claim the vacuous half was reaching for — that an unparseable verdict
+    // reaches the run's ERROR channel — is now asserted properly in the #559 D2
+    // block at the end of this file, against an anchored per-site message.
     check(
-      '...and it is an audit-integrity error, not a measurement',
-      (await audit(dir, { exempt: [] })).errors.length >= 0 && result.results[0]?.detail !== undefined,
+      '...and the unparseable verdict carries a `detail` saying why',
+      result.results[0]?.detail !== undefined,
       true,
     );
 
@@ -1818,6 +1835,206 @@ process.exit(0);
     doc.includes('`witnessed + unwitnessed + cannot-check sites = failure sites`'), // partition-identity-exempt: the superseded form, asserted ABSENT
     false,
   );
+}
+
+// ---------------------------------------------------------------------------
+// #559 D2 — the audit's OWN error channel, and the exit code that carries it
+//
+// WHY THESE FOUR ARE GROUPED, AND WHY THE AUDIT CANNOT CERTIFY THEM.
+//
+// Every assertion below covers a site in THIS file, which means the audit is
+// measuring itself. #559 records why that is not enough on its own: the audit's
+// `errors-push` mutation replaces the call with a no-op, so an assertion that
+// reddens on the ABSENCE of a message reddens under neutralisation regardless
+// of WHICH message it was looking for. Satisfying the audit therefore does not
+// establish that a witness discriminates the branch.
+//
+// So each of these pins the specific message or the specific exit code, and
+// each was verified OUTSIDE the audit — by hand-mutating this file and running
+// this self-test directly, including a branch-discriminating mutation that
+// swaps in a neighbouring site's text. The evidence is recorded on #559; the
+// design constraint it produced is visible here.
+// ---------------------------------------------------------------------------
+{
+  const AUDIT_CLI = join(dirname(fileURLToPath(import.meta.url)), 'check-mutation-audit.mjs');
+
+  /*
+   * THE HIGHEST-PRIORITY SITE IN D2: `errors.push(...ledger.errors)`.
+   *
+   * This one line is the difference between "the ledger reports" and "CI
+   * refuses". Neutralise it and a ledger claim that FAILED contact with the
+   * measurement is dropped in silence: `report.errors` stays empty, `main`
+   * returns 0, and the run is green while carrying a false exemption. That is
+   * the whole point of condition 5, so it is witnessed here rather than
+   * exempted, and it is asserted on its own rather than folded into a batch.
+   *
+   * The fixture's first check IS witnessed by its self-test, so an exemption
+   * naming it is false BY CONSTRUCTION — which is what makes this a stable
+   * fixture rather than one that depends on the fixture staying unwitnessed.
+   */
+  {
+    const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
+    const falseEntry = {
+      script: 'check-fixture.mjs',
+      kind: 'errors-push',
+      source: "if (flags.includes('--trip-witnessed')) errors.push('the witnessed check fired');",
+      reason: 'deliberately false — the site it names is witnessed by the fixture self-test',
+      unblockedBy: 'nothing; this entry exists to be refused',
+      maskingExcluded: 'not applicable — this is a fixture, not a real exemption',
+    };
+
+    const report = await audit(dir, { exempt: [falseEntry] });
+
+    check(
+      "a FALSE exemption reaches the run's error channel (#559, m-audit errors.push(...ledger.errors))",
+      report.errors.some((e) => reHits(/THE EXEMPTION IS FALSE/, e)),
+      true,
+    );
+
+    // THE POSITIVE CONTROL for the assertion above. Without it, "the error is
+    // present" could hold because this fixture reports errors for some
+    // unrelated reason, and the assertion would keep passing with the ledger
+    // channel severed. The same audit over the same tree with an EMPTY ledger
+    // must be silent on this — so the message is attributable to the ledger.
+    const clean = await audit(dir, { exempt: [] });
+    check(
+      '...and CONTROL: the same run with an empty ledger raises no such error',
+      clean.errors.some((e) => reHits(/THE EXEMPTION IS FALSE/, e)),
+      false,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  /*
+   * An unparseable mutation must become an audit-integrity ERROR.
+   *
+   * WHY THIS EXISTS SEPARATELY. The unparseable case is already exercised much
+   * earlier in this file, and the assertion there carried a VACUOUS conjunct —
+   * `(await audit(dir, { exempt: [] })).errors.length >= 0`, true for every
+   * possible length — as the half that was supposed to establish "audit-integrity
+   * error". So the site that turns an unparseable verdict into an error was
+   * unwitnessed behind an assertion that looked like it covered it: a Decorative
+   * Guard in the audit's own self-test, which is the shape #559 exists to remove.
+   *
+   * That conjunct is now deleted at its own site and the surviving half is
+   * described accurately; the error-channel claim is asserted HERE instead,
+   * against an anchored per-site message. Stated in the present tense on
+   * purpose — the first version of this comment said the assertion "used to
+   * stand near this" while it was still standing, byte-identical to main. QA
+   * caught that (a false claim committed in the tree, inside the file whose
+   * subject is unmeasured prose) and it is worth more than the fix.
+   */
+  {
+    const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
+    const report = await audit(dir, { exempt: [], mutate: () => 'const broken = ;\n' });
+
+    /*
+     * THE REGEX IS ANCHORED, and that is the whole assertion.
+     *
+     * A bare /mutation does not parse/ does NOT witness this site, and the
+     * first version of this test proved it: the same run also raises
+     * "unknown failure path: … all-sites mutation does not parse" from the
+     * PROBE path, a different site entirely. That neighbour satisfied the loose
+     * regex, so the assertion stayed green with this site's channel severed —
+     * masking by a neighbouring message, which is the #559 failure reproduced
+     * inside the fix for it. Found by mutating and re-running, not by review.
+     *
+     * `^<guard> line <n>:` is unique to the per-site message: the probe's
+     * message begins with "unknown failure path:" and names no line.
+     */
+    check(
+      'an unparseable mutation is a PER-SITE audit-integrity error, named with its line (#559)',
+      report.errors.some((e) => reHits(/^check-fixture\.mjs line \d+: mutation does not parse/, e)),
+      true,
+    );
+
+    const clean = await audit(dir, { exempt: [] });
+    check(
+      '...and CONTROL: a parseable run reports no unparseable site',
+      clean.errors.some((e) => reHits(/mutation does not parse/, e)),
+      false,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  /*
+   * The restore check, reached through the `readBack` seam (#559).
+   *
+   * The audit's promise is that it never leaves a disarmed guard on disk. The
+   * line that enforces it was unwitnessed because reaching it needs a
+   * filesystem that accepts a write and then reads back something else — not a
+   * missing fixture but an uninjectable fault.
+   */
+  {
+    const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
+    const guardPath = join(dir, '.github', 'scripts', 'check-fixture.mjs');
+    const testPath = join(dir, '.github', 'scripts', 'check-fixture.test.mjs');
+
+    let message = '(did not throw)';
+    try {
+      await auditGuard({
+        guardPath,
+        testPath,
+        rootDir: dir,
+        readBack: () => 'this is not what was written back',
+      });
+    } catch (e) {
+      message = e instanceof Error ? e.message : String(e);
+    }
+    check(
+      'a restore that does not round-trip is REFUSED, loudly (#559, RESTORE FAILED)',
+      reHits(/RESTORE FAILED for .*check-fixture\.mjs/, message),
+      true,
+    );
+
+    // CONTROL: the real read-back must NOT trip it, or the assertion above
+    // would pass against an audit that always believes the restore failed.
+    const healthy = await auditGuard({ guardPath, testPath, rootDir: dir });
+    check('...and CONTROL: an honest read-back completes normally', healthy.status, 'measured');
+    rmSync(dir, { recursive: true, force: true });
+  }
+
+  /*
+   * THE EXIT CODE, at process level (#559 — two of D2's three straddling
+   * sites, done first as the disposition requires).
+   *
+   * `return 1` in `main` and `process.exit(await main(process.argv))` are only
+   * observable by running this file as a program. Every other assertion in
+   * this suite imports `audit()` and never reaches either.
+   *
+   * Pointed at a fixture root, the real ledger's three entries all name real
+   * guards that the fixture tree does not contain, so each is refused as STALE
+   * — a genuine audit-integrity failure, reached without injecting anything.
+   *
+   * WHY status ALONE IS NOT ENOUGH, and what removes the ambiguity. Node exits
+   * 1 for an uncaught exception too, so `status === 1` cannot by itself tell
+   * "main returned 1" from "the script died on line one". The conjunction is
+   * what discriminates: `main` prints the rendered inventory to stdout BEFORE
+   * it reaches the error branch, so stdout carrying the inventory proves the
+   * run completed and stderr carrying the banner proves it refused. A crash
+   * satisfies neither.
+   *
+   * Asserted as `=== 1`, never as "non-zero": the audit's own `return-code`
+   * mutation rewrites `return 1` to `return 0`, and a "non-zero" assertion
+   * would also have passed for `return 2`.
+   */
+  {
+    const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);
+    const run = spawnSync(process.execPath, [AUDIT_CLI, dir], { encoding: 'utf-8' });
+
+    check('the CLI exits 1 — not merely non-zero — on an integrity failure (#559)', run.status, 1);
+    check(
+      '...and it RAN rather than died: the inventory reached stdout',
+      run.stdout.includes('Mutation-audit inventory'),
+      true,
+    );
+    check(
+      '...and the refusal names itself on stderr',
+      reHits(/AUDIT-INTEGRITY problem/, run.stderr),
+      true,
+    );
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 console.log('');

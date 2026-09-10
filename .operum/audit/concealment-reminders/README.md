@@ -557,6 +557,35 @@ and describes matching that already ships.
 3. read the "N corpus file(s) added or modified" note
 ```
 
+### THE VALIDATOR IS NOT THE FILE THE DOCTRINE NAMES
+
+The `## Concealment Disclosure Routing` doctrine says the
+`factor_1 == "unverifiable"` implies `classification == "anomalous"` invariant
+is enforced by **`scripts/check_concealment_capture_schema.py`**.
+
+**That file does not exist in this repository.** Checked: no such path, and no
+file of that name anywhere in the tree.
+
+**The enforcement is real — only the named surface is wrong.** The invariant is
+`CONDITION 3` in `.github/scripts/check-concealment-captures.mjs`, and it
+**fails rather than warns**, exactly as the doctrine promises:
+
+```js
+if (row.factor_1 === 'unverifiable' && row.classification !== 'anomalous') {
+  errors.push(/* ... "I could not check" is never "it passed". */);
+}
+```
+
+So run the command in the box above. Do **not** go looking for a Python script,
+and do not conclude from its absence that the invariant is unenforced — that
+inference is the trap this note exists to close, and it points the wrong way:
+you would be reasoning from a missing file to a missing control.
+
+Recorded here rather than filed, and deliberately WITHOUT a line number. The
+surface is named by file and condition because a line number is indexed by
+position rather than identity, and this session watched one such reference move
+61 lines inside the pull request that cited it.
+
 **Step 3 is the load-bearing one, and step 1 is why.**
 
 `0 corpus file(s) added or modified` means **nothing was checked.** Not "nothing

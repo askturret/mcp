@@ -251,9 +251,36 @@ const STATEMENT_SCAN_LIMIT = 8000;
  * ## The scan, and where it fails closed
  *
  * Scanning happens over MASKED source, so a `;` or a bracket inside a string,
- * a template literal or a comment cannot end the statement early. That matters
- * here specifically: `:122`'s own message contains "metric definitions; could
- * not read", and an unmasked scan would cut the statement at that semicolon.
+ * a template literal or a comment cannot end the statement early.
+ *
+ * MEASURED, because the first version of this paragraph got the reason wrong.
+ * Comparing every site's statement with the mask against the same scan without
+ * it, EXACTLY 2 of 207 sites differ — and both are `result-code` sites sitting
+ * inside a `return { … };` object literal:
+ *
+ *   check-metric-cardinality  `code: 2,` above the message
+ *                             "…derives its terms from that file; it will not guess."
+ *   check-audit-append-only   `code: 1,` above the message
+ *                             "…(`.gitattributes` sets merge=union to prevent this…);"
+ *
+ * The mechanism, and it turns on DEPTH rather than on the semicolon existing.
+ * The scan never opened the object literal, so prose inside those messages sits
+ * at depth ZERO: the first case's bare `;` terminates the scan mid-string, and
+ * the second reaches depth zero via the parenthesised aside before its `;` does
+ * the same. Masked, both fall back to the line form when the literal's `}`
+ * takes depth negative. Unmasked, both return a key that is part statement and
+ * part message.
+ *
+ * WHAT THIS PARAGRAPH USED TO CLAIM, and why it was false: that
+ * `check-dashboard-metrics:122`'s own message — "metric definitions; could not
+ * read" — would cut the statement unmasked. It would not. That site is inside
+ * `throw new Error(`, so its semicolon sits at depth ONE, and the terminator
+ * requires depth zero; the depth counter already prevents it, masked or not.
+ * `siteStatement` returns byte-identical output there with and without the
+ * mask. The conclusion was right and the reason was not — which this file
+ * argues three screens above is the more expensive half, because only the
+ * reason is reusable. Cited by message text rather than by line, for the same
+ * reason the key itself is.
  *
  * From the site's line start, the statement ends at the first `;` seen at
  * bracket depth zero. THREE CASES FALL BACK TO THE LINE FORM rather than

@@ -1473,23 +1473,113 @@ const rendered = (t) => renderInventory({ totals: t, guards: [], unreachable: []
       siteStatement(two, first),
       'throw new Error( `parsed ${n} of ${m} definitions; could not read: ${x}`, );',
     );
-    // A SEMICOLON INSIDE THE MESSAGE MUST NOT END THE STATEMENT, and this is
-    // not hypothetical: check-dashboard-metrics:122's own text contains
-    // "metric definitions; could not read", so an unmasked scan cuts it there.
+    // A SEMICOLON INSIDE THE MESSAGE MUST NOT END THE STATEMENT.
+    //
+    // The comment here used to justify this with check-dashboard-metrics:122,
+    // whose message contains "metric definitions; could not read", claiming an
+    // unmasked scan cuts it there. IT DOES NOT: that site is inside
+    // `throw new Error(`, so the semicolon is at depth ONE and the terminator
+    // requires zero — the depth counter prevents it with or without the mask.
+    // The fixture below has the same shape, so it exercises depth, not masking.
     check(
       'key: a `;` inside a string does not terminate the statement early',
       siteStatement(two, first).includes('could not read'),
       true,
     );
+
+    // MASKING, ISOLATED — the case the comment above was reaching for and did
+    // not have. Measured across the real tree: exactly 2 of 207 sites differ
+    // masked vs unmasked, and both are `result-code` sites inside a
+    // `return { … };` literal, where the scan never opened the brace so prose
+    // inside the message sits at depth ZERO.
+    //
+    // `siteStatement`'s third argument is the mask, so passing the RAW source
+    // simulates no masking at all — which is what makes this assertable
+    // without editing the guard.
+    {
+      const inLiteral = [
+        'function f() {',
+        '  return {',
+        '    code: 2,',
+        '    message:',
+        "      'derives its terms from that file; it will not guess.',",
+        '  };',
+        '}',
+        '',
+      ].join('\n');
+      const at = inLiteral.indexOf('code: 2,') + 'code: '.length;
+
+      check(
+        'key: MASKED — a depth-zero `;` inside a message falls back to the line form',
+        siteStatement(inLiteral, at, maskCode(inLiteral)),
+        'code: 2,',
+      );
+      // The exact value, not a substring test — it is short, and what makes the
+      // point is the SHAPE: the scan stopped at the semicolon inside the
+      // string, so the key is part statement and part message and carries an
+      // UNCLOSED quote. That is the "looks whole, is not" failure the fallback
+      // exists to avoid, and it is worse than the line form rather than merely
+      // different.
+      //
+      // Written after reading what the call returns. The first version of this
+      // assertion guessed `.includes('will not guess')` and failed, because the
+      // scan terminates AT the semicolon and never reaches that clause — the
+      // same class of mistake as the comment being corrected here.
+      check(
+        'key: UNMASKED — the same scan terminates inside the string, so the mask IS load-bearing',
+        siteStatement(inLiteral, at, inLiteral),
+        "code: 2, message: 'derives its terms from that file;",
+      );
+    }
   }
 
   // --- FAIL CLOSED, WHICH IS THE WHOLE LICENCE FOR SCANNING AT ALL (#559) --
+  //
+  // ALL THREE FALLBACKS, one assertion each. The comment in the guard claims
+  // three and only the first of them was asserted here — a coverage gap QA
+  // found, and the kind that turns a described property into an assumed one.
   {
+    // (1) no `;` at all before the source ends.
     const unterminated = 'function f() {\n  throw new Error(\n    `never closed`\n';
     check(
-      'key: an undelimitable statement falls back to the line form',
+      'key: fallback 1 of 3 — no terminator before EOF falls back to the line form',
       siteStatement(unterminated, unterminated.indexOf('throw')),
       siteSource(unterminated, unterminated.indexOf('throw')),
+    );
+
+    // (2) depth goes negative — the line starts inside a construct the scan
+    // never opened, which is the shape every `result-code` site has.
+    const insideLiteral = 'const x = {\n  code: 1,\n};\n';
+    const codeAt = insideLiteral.indexOf('1');
+    check(
+      'key: fallback 2 of 3 — depth going negative falls back to the line form',
+      siteStatement(insideLiteral, codeAt),
+      siteSource(insideLiteral, codeAt),
+    );
+    // ...and it is the LINE, not a half-statement that swallowed the `};`.
+    check(
+      'key: ...and that fallback is the line itself, not a truncated slice',
+      siteStatement(insideLiteral, codeAt),
+      'code: 1,',
+    );
+
+    // (3) the scan limit. Padding longer than STATEMENT_SCAN_LIMIT sits between
+    // the site and its terminator, so the cap is reached first.
+    const far = `function f() {\n  throw new Error(\n${'    // pad\n'.repeat(900)}  );\n}\n`;
+    const farAt = far.indexOf('throw');
+    check(
+      'key: fallback 3 of 3 — the scan limit falls back to the line form',
+      siteStatement(far, farAt),
+      siteSource(far, farAt),
+    );
+    // The control that makes fallback 3 a measurement rather than a coincidence:
+    // the SAME shape inside the limit resolves to the whole statement, so the
+    // fallback above is the cap firing and not the scan failing generally.
+    const near = `function f() {\n  throw new Error(\n${'    // pad\n'.repeat(5)}  );\n}\n`;
+    check(
+      'key: ...CONTROL — the same shape within the limit resolves to the statement',
+      siteStatement(near, near.indexOf('throw')).startsWith('throw new Error('),
+      true,
     );
 
     // A single-line statement is IDENTICAL under both forms. This is what made

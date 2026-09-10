@@ -8,3 +8,5 @@
 {"branch":"feat/issue-596-npm-package-metadata","post_sha":"1dad9f2a4221","post_count":2,"completed_at":"2026-09-04T12:37:00Z","result":"success"}
 {"branch":"fix/issue-592-tarball-requires-dist","pre_sha":"fb2a279620528512b11e4abb1b6d9e30acbb3c53","pre_count":2,"started_at":"2026-09-05T11:03:36Z"}
 {"branch":"fix/issue-592-tarball-requires-dist","post_sha":"cecad41617ff0a6f47f45c7b66ee2f0ef52bb649","post_count":3,"completed_at":"2026-09-05T11:05:54Z","result":"success"}
+{"branch":"chore/capture-t1c-guard-branch-switch-20260910","pre_sha":"514b8251e60a586e745ff9774d25a8b5ad9a2de9","pre_count":1,"started_at":"2026-09-10T13:38:23Z"}
+{"branch":"chore/capture-t1c-guard-branch-switch-20260910","post_sha":"514b8251e60a586e745ff9774d25a8b5ad9a2de9","post_count":1,"completed_at":"2026-09-10T13:38:59Z","result":"not_attempted","reason":"git_rebase refused: unstaged changes in workdir (an auto-generated protected-path file this branch must not commit). Synced with merge instead, per the safe-default rule; no history rewritten and nothing force-pushed."}

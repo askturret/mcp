@@ -557,6 +557,70 @@ and describes matching that already ships.
 3. read the "N corpus file(s) added or modified" note
 ```
 
+### THE SECOND ARGUMENT IS NOT OPTIONAL — without it the validator REFUSES
+
+`origin/main` in step 2 is the diff base. Omit it and the tool exits **2**, not 0:
+
+```
+$ node .github/scripts/check-concealment-captures.mjs .
+  - no diff base supplied, so no diff-scoped check ran
+"I could not check" is not "it passed", so this exits 2 rather than 0.
+$ echo $?
+2
+
+$ node .github/scripts/check-concealment-captures.mjs . origin/main
+$ echo $?
+0
+```
+
+**The refusal is the tool being right, not a usage nuisance.** The conditions
+that catch a redacted path, a missing `templates_revision`, and a row claiming
+no template while one matches are all **diff-scoped**, so with no base they
+examine nothing. A zero exit there would report a pass over an empty scan.
+
+Worth stating because **the failure is silent in the direction that matters**:
+a run without the base still prints the corpus-wide notes and looks like it
+worked. The exit code is the only thing that distinguishes "your rows are fine"
+from "your rows were never looked at" — and an agent reading the output rather
+than the code learns nothing.
+
+### PROVE APPEND-ONLY WITH THREE DOTS. Two dots answer a different question.
+
+`.operum/audit/*.jsonl` is append-only, and the check before pushing is that
+your change deletes nothing. Use **three** dots:
+
+```
+git diff --numstat origin/main...HEAD -- <path>     # merge-base..HEAD — your contribution
+git diff --numstat origin/main..HEAD  -- <path>     # main's CURRENT TIP..HEAD — WRONG
+```
+
+Two dots compare against main's tip *as it is now*, so every commit main has
+gained since your branch forked renders as a **deletion you never made**.
+
+**Measured on one real branch, twice, an hour apart** — the capture branch that
+became PR #844:
+
+| | files in the diff | rendered as pure deletions |
+|---|---|---|
+| three-dot | 4 | **0** |
+| two-dot, as QA measured it | — | **14** |
+| two-dot, one hour later | 27 | **18** |
+
+**The number GREW while the branch sat unchanged.** That is the whole point, and
+it is why a static figure would understate the hazard: the two-dot count is not
+a property of your branch at all — it is a property of how far main has moved,
+so it climbs on its own and is largest exactly when review takes longest.
+
+Several of those phantom deletions were files that had merged to main *the same
+day*, through PRs from this same session. So the reading is not merely noisy: it
+names real files, with real line counts, in a plausible-looking table. It is the
+#7952 near-miss reproduced live, and it nearly failed a correct PR once already.
+
+Keep the line-count check alongside it — `git show origin/main:<path> | wc -l`
+against the working copy. It is immune to the two-dot/three-dot distinction
+entirely, so the two checks fail independently and neither can quietly stand in
+for the other.
+
 ### THE VALIDATOR IS NOT THE FILE THE DOCTRINE NAMES
 
 The `## Concealment Disclosure Routing` doctrine says the

@@ -1,17 +1,63 @@
 name: DCO
 
+# WHY THIS WORKFLOW HAS FOUR TRIGGERS (#696)
+#
+# It used to have one: `pull_request`. That measured every proposed commit and
+# never once measured `main` itself — so when merged commits on `main` began
+# failing DCO, no surface anywhere said so. The rate reached 73.1% of merged
+# commits (n=540) before anybody noticed, and it was noticed by hand.
+#
+# `pull_request` alone cannot see this, for a structural reason rather than a
+# tuning one: a squash or rebase merge composes a NEW commit that no pull
+# request ever contained. The thing that lands on `main` is not the thing that
+# was checked. A gate on the proposal is therefore not a measurement of the
+# result, however green it is.
+#
+# Timing made it worse and is NOT the cause. PR #686 merged at 14:50:55Z and
+# its DCO verdict completed at 15:10:57Z on the single serialized runner — so
+# at the moment of decision the information did not exist. A reader sees
+# *absent*, not *red*. "Check the board before merging" cannot fix that, which
+# is why the fix is a check that runs AFTER the merge instead.
+#
+# THIS IMPLEMENTS AN ALREADY-ACCEPTED DECISION: docs/adr/ADR-027, "A check must
+# examine the artifact that lands, not a pre-transformation proxy" (Accepted,
+# #741), which names #696 as its motivating case. That record deliberately did
+# NOT close the gap — "the two identified gaps stay open" — and it pre-accepted
+# this fix's cost: "re-asserting on the landed artifact costs a second run."
+# The `dco-main` job below is that second run.
+#
+# What ADR-027 records as unmitigated stays unmitigated: nothing here
+# enumerates merge-path transformations, so a future merge-strategy change
+# could introduce another rewrite and nothing would report it. This closes the
+# DCO instance, not the class.
+
 on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened]
+  # Measures what actually LANDED, which is the gap above. Fires once per merge.
+  push:
+    branches: [main]
+  # Backstop for anything the push trigger structurally cannot see: a period
+  # when this workflow was broken or disabled, or commits that reached `main`
+  # by some route that emitted no push event we handled.
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
   # Enforces the sign-off requirement documented in CONTRIBUTING.md.
+  #
+  # `if:` IS LOAD-BEARING, not tidiness. This job reads
+  # `github.event.pull_request.*`, which is null on push and schedule — so
+  # without the guard it would run with an empty BASE_SHA and exit 2 (usage
+  # error) on every merge, producing a red that says nothing about sign-off.
   dco:
     name: DCO sign-off
+    if: github.event_name == 'pull_request'
     runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4
@@ -44,9 +90,146 @@ jobs:
     # on every PR. On a dependabot PR that is pure serial-runner time, so it
     # goes. It still runs on every human PR, which is where a change to the
     # checker actually arrives.
-    if: github.event.pull_request.user.login != 'dependabot[bot]'
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: [self-hosted, Linux, X64, askturret]
     steps:
       - uses: actions/checkout@v4
       - name: Run dco-check.sh test suite
         run: .github/scripts/dco-check.test.sh
+
+  # THE COMMIT THAT ACTUALLY LANDED. Verifies exactly the commits this push
+  # added to `main` — which, after a squash or rebase merge, is a commit no
+  # pull request ever contained.
+  #
+  # This job is expected to be RED until the repository's merge method changes,
+  # because a squash merge composes a commit whose author is the person who
+  # clicked and whose committer is GitHub, whilst the trailer names the original
+  # author — so it matches neither identity. That red is the finding, not a
+  # fault to suppress. It goes green on its own once the merge method preserves
+  # the author; it does NOT block anything, since it runs after the merge.
+  dco-main:
+    name: DCO sign-off on main
+    if: github.event_name == 'push'
+    runs-on: [self-hosted, Linux, X64, askturret]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify Signed-off-by on the commits this push added
+        run: |
+          set -euo pipefail
+
+          # `before` is the zero sha when the ref was just created, and can name
+          # a commit that no longer exists after a force-push. Neither is a
+          # reason to report success: fall back to the pushed tip's parent so
+          # something is still verified, and say which range was used.
+          zero='0000000000000000000000000000000000000000'
+          if [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "$zero" ] &&
+             git cat-file -e "${BEFORE}^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+            echo "Range: pushed commits ${BEFORE}..${AFTER}"
+          elif git rev-parse --verify --quiet "${AFTER}^{commit}^" >/dev/null; then
+            base="${AFTER}^"
+            echo "::notice::'before' was unusable (created ref or force-push);" \
+                 "verifying only the pushed tip ${AFTER}."
+          else
+            # No resolvable base. FAIL CLOSED — "could not check" must never
+            # read as "it passed", which is the whole lesson of #141.
+            echo "::error::Could not resolve a base commit for ${AFTER}." >&2
+            exit 2
+          fi
+
+          .github/scripts/dco-check.sh "$base" "$AFTER"
+        env:
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+
+  # Backstop plus measurement. Two steps, deliberately split by what they do:
+  # the first REPORTS on all of history and never fails, the second ENFORCES
+  # only from a cutoff and does fail.
+  #
+  # WHY NOT ENFORCE OVER HISTORY: `main`'s existing non-compliance cannot be
+  # repaired — you do not rewrite a public `main` to add trailers. A job that
+  # enforced over history would be permanently red, and a permanently red check
+  # is not observability, it is wallpaper: it is read as "that one is always
+  # red" and stops carrying information. So the backlog is reported as a NUMBER
+  # that is always visible, and only new commits are enforced.
+  dco-main-sweep:
+    name: DCO sweep on main
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: [self-hosted, Linux, X64, askturret]
+    env:
+      # Commits authored at or after this instant are ENFORCED. Everything
+      # earlier is reported only. A date rather than a sha because the cutoff
+      # has to be writable before the commit that introduces it exists.
+      DCO_ENFORCE_SINCE: '2026-09-11T00:00:00Z'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Report the sign-off rate across all of main
+        # Never fails: this step's job is to make the number visible, and the
+        # number is currently bad by construction. `|| true` is deliberate here
+        # and is NOT a swallowed failure — the step below is what enforces.
+        run: |
+          set -uo pipefail
+
+          root="$(git rev-list --max-parents=0 HEAD | tail -1)"
+          .github/scripts/dco-check.sh "$root" HEAD > /tmp/dco-history.txt 2>&1 || true
+
+          totals="$(grep -E '^Checked [0-9]+ commit' /tmp/dco-history.txt || true)"
+          if [ -z "$totals" ]; then
+            totals='could not compute totals — see the step log'
+          fi
+
+          {
+            echo '## DCO sign-off on `main`'
+            echo
+            echo "Range: \`${root}..HEAD\` (all of history; the root commit itself is excluded)"
+            echo
+            echo '```'
+            echo "$totals"
+            echo '```'
+            echo
+            # STATE THE DENOMINATOR. This count excludes genuine merges, which
+            # are exempt, so it is NOT comparable to a "% of merged commits"
+            # figure measured over a different population. Two true numbers with
+            # different denominators read as a contradiction unless both say
+            # what they counted (ADR-025, "state the set you enumerated over").
+            echo 'Denominator: commits this checker EVALUATES — genuine'
+            echo 'forge-generated merges are exempt and excluded, and any'
+            echo 'skipped or degenerate-merge counts are printed in the step log.'
+            echo 'Do not compare this directly against a rate measured over'
+            echo 'merged commits; the populations differ.'
+            echo
+            echo "Commits from \`${DCO_ENFORCE_SINCE}\` onward are enforced by the next step."
+            echo 'Earlier non-compliance is reported here and is not repairable —'
+            echo 'rewriting a public `main` to add trailers is not on the table.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "$totals"
+
+      - name: Enforce sign-off on commits from the cutoff onward
+        run: |
+          set -euo pipefail
+
+          # The newest commit BEFORE the cutoff becomes the base, so the range
+          # is exactly the commits at or after it.
+          base="$(git rev-list -1 --before="$DCO_ENFORCE_SINCE" HEAD || true)"
+
+          if [ -z "$base" ]; then
+            echo "::error::No commit predates ${DCO_ENFORCE_SINCE}; cannot scope" \
+                 "the enforced range. Refusing to report success." >&2
+            exit 2
+          fi
+
+          if [ "$base" = "$(git rev-parse HEAD)" ]; then
+            echo "No commits at or after ${DCO_ENFORCE_SINCE} — nothing to enforce."
+            exit 0
+          fi
+
+          echo "Enforcing ${base}..HEAD (commits from ${DCO_ENFORCE_SINCE} onward)"
+          .github/scripts/dco-check.sh "$base" HEAD

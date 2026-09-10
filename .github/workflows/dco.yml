@@ -18,6 +18,18 @@ name: DCO
 # at the moment of decision the information did not exist. A reader sees
 # *absent*, not *red*. "Check the board before merging" cannot fix that, which
 # is why the fix is a check that runs AFTER the merge instead.
+#
+# THIS IMPLEMENTS AN ALREADY-ACCEPTED DECISION: docs/adr/ADR-027, "A check must
+# examine the artifact that lands, not a pre-transformation proxy" (Accepted,
+# #741), which names #696 as its motivating case. That record deliberately did
+# NOT close the gap — "the two identified gaps stay open" — and it pre-accepted
+# this fix's cost: "re-asserting on the landed artifact costs a second run."
+# The `dco-main` job below is that second run.
+#
+# What ADR-027 records as unmitigated stays unmitigated: nothing here
+# enumerates merge-path transformations, so a future merge-strategy change
+# could introduce another rewrite and nothing would report it. This closes the
+# DCO instance, not the class.
 
 on:
   pull_request:
@@ -181,6 +193,17 @@ jobs:
             echo '```'
             echo "$totals"
             echo '```'
+            echo
+            # STATE THE DENOMINATOR. This count excludes genuine merges, which
+            # are exempt, so it is NOT comparable to a "% of merged commits"
+            # figure measured over a different population. Two true numbers with
+            # different denominators read as a contradiction unless both say
+            # what they counted (ADR-025, "state the set you enumerated over").
+            echo 'Denominator: commits this checker EVALUATES — genuine'
+            echo 'forge-generated merges are exempt and excluded, and any'
+            echo 'skipped or degenerate-merge counts are printed in the step log.'
+            echo 'Do not compare this directly against a rate measured over'
+            echo 'merged commits; the populations differ.'
             echo
             echo "Commits from \`${DCO_ENFORCE_SINCE}\` onward are enforced by the next step."
             echo 'Earlier non-compliance is reported here and is not repairable —'

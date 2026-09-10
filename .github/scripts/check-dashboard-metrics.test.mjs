@@ -15,6 +15,7 @@
  * Run: node .github/scripts/check-dashboard-metrics.test.mjs
  */
 
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -387,6 +388,140 @@ console.log('\n# recording-rule references\n');
     0,
   );
 }
+
+// ---------------------------------------------------------------------------
+console.log('\n# the parse refusals, and the exit code that carries them (#559 D2)\n');
+// ---------------------------------------------------------------------------
+
+/*
+ * WHY THESE PIN THE MESSAGE INSTEAD OF ASSERTING `threw` (#559 D2).
+ *
+ * The idiom used above — `try { … } catch { threw = true }` — CANNOT witness
+ * these two throws, and a test written that way would be indistinguishable
+ * from one that does. Neutralise the missing-`METRIC` throw and the very next
+ * line dereferences `metricBlock[1]`, so a TypeError is raised from the same
+ * call: `threw` is still `true` and the assertion still passes with the guard
+ * disarmed. That is the masking shape #559 is about — the assertion reddens on
+ * the ABSENCE of an exception, and neutralising the branch does not produce an
+ * absence.
+ *
+ * So each of these pins the message. That is also what makes them
+ * BRANCH-DISCRIMINATING, which is the bar #559 sets: substitute a neighbouring
+ * branch's message and the regex fails, so the witness distinguishes WHICH
+ * refusal fired rather than merely that something did.
+ */
+function messageFrom(fn) {
+  try {
+    fn();
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  return '(did not throw)';
+}
+
+check_(
+  'names the missing `METRIC` constant rather than dying on the next line',
+  /could not locate `export const METRIC = \{\.\.\.\}`/.test(
+    messageFrom(() =>
+      parseEmittedMetrics('export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [\n];'),
+    ),
+  ),
+  true,
+);
+
+check_(
+  'names the missing `METRIC_DEFINITIONS` constant',
+  /could not locate `export const METRIC_DEFINITIONS = \[\.\.\.\]`/.test(
+    messageFrom(() => parseEmittedMetrics("export const METRIC = {\n  a: 'x',\n} as const;")),
+  ),
+  true,
+);
+
+/*
+ * The partially-parsed set (#136), which needs TWO entries to reach.
+ *
+ * One entry must parse, or `metrics.size === 0` throws the vacuous-pass
+ * refusal first and this branch is never reached — the neighbouring-guard
+ * ordering that makes a one-entry fixture measure the wrong site.
+ */
+const PARTIALLY_PARSED = `
+export const METRIC = {
+  good: 'mcp_good_total',
+  dropped: 'mcp_dropped_total',
+} as const;
+
+export const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
+  {
+    name: METRIC.good,
+    kind: 'counter',
+    labels: ['tool'],
+  },
+  {
+    name: METRIC.dropped,
+    kind: 'counter',
+    // A comment here is exactly what #136 hit: it splits the \`name … kind …
+    // labels\` span, so this entry vanishes from the map without a word.
+    labels: ['tool'],
+  },
+];
+`;
+
+check_(
+  'refuses a PARTIALLY parsed definition set, and says how many it read',
+  /parsed 1 of 2 metric definitions; could not read: dropped/.test(
+    messageFrom(() => parseEmittedMetrics(PARTIALLY_PARSED)),
+  ),
+  true,
+);
+
+/*
+ * THE CLI'S EXIT CODE, witnessed at process level (#559 D2).
+ *
+ * `process.exit(1)` sits behind `process.argv[1] === fileURLToPath(...)`, so
+ * no in-process call can reach it — every assertion above imports `check()`
+ * and never runs the module as a program. Spawning it is the only way to
+ * observe the code the CI step actually reads.
+ *
+ * BOTH OUTCOMES ARE ASSERTED, and the green one is the POSITIVE CONTROL. A
+ * test that only ever expects 1 passes just as well against a script that
+ * cannot start at all — a syntax error, a bad import, a crash in argument
+ * handling all exit non-zero — so on its own it cannot tell "refused because
+ * it found an error" from "never ran". The 0 case is what proves this harness
+ * observes the exit code rather than the failure to launch, so a 1 here is a
+ * measurement.
+ *
+ * Asserted as `=== 1` and never as "non-zero", which is what makes it
+ * discriminating: change the site to `process.exit(2)` and this reddens.
+ */
+const GUARD = join(here, 'check-dashboard-metrics.mjs');
+
+function runCli(expr) {
+  const { dashDir, typesFile } = scratch({ 'd.json': panel(expr) });
+  const rulesFile = join(dashDir, '..', 'empty-alerts.yaml');
+  writeFileSync(rulesFile, 'groups: []\n');
+  return spawnSync(process.execPath, [GUARD, dashDir, typesFile, rulesFile], {
+    encoding: 'utf-8',
+  });
+}
+
+const cleanRun = runCli('sum by (tool) (rate(mcp_tool_calls_total[5m]))');
+check_(
+  'exits 0 when every referenced metric is emitted (positive control)',
+  cleanRun.status,
+  0,
+);
+
+const dirtyRun = runCli('sum by (tool) (rate(mcp_not_emitted_total[5m]))');
+check_(
+  'exits 1 — not merely non-zero — when a dashboard references an unemitted metric',
+  dirtyRun.status,
+  1,
+);
+check_(
+  '...and the refusal names the offending metric on stderr',
+  dirtyRun.stderr.includes('mcp_not_emitted_total'),
+  true,
+);
 
 // ---------------------------------------------------------------------------
 

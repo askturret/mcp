@@ -253,6 +253,67 @@ export const siteSource = (src, index) => {
  *                     exemption written over one of those is false the day it
  *                     lands — born wrong rather than gone stale, so the decay
  *                     check above would never catch it.
+ *
+ * ## `witnessed` IS A FLOOR, NOT A GRADE (#559)
+ *
+ * Read every `witnessed` in this audit as "at least one assertion noticed",
+ * never as "the branch is properly tested". The two are different claims and
+ * this audit can only make the first.
+ *
+ * The mechanism is specific rather than a general caveat. For an `errors-push`
+ * site the mutation replaces the call with a no-op, so the guard emits one
+ * FEWER message. An assertion that reddens on the ABSENCE of any message —
+ * `errors.length === 1`, or a loose regex that some other branch also
+ * satisfies — therefore reddens under neutralisation whatever it was actually
+ * looking for. It records `witnessed` while being blind to WHICH branch fired.
+ *
+ * Measured, not theorised. #559 D2 wrote a witness for the unparseable-mutation
+ * error in this very file asserting `/mutation does not parse/`, and the audit
+ * called it witnessed. The same run ALSO raises "unknown failure path: …
+ * all-sites mutation does not parse" from the probe path — a different site.
+ * Sever the site under test and the neighbour still satisfied the regex, so the
+ * assertion stayed green with its channel cut. The fix was to anchor the regex
+ * on `^<guard> line <n>:`, which only the per-site message can produce.
+ *
+ * ## AND THE FLOOR IS WHY THIS AUDIT CANNOT CERTIFY ITS OWN SITES (#559)
+ *
+ * The above applies to every guard. It BITES HARDEST on this file, because here
+ * the audit is measuring itself: a witness for a site in
+ * `check-mutation-audit.mjs` that satisfies the audit has only cleared the
+ * floor, and the floor is exactly the property in question.
+ *
+ * So the six sites in this file dispositioned by #559 D2 were verified OUTSIDE
+ * the audit — hand-mutating this file and running its self-test directly,
+ * including a branch-discriminating mutation that substitutes a neighbouring
+ * site's message or exit code. Anything added here later needs the same
+ * treatment, and "the audit says witnessed" is not it.
+ *
+ * ## THE FIRST ENTRY BELOW HAD THE RIGHT CONCLUSION AND THE WRONG REASON
+ *
+ * Kept in view deliberately, as the cheapest available warning to the next
+ * author (#559). The original reason cited a NEIGHBOURING GUARD sitting in
+ * front of a different path; #543 turned on the distinction, and the reason was
+ * rewritten to name the INVARIANT that makes the branch unreachable from the
+ * module's public surface. The site was genuinely exempt either way, which is
+ * the trap: a true conclusion is not evidence that the reason supporting it is
+ * sound, and only the reason is reusable.
+ *
+ * ## WHAT AN ENTRY CANNOT ADDRESS, discovered by trying (#559)
+ *
+ * The identity key is `script + kind + source`, and `source` is ONE
+ * whitespace-normalised line. A multi-line call therefore keys on its opening
+ * line alone, so every `throw new Error(` in a file collapses to one key and
+ * the ledger refuses the entry as AMBIGUOUS rather than guessing which site was
+ * meant. Verified: an entry for `check-dashboard-metrics.mjs` / `throw` /
+ * `throw new Error(` is refused, naming lines 122, 201 and 212.
+ *
+ * That refusal is correct — an entry covering three sites would exempt two
+ * nobody examined — but it means EXEMPTION IS UNAVAILABLE for such a site, and
+ * the only remaining disposition is a witness. #559 D2 hit this on
+ * `check-dashboard-metrics:212`, whose branch is unreachable by a nameable
+ * invariant and which is therefore neither witnessable nor expressible here.
+ * Widening the key is a real design question and is deliberately NOT decided
+ * in passing.
  */
 export const MUTATION_EXEMPT = Object.freeze([
   // THE FIRST TWO ENTRIES THIS LEDGER HAS EVER CARRIED (#558). Both come from
@@ -1022,6 +1083,13 @@ export async function auditGuard({
   // which is why that verdict shipped unwitnessed: the mechanism that prevents
   // a false "THE EXEMPTION IS FALSE" could be deleted with the suite green.
   selfTestTimeoutMs = SELF_TEST_TIMEOUT_MS,
+  // A SEAM, for the same reason the two above are (#559 D2). The restore check
+  // in the `finally` below is the audit's promise that it never leaves a
+  // disarmed guard on disk, and it was UNWITNESSED: reaching it needs a
+  // filesystem that accepts a write and then reads back something else, which
+  // no argument to this function could produce. Injecting the read-back is the
+  // whole fault. Production callers pass nothing.
+  readBack = readFileSync,
 }) {
   const original = readFileSync(guardPath, 'utf-8');
   const sites = enumerateSites(original);
@@ -1207,16 +1275,21 @@ export async function auditGuard({
     process.removeListener('SIGINT', onSignal);
     process.removeListener('SIGTERM', onSignal);
     writeFileSync(guardPath, original, 'utf-8');
-    const restored = readFileSync(guardPath, 'utf-8');
+    const restored = readBack(guardPath, 'utf-8');
     if (restored !== original) {
-      // NOTE, because the audit put this line in its OWN unwitnessed list and
-      // the first version of this PR did not connect the two: no fixture
-      // reaches this throw, so "the audit never leaves a wrong write" rested on
-      // reading the code rather than on observing it. The signal handlers above
-      // are what make the claim true for the case that actually occurs; this
-      // line remains the backstop for a filesystem failure, and remains
-      // unwitnessed. Reading your own unwitnessed rows against your own claims
-      // is the cheapest review available.
+      // WITNESSED SINCE #559 D2, through the `readBack` seam in the signature.
+      // The note this replaces was right about its own limits and is worth
+      // keeping in view: "no fixture reaches this throw, so 'the audit never
+      // leaves a wrong write' rested on reading the code rather than on
+      // observing it."
+      //
+      // What kept it unwitnessed was not a missing fixture but an uninjectable
+      // fault — the only route here is a filesystem that accepts a write and
+      // then reads back something else. The seam makes that injectable. The
+      // branch is unchanged, and so is what it is for: the signal handlers
+      // above cover the interruption case, and this covers the one they cannot.
+      // Reading your own unwitnessed rows against your own claims is the
+      // cheapest review available.
       throw new Error(`RESTORE FAILED for ${guardPath} — the working tree is dirty and must be checked by hand`);
     }
   }

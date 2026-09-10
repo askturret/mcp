@@ -1119,6 +1119,76 @@ const corpusFile = (dir, name) => join(dir, '.operum', 'audit', 'concealment-rem
   );
 }
 
+// ---------------------------------------------------------------------------
+// #559 D2 — two unwitnessed `errors-push` sites in this guard
+//
+// Both carry a detected defect into the error channel, which is the difference
+// between "the checker noticed" and "CI refuses". Each assertion below pins the
+// SPECIFIC message rather than counting errors, because the neighbouring branch
+// in each pair also produces one: a row that is not valid JSON sits immediately
+// above a row that is valid JSON but not an object, and the whole point of a
+// witness here is that it tells them apart.
+//
+// ON THE SITE NUMBERS #559 CITES. This guard's two sites are at 814 and 1020
+// under the re-measure, NOT the 797/1003 in the issue body and the
+// disposition — those lines hold a string continuation and a comment today.
+// The lines in this very comment are equally perishable, which is why nothing
+// here is addressed by line number.
+// ---------------------------------------------------------------------------
+{
+  // A row that is valid JSON and NOT an object. `[1,2]` parses, so the branch
+  // above it does not fire, and this one must.
+  const notObject = run({ 'a.jsonl': '[1,2]\n' }, ['a.jsonl']);
+  is(
+    'a valid-JSON row that is not an object is REFUSED (#559)',
+    errorsMatching(notObject, /row 1: not a JSON object/).length,
+    1,
+  );
+  // DISCRIMINATION, asserted rather than assumed: the same row must NOT be
+  // reported as unparseable. Without this, the assertion above would keep
+  // passing if the two branches ever collapsed into one message.
+  is(
+    '...and is NOT reported as invalid JSON — the two branches stay distinct',
+    errorsMatching(notObject, /row 1: not valid JSON/).length,
+    0,
+  );
+  // CONTROL: a well-formed object row raises neither, so a 1 above is a
+  // measurement rather than a fixture that fails for any reason at all.
+  const objectOk = run({ 'a.jsonl': line(row()) }, ['a.jsonl']);
+  is(
+    '...and CONTROL: a well-formed object row raises no shape error',
+    errorsMatching(objectOk, /not a JSON object|not valid JSON/).length,
+    0,
+  );
+
+  // Non-ASCII in `verbatim` that the cited template's prose does not contain.
+  // Injected inside the PATH slot, whose pattern is `/[^\n]+`, so the template
+  // still matches and the stray character lands in the compared prose region —
+  // which is what makes this the em-dash condition and not a template mismatch.
+  const SECTION = String.fromCharCode(0x00a7);
+  const strayVerbatim = PROSE_F1.replace('/tmp/x.ts', `/tmp/x${SECTION}.ts`);
+  const stray = run({ 'a.jsonl': line(row({ verbatim: strayVerbatim })) }, ['a.jsonl']);
+  is(
+    'a stray non-ASCII character in `verbatim` is REFUSED, and named (#559)',
+    errorsMatching(stray, /non-ASCII not present in template/).length,
+    1,
+  );
+  is(
+    '...and the refusal identifies the character by code point',
+    errorsMatching(stray, /U\+00A7/).length,
+    1,
+  );
+  // CONTROL, and it does double duty: PROSE_F1's own em dash is non-ASCII too
+  // and IS in the template's prose, so a clean run staying silent proves the
+  // check compares against the template rather than rejecting non-ASCII.
+  const clean = run({ 'a.jsonl': line(row()) }, ['a.jsonl']);
+  is(
+    "...and CONTROL: the template's own em dash is not reported as stray",
+    errorsMatching(clean, /non-ASCII not present in template/).length,
+    0,
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed === 0 ? 0 : 1);
 

@@ -222,14 +222,23 @@ if [ "$failed" -eq 0 ]; then
   exit 0
 fi
 
+# NAME BOTH LIMBS OF THE PREDICATE (#771). This block said the trailer must
+# match "its author", full stop, while the test above accepts author OR
+# committer. This is the only surface most contributors ever see, so a reader
+# would reasonably conclude the committer limb does not exist — and #696's whole
+# conclusion rests on it: a rebase-merge preserves the AUTHOR and rewrites the
+# COMMITTER, which passes precisely because either limb satisfies the check.
+# Understating the predicate here sends someone to amend a commit that was
+# already valid.
 cat >&2 <<REPORT
 
 ::error::$failed of $total commit(s) are not signed off (DCO).
 
 Commits needing a sign-off:
 $failures
-Every commit must carry a Signed-off-by trailer matching its author, to
-certify the Developer Certificate of Origin (https://developercertificate.org/).
+Every commit must carry a Signed-off-by trailer matching its author OR its
+committer, to certify the Developer Certificate of Origin
+(https://developercertificate.org/).
 
 To fix:
 

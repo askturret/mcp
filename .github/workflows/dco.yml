@@ -161,9 +161,36 @@ jobs:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, Linux, X64, askturret]
     env:
-      # Commits authored at or after this instant are ENFORCED. Everything
+      # Commits COMMITTED at or after this instant are ENFORCED. Everything
       # earlier is reported only. A date rather than a sha because the cutoff
       # has to be writable before the commit that introduces it exists.
+      #
+      # COMMITTED, NOT AUTHORED (#771), and the word is load-bearing rather than
+      # pedantic. The enforce step scopes the range with
+      # `git rev-list -1 --before=`, which filters on COMMITTER date — verified
+      # here rather than read from the manual: commit 433b9ff (author 1788536724,
+      # committer 1788536738) is EXCLUDED at `--before=@1788536725` and INCLUDED
+      # at `--before=@1788536739`.
+      #
+      # This said "authored" and was wrong about its own implementation. Fixing
+      # the WORD rather than the code is a deliberate choice, for four reasons:
+      #
+      #   1. Committer date is what the cutoff is actually about. This gate
+      #      exists to separate commits that LANDED after the observability
+      #      shipped from history that predates it, and for a squash or rebase
+      #      merge the committer date IS the landing time.
+      #   2. Author date does not answer that question. It survives rebase and
+      #      cherry-pick unchanged, so it can be arbitrarily old — or, as QA's
+      #      case showed, in the future.
+      #   3. The divergence runs in the FAIL-SAFE direction. A commit authored
+      #      long ago but landing after the cutoff is enforced under committer
+      #      date and would escape under author date. QA's example — authored
+      #      2026-09-14, committed 2026-09-09, cutoff 2026-09-11, not enforced —
+      #      is correct under landing semantics: it landed before enforcement
+      #      existed, and enforcing it would be retroactive.
+      #   4. `git rev-list` has no author-date filter, so adopting author
+      #      semantics means new code walking `%at` per commit. Not on the
+      #      evening enforcement goes live, for a change with no defect behind it.
       DCO_ENFORCE_SINCE: '2026-09-11T00:00:00Z'
     steps:
       - uses: actions/checkout@v4

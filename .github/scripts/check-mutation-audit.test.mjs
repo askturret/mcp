@@ -387,9 +387,25 @@ process.exit(0);
       result.results.some((r) => r.verdict === 'witnessed'),
       false,
     );
+    // THE VACUOUS CONJUNCT IS GONE, and only it (#559).
+    //
+    // This read `(await audit(dir, { exempt: [] })).errors.length >= 0 &&
+    // result.results[0]?.detail !== undefined`. A length is never negative, so
+    // the first conjunct was TRUE for every possible audit — including one that
+    // raised no error at all — while the description promised "it is an
+    // audit-integrity error". The half that carried the claim asserted nothing,
+    // and it also ran a whole extra `audit()` to do it.
+    //
+    // The second conjunct is REAL and is kept, under a description of what it
+    // actually checks: an unparseable verdict has to carry a `detail`, or the
+    // report cannot say why the mutation did not parse.
+    //
+    // The claim the vacuous half was reaching for — that an unparseable verdict
+    // reaches the run's ERROR channel — is now asserted properly in the #559 D2
+    // block at the end of this file, against an anchored per-site message.
     check(
-      '...and it is an audit-integrity error, not a measurement',
-      (await audit(dir, { exempt: [] })).errors.length >= 0 && result.results[0]?.detail !== undefined,
+      '...and the unparseable verdict carries a `detail` saying why',
+      result.results[0]?.detail !== undefined,
       true,
     );
 
@@ -1892,12 +1908,21 @@ process.exit(0);
   /*
    * An unparseable mutation must become an audit-integrity ERROR.
    *
-   * The assertion that used to stand near this — `(await audit(dir, { exempt:
-   * [] })).errors.length >= 0` — is VACUOUSLY TRUE: a length is never
-   * negative, so it passed whatever the audit did, and the site that turns an
-   * unparseable verdict into an error was left unwitnessed behind an assertion
-   * that looked like it covered it. A Decorative Guard in the audit's own
-   * self-test, which is the shape #559 exists to remove.
+   * WHY THIS EXISTS SEPARATELY. The unparseable case is already exercised much
+   * earlier in this file, and the assertion there carried a VACUOUS conjunct —
+   * `(await audit(dir, { exempt: [] })).errors.length >= 0`, true for every
+   * possible length — as the half that was supposed to establish "audit-integrity
+   * error". So the site that turns an unparseable verdict into an error was
+   * unwitnessed behind an assertion that looked like it covered it: a Decorative
+   * Guard in the audit's own self-test, which is the shape #559 exists to remove.
+   *
+   * That conjunct is now deleted at its own site and the surviving half is
+   * described accurately; the error-channel claim is asserted HERE instead,
+   * against an anchored per-site message. Stated in the present tense on
+   * purpose — the first version of this comment said the assertion "used to
+   * stand near this" while it was still standing, byte-identical to main. QA
+   * caught that (a false claim committed in the tree, inside the file whose
+   * subject is unmeasured prose) and it is worth more than the fix.
    */
   {
     const dir = withFixture(FIXTURE_GUARD, FIXTURE_TEST);

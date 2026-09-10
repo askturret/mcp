@@ -557,6 +557,96 @@ and describes matching that already ships.
 3. read the "N corpus file(s) added or modified" note
 ```
 
+### THE SECOND ARGUMENT IS NOT OPTIONAL — without it the validator REFUSES
+
+`origin/main` in step 2 is the diff base. Omit it and the tool exits **2**, not 0:
+
+```
+$ node .github/scripts/check-concealment-captures.mjs .
+  - no diff base supplied, so no diff-scoped check ran
+"I could not check" is not "it passed", so this exits 2 rather than 0.
+$ echo $?
+2
+
+$ node .github/scripts/check-concealment-captures.mjs . origin/main
+$ echo $?
+0
+```
+
+**The refusal is the tool being right, not a usage nuisance.** The conditions
+that catch a redacted path, a missing `templates_revision`, and a row claiming
+no template while one matches are all **diff-scoped**, so with no base they
+examine nothing. A zero exit there would report a pass over an empty scan.
+
+Worth stating because **the failure is silent in the direction that matters**:
+a run without the base still prints the corpus-wide notes and looks like it
+worked. The exit code is the only thing that distinguishes "your rows are fine"
+from "your rows were never looked at" — and an agent reading the output rather
+than the code learns nothing.
+
+### PROVE APPEND-ONLY WITH THREE DOTS. Two dots answer a different question.
+
+`.operum/audit/*.jsonl` is append-only, and the check before pushing is that
+your change deletes nothing. Use **three** dots:
+
+```
+git diff --numstat origin/main...HEAD -- <path>     # merge-base..HEAD — your contribution
+git diff --numstat origin/main..HEAD  -- <path>     # main's CURRENT TIP..HEAD — WRONG
+```
+
+Two dots compare against main's tip *as it is now*, so every commit main has
+gained since your branch forked renders as a **deletion you never made**.
+
+**Measured on one real branch** — `c4cf6fe`, the capture branch that became PR
+#844. Every column names the predicate that produced it, because a figure whose
+metric is implicit is the defect this whole section is about:
+
+| | `files`<br>numstat rows | `any-deletions`<br>`awk '$2>0'` | `pure-deletions`<br>`awk '$2>0 && $1==0'` | `deleted-lines`<br>sum of col 2 |
+|---|---|---|---|---|
+| **three-dot** | 4 | **0** | 0 | **0** |
+| **two-dot** | 27 | **27** | 18 | **858** |
+
+**27 of 27 files in the two-dot diff render deletions, totalling 858 lines. The
+three-dot diff renders none.** The branch deleted nothing; `main` had simply
+moved 9 commits past the point it forked from.
+
+### The count is not a property of your branch, and it grows
+
+An earlier reading of this same unchanged ref, about an hour before the one
+above, gave **14** under the `any-deletions` predicate. It is now **27**.
+
+That earlier figure is **no longer reproducible** — and the reason is the point
+rather than a caveat. Two dots compare against main's tip *as it is now*, so the
+number is a function of how far main has moved, not of anything in your branch.
+It climbs on its own, and it is **largest exactly when review takes longest**.
+
+Several of those phantom deletions name files that merged to main *the same day*
+through unrelated PRs. So the wrong reading is not merely noisy: it names real
+files, with real line counts, in a plausible-looking table. It is the #7952
+near-miss reproduced live, and it nearly failed a correct PR once already.
+
+### The first version of this table was itself the defect it warns about
+
+Worth keeping, because it is the cheapest possible demonstration. That version
+had one column headed *"rendered as pure deletions"* carrying **two different
+metrics**: the 14 came from `any-deletions` and the 18 from `pure-deletions`.
+Both figures were real; the comparison between them was not, because the rows
+did not measure the same thing.
+
+It made the hazard look **three times smaller** than it is — a consistent
+predicate gives 14 → 27, not 14 → 18 — and it did so while arguing that a number
+must say what it measured. QA failed the PR over the column heading and was
+right to: in this document, a mislabelled metric is not a presentation slip.
+
+**Which is why the predicates are in the table now.** Not as decoration — as the
+thing that makes each cell checkable, and that would have made the original error
+visible at a glance instead of an hour later.
+
+Keep the line-count check alongside it — `git show origin/main:<path> | wc -l`
+against the working copy. It is immune to the two-dot/three-dot distinction
+entirely, so the two checks fail independently and neither can quietly stand in
+for the other.
+
 ### THE VALIDATOR IS NOT THE FILE THE DOCTRINE NAMES
 
 The `## Concealment Disclosure Routing` doctrine says the

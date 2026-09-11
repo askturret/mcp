@@ -2,37 +2,56 @@
 <!--
   SPDX-License-Identifier: Apache-2.0
 
-  THE LANDING PAGE. One file, no build step, no dependency, no external request.
+  THE LANDING PAGE. One document, no build step, no dependency.
+
+  ZERO THIRD-PARTY REQUESTS, and this is load-bearing rather than tidy: no web
+  font, no CDN, no hosted icon set, no badge image, no analytics, no scripts.
+  Every style sits in the single inline stylesheet below and every illustration
+  is inline SVG. A page arguing for supply-chain hygiene must not hand the
+  reader's browser to a third party in order to say so.
+
+  SAY IT AS "THIRD-PARTY", NOT "NO SUBRESOURCES" — the two came apart when the
+  brand icons landed (#864). The icons beside this comment ARE subresources, and
+  they are fine: we ship them in this directory and serve them from our own
+  origin, so no other party learns that anyone visited. What is forbidden is the
+  outbound hop, and the distinction is the whole point rather than a loophole.
+
+  The one thing knowingly given up: the brand's Inter and JetBrains Mono are
+  NOT downloaded, because the only offered source is Google Fonts. Their stacks
+  are kept, so a reader who has the faces locally still sees them.
+
+  DELIBERATELY NO LITERAL TAG SYNTAX IN THIS COMMENT. Reviewers verify the claim
+  above by grepping this file for script and image tags, and prose naming those
+  tags shows up as a hit — making a correct page look like a regression. The same
+  hazard bites the landing-page guard, which scans raw markup: see the note at
+  the foot of this comment.
 
   WHY THIS LIVES IN `site/` AND NOT `docs/` (#860). `docs/**` is inside the `cli`
   path filter in test.yml, deliberately and with a stated reason (#774): the
   migrate suite walks every `.md` under `docs/`, so a prose edit there genuinely
   can change a test result. The consequence is that a docs-only change is
   `ci:full` and schedules twelve package suites on the single serialized runner.
-
-  Landing-page copy is edited often and can affect no suite, so paying that toll
-  on every word change would be wrong. `site/**` appears in no filter, so a copy
-  edit here is `ci:cheap`. That is the whole reason for the directory.
+  `site/**` appears in no filter, so a copy edit here is `ci:cheap`.
 
   WHAT GUARDS THIS FILE. `.github/scripts/check-landing-page.mjs`, which runs in
   `test-integrity` — a job that needs nothing and therefore runs on EVERY
   non-dependabot pull request, including a `ci:cheap` copy edit that schedules no
-  package suite at all. It asserts three things:
+  package suite at all. It asserts every command below appears VERBATIM in
+  README.md, that no unsourceable claim vocabulary is present, and that a pinned
+  `@askturret/mcp-core@X.Y.Z` still equals packages/core/package.json.
 
-    1. Every command shown below appears VERBATIM in README.md, unless the block
-       declares `data-page-only` with a reason. Two copies of one fact is the
-       drift class this repository has spent weeks deleting; this page is the
-       most visible surface we own and is the last place to reintroduce it.
-    2. No unsourceable claim vocabulary — users, adopters, production
-       deployments, benchmarks, performance numbers. The repository cannot
-       source any of them.
-    3. Any pinned `@askturret/mcp-core@X.Y.Z` equals packages/core/package.json,
-       so the verification command cannot rot into a 404 the way three separate
-       version strings did during the 0.2.0 cut.
+  NOTE FOR ANYONE ADDING SYNTAX COLOURING (#864). Do NOT put span elements
+  inside a guarded code block. The guard's extractor strips code tags only, so
+  span markup would land inside the text it compares and every guarded command
+  would stop matching. The fix would be to weaken the extractor, which is the
+  wrong direction. Code blocks are styled by their SURROUND instead — a labelled
+  header strip outside the block — which is why they carry a filename caption.
 
-  NO EXTERNAL RESOURCES, deliberately. No CDN, no web font, no analytics, no
-  badge image. A page whose subject is supply-chain provenance should not open
-  the reader's browser to third parties to say so.
+  AND DO NOT WRITE A LITERAL PRE-ELEMENT OPENING TAG ANYWHERE IN THIS COMMENT.
+  The extractor scans raw markup and does not strip HTML comments first, so such
+  a tag opens a block that only closes at the first real one further down — which
+  drags the whole document head into the comparison. Found the hard way while
+  writing this very note. Describe the element in words, as above.
 -->
 <html lang="en">
 <head>
@@ -41,90 +60,249 @@
 <title>AskTurret MCP — serve your existing OpenAPI spec as an MCP server</title>
 <meta name="description" content="Reads your existing OpenAPI spec and serves it as an MCP server. No code generation. Apache-2.0, with SLSA provenance on every published package.">
 <link rel="canonical" href="https://askturret.github.io/mcp/">
+
+<!--
+  LINK PREVIEW. Most readers arriving from a post see THIS before they see the
+  page, so it is the highest-leverage image the project has.
+
+  THE IMAGE URL MUST BE ABSOLUTE. A relative og:image is not resolved by the
+  scrapers — it simply yields no preview, silently, which is the failure mode
+  worth naming because nothing reports it. The origin below is where the Pages
+  workflow actually publishes `site/`, so og-image.png sits next to this file.
+
+  The artwork's editable source is og-image.svg beside it. Change one, re-render
+  the other.
+-->
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="AskTurret MCP">
+<meta property="og:url" content="https://askturret.github.io/mcp/">
+<meta property="og:title" content="AskTurret MCP — serve your existing OpenAPI spec as an MCP server">
+<meta property="og:description" content="Reads the OpenAPI spec you already have and serves it over the Model Context Protocol. No code generation. Apache-2.0, with SLSA provenance on every published package.">
+<meta property="og:image" content="https://askturret.github.io/mcp/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="AskTurret MCP — serve your existing OpenAPI spec as an MCP server.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="AskTurret MCP — serve your existing OpenAPI spec as an MCP server">
+<meta name="twitter:description" content="Reads the OpenAPI spec you already have and serves it over the Model Context Protocol. No code generation.">
+<meta name="twitter:image" content="https://askturret.github.io/mcp/og-image.png">
+<meta name="twitter:image:alt" content="AskTurret MCP — serve your existing OpenAPI spec as an MCP server.">
+
+<!--
+  BRAND ICONS, taken from the askturret/askturret landing package on the
+  founder's instruction. EVERY PATH HERE IS RELATIVE, deliberately: this site is
+  published at /mcp/ rather than at a domain root, so the source project's
+  absolute "/favicon.svg" form would resolve to the org root and 404.
+
+  These are SAME-ORIGIN — we serve them ourselves from our own Pages origin. The
+  property this page maintains is zero THIRD-PARTY requests, which is a statement
+  about whose server the reader's browser is made to talk to, not a vow of
+  having no subresources at all.
+-->
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+<link rel="shortcut icon" href="favicon.ico">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="mask-icon" href="mask-icon.svg" color="#10b981">
+<link rel="manifest" href="site.webmanifest">
+<meta name="theme-color" content="#0d1117">
 <style>
+  /* DESIGN TOKENS TAKEN FROM THE BRAND STYLESHEET rather than invented —
+     askturret/askturret, packages/landing/styles.css. The accent is its
+     `--accent` (#10b981) with `--accent-hover` (#34d399) in dark and
+     `--primary-dark` (#059669) in light, where the lighter emerald would not
+     hold contrast on white. The dark scheme below uses the brand's own values
+     verbatim; the light scheme is derived, because that project ships dark only.
+
+     ONE ACCENT. A second is how a page starts looking like a template.
+
+     THE FONT STACKS ARE THE BRAND'S, BUT NOTHING IS DOWNLOADED. That project
+     pulls Inter and JetBrains Mono from Google Fonts; copying those two link
+     elements would hand the reader's browser to a third party on a page whose
+     argument is that we do not do that. The stacks are kept verbatim, so anyone
+     who already has those faces installed locally sees them, and everyone else
+     falls through to the system font the stack already named. Segoe UI, Roboto
+     and Consolas are appended for Windows and Linux, which the original could
+     omit because it downloaded the face instead. */
   :root {
+    --font-sans: Inter, 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Consolas, monospace;
+
     --bg: #ffffff;
-    --fg: #1a1d21;
-    --muted: #5c6570;
-    --line: #e3e7ec;
-    --accent: #0b5fff;
+    --fg: #0f1419;
+    --muted: #55606d;
+    --faint: #7b8794;
+    --line: #e3e8ee;
+    --accent: #059669;
+    --accent-soft: rgba(16, 185, 129, .10);
     --code-bg: #f6f8fa;
-    --code-fg: #1a1d21;
+    --code-head: #eef1f5;
     --card: #fbfcfd;
+    --shadow: 0 1px 2px rgba(15, 20, 25, .04), 0 8px 24px rgba(15, 20, 25, .05);
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0f1216;
-      --fg: #e6e9ee;
-      --muted: #9aa4b1;
-      --line: #232a33;
-      --accent: #6fa0ff;
-      --code-bg: #161b22;
-      --code-fg: #e6e9ee;
-      --card: #131820;
+      --bg: #0d1117;
+      --fg: #f1f5f9;
+      --muted: #94a3b8;
+      --faint: #64748b;
+      --line: #1f2933;
+      --accent: #10b981;
+      --accent-soft: rgba(16, 185, 129, .14);
+      --code-bg: #0a0f15;
+      --code-head: #131b24;
+      --card: #131b24;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 14px rgba(0, 0, 0, .45);
     }
   }
+
   * { box-sizing: border-box; }
-  html { -webkit-text-size-adjust: 100%; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--fg);
-    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font: 17px/1.7 var(--font-sans);
+    -webkit-font-smoothing: antialiased;
   }
-  .wrap { max-width: 52rem; margin: 0 auto; padding: 0 1.25rem; }
-  a { color: var(--accent); }
-  h1, h2, h3 { line-height: 1.25; letter-spacing: -0.015em; }
-  h1 { font-size: clamp(2rem, 5vw, 2.85rem); margin: 0 0 .6rem; }
-  h2 { font-size: 1.4rem; margin: 3rem 0 1rem; padding-top: 1.75rem; border-top: 1px solid var(--line); }
-  h3 { font-size: 1.05rem; margin: 0 0 .4rem; }
-  p { margin: 0 0 1rem; }
-  .lede { font-size: 1.2rem; color: var(--muted); margin: 0 0 1.5rem; }
+  .wrap { max-width: 54rem; margin: 0 auto; padding: 0 1.25rem; }
+
+  a { color: var(--accent); text-underline-offset: .16em; }
+  a:hover { text-decoration-thickness: 2px; }
+
+  /* TYPOGRAPHIC SCALE. Deliberate steps rather than near-uniform weight. */
+  h1 {
+    font-size: clamp(2.25rem, 6.2vw, 3.5rem);
+    line-height: 1.08;
+    letter-spacing: -0.032em;
+    font-weight: 700;
+    margin: 0 0 1rem;
+    max-width: 18ch;
+  }
+  h2 {
+    font-size: clamp(1.5rem, 3.2vw, 1.9rem);
+    line-height: 1.2;
+    letter-spacing: -0.022em;
+    font-weight: 680;
+    margin: 0 0 .5rem;
+  }
+  h3 { font-size: 1.02rem; line-height: 1.35; letter-spacing: -0.008em; font-weight: 650; margin: 0 0 .35rem; }
+  p { margin: 0 0 1.1rem; max-width: 65ch; }
+
+  /* RHYTHM. Space separates sections; rules are used once, under the hero. */
+  section { padding: 4.25rem 0 0; }
+  .kicker {
+    font-size: .74rem; text-transform: uppercase; letter-spacing: .13em;
+    font-weight: 700; color: var(--accent); margin: 0 0 .7rem;
+  }
+
   header { padding: 3.5rem 0 0; }
+  /* The brand mark is the favicon's own geometry, inlined — same artwork, no
+     request. `currentColor` lets the tile follow the one accent token. */
+  .brand { display: flex; align-items: center; gap: .6rem; margin: 0 0 2.25rem; font-size: 1.02rem; font-weight: 600; letter-spacing: -.012em; }
+  .brand .mark { width: 1.85rem; height: 1.85rem; display: block; color: var(--accent); flex: none; }
+  .brand strong { font-weight: 700; color: var(--accent); }
   .eyebrow {
-    font-size: .78rem; text-transform: uppercase; letter-spacing: .09em;
-    color: var(--muted); margin: 0 0 .9rem; font-weight: 600;
+    display: inline-flex; align-items: center; gap: .5rem;
+    font-size: .78rem; font-weight: 600; color: var(--muted);
+    border: 1px solid var(--line); border-radius: 999px;
+    padding: .34rem .8rem; margin: 0 0 1.6rem;
   }
-  pre {
-    background: var(--code-bg); color: var(--code-fg);
-    border: 1px solid var(--line); border-radius: 8px;
-    padding: 1rem; overflow-x: auto; margin: 0 0 1rem;
-    font-size: .875rem; line-height: 1.6;
-  }
-  code {
-    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  }
-  p code, li code, td code {
-    background: var(--code-bg); border: 1px solid var(--line);
-    border-radius: 4px; padding: .1em .35em; font-size: .875em;
-  }
-  .actions { display: flex; flex-wrap: wrap; gap: .7rem; margin: 1.75rem 0 0; }
+  .dot { width: .4rem; height: .4rem; border-radius: 50%; background: var(--accent); }
+  .lede { font-size: clamp(1.08rem, 2.1vw, 1.25rem); color: var(--muted); max-width: 58ch; margin: 0 0 1.9rem; }
+  .lede strong { color: var(--fg); font-weight: 650; }
+  .rule { height: 3px; width: 4.5rem; background: var(--accent); border-radius: 2px; margin: 2.75rem 0 0; }
+
+  .actions { display: flex; flex-wrap: wrap; gap: .65rem; }
   .btn {
-    display: inline-block; padding: .6rem 1.1rem; border-radius: 7px;
-    border: 1px solid var(--line); text-decoration: none; font-weight: 600;
-    font-size: .93rem; color: var(--fg);
+    display: inline-block; padding: .68rem 1.2rem; border-radius: 6px;
+    border: 1px solid var(--line); text-decoration: none; font-weight: 620;
+    font-size: .95rem; color: var(--fg); background: var(--bg);
   }
+  .btn:hover { border-color: var(--accent); }
   .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
-  .card { border: 1px solid var(--line); border-radius: 9px; padding: 1.1rem; background: var(--card); }
+  .btn.primary:hover { filter: brightness(1.08); }
+  @media (prefers-color-scheme: dark) { .btn.primary { color: #0c0f13; } }
+
+  /* THE DIAGRAM. Scales with the container; type inside is sized generously so
+     it stays legible when the SVG is rendered narrow. */
+  .diagram { margin: 2.5rem 0 0; }
+  .diagram svg { display: block; width: 100%; height: auto; }
+  .diagram figcaption { font-size: .86rem; color: var(--faint); margin: .7rem 0 0; }
+  .d-box { fill: var(--card); stroke: var(--line); }
+  .d-box-accent { fill: var(--accent-soft); stroke: var(--accent); }
+  .d-label { fill: var(--fg); font-weight: 640; }
+  .d-sub { fill: var(--muted); }
+  .d-flow { stroke: var(--accent); fill: none; }
+  .d-tick { stroke: var(--line); fill: none; }
+  .d-arrow { fill: var(--accent); }
+
+  /* CODE. A labelled surface, and horizontal scroll rather than mid-command
+     wrapping. No span elements inside a code block — see the note above. */
+  .code { margin: 0 0 1.1rem; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--code-bg); }
+  .code figcaption {
+    font: 600 .76rem/1 var(--font-mono);
+    letter-spacing: .04em; text-transform: lowercase;
+    color: var(--muted); background: var(--code-head);
+    padding: .6rem .9rem; border-bottom: 1px solid var(--line);
+  }
+  pre { margin: 0; padding: 1rem .95rem; overflow-x: auto; font-size: .855rem; line-height: 1.65; }
+  code { font-family: var(--font-mono); }
+  p code, li code { background: var(--code-bg); border: 1px solid var(--line); border-radius: 4px; padding: .1em .36em; font-size: .86em; }
+
+  details.spec { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: 0 0 1.1rem; background: var(--code-bg); }
+  details.spec summary {
+    cursor: pointer; list-style: none;
+    font: 600 .8rem/1.3 var(--font-sans);
+    color: var(--fg); background: var(--code-head);
+    padding: .75rem .9rem; border-bottom: 1px solid transparent;
+  }
+  details.spec[open] summary { border-bottom-color: var(--line); }
+  details.spec summary::-webkit-details-marker { display: none; }
+  details.spec summary::before { content: "▸ "; color: var(--accent); font-weight: 700; }
+  details.spec[open] summary::before { content: "▾ "; }
+  details.spec summary span { color: var(--muted); font-weight: 400; }
+
+  /* CARDS. Distinct surfaces, aligned, each with its own inline glyph. */
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr)); margin: 1.75rem 0 0; }
+  .card {
+    border: 1px solid var(--line); border-radius: 8px; padding: 1.35rem 1.25rem;
+    background: var(--card); box-shadow: var(--shadow);
+  }
   .card p { margin: 0; color: var(--muted); font-size: .93rem; }
-  .facts { list-style: none; padding: 0; margin: 0; }
-  .facts li { padding: .5rem 0; border-bottom: 1px solid var(--line); font-size: .95rem; }
+  .glyph {
+    width: 2.35rem; height: 2.35rem; border-radius: 6px;
+    background: var(--accent-soft); color: var(--accent);
+    display: flex; align-items: center; justify-content: center; margin: 0 0 .9rem;
+  }
+  .glyph svg { width: 1.2rem; height: 1.2rem; display: block; }
+
+  .links { display: grid; gap: .55rem; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); margin: 1.6rem 0 0; }
+  .links a {
+    display: block; text-decoration: none; color: var(--fg);
+    border: 1px solid var(--line); border-radius: 8px; padding: .9rem 1rem;
+  }
+  .links a:hover { border-color: var(--accent); }
+  .links strong { display: block; font-weight: 620; color: var(--accent); margin: 0 0 .15rem; }
+  .links span { font-size: .88rem; color: var(--muted); }
+
+  .facts { list-style: none; padding: 0; margin: 1.4rem 0 0; max-width: 65ch; }
+  .facts li { padding: .75rem 0; border-bottom: 1px solid var(--line); }
   .facts li:last-child { border-bottom: 0; }
-  .note {
-    border-left: 3px solid var(--line); padding: .1rem 0 .1rem 1rem;
-    color: var(--muted); margin: 0 0 1rem;
-  }
-  footer {
-    margin-top: 3.5rem; padding: 2rem 0 3rem;
-    border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem;
-  }
+  .status-note { font-weight: 650; margin: 1.4rem 0 0; }
+
+  footer { margin-top: 5rem; padding: 2.25rem 0 3.5rem; border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem; }
   footer a { color: var(--muted); }
-  .skip {
-    position: absolute; left: -9999px; top: 0;
-    background: var(--bg); color: var(--fg); padding: .6rem 1rem; z-index: 10;
-  }
+
+  .skip { position: absolute; left: -9999px; top: 0; background: var(--bg); color: var(--fg); padding: .6rem 1rem; z-index: 10; }
   .skip:focus { left: .5rem; top: .5rem; }
+
+  @media (max-width: 34rem) {
+    body { font-size: 16px; }
+    header { padding-top: 3rem; }
+    section { padding-top: 3.25rem; }
+  }
 </style>
 </head>
 <body>
@@ -133,10 +311,18 @@
 <div class="wrap">
 
 <header>
-  <p class="eyebrow">Apache-2.0 · Node 20+ · SLSA provenance on every package</p>
+  <div class="brand">
+    <svg class="mark" viewBox="0 0 32 32" role="img" aria-label="AskTurret">
+      <rect width="32" height="32" rx="7" fill="currentColor"/>
+      <path d="M13 7L22 25H17L13 16L9 25H4L13 7Z" fill="var(--bg)"/>
+      <rect x="23" y="17" width="5" height="8" rx="1" fill="var(--bg)" opacity="0.7"/>
+    </svg>
+    <span>AskTurret <strong>MCP</strong></span>
+  </div>
+  <p class="eyebrow"><span class="dot"></span> Apache-2.0 · Node 20+ · SLSA provenance on every package</p>
   <h1>Serve your existing OpenAPI spec as an MCP server.</h1>
   <p class="lede">
-    AskTurret MCP reads the spec you already have and serves it over the Model
+    AskTurret reads the spec you already have and serves it over the Model
     Context Protocol. <strong>No code generation</strong>, and no second copy of
     your API to keep in step with the first.
   </p>
@@ -145,123 +331,289 @@
     <a class="btn" href="https://github.com/askturret/mcp">Source on GitHub</a>
     <a class="btn" href="https://www.npmjs.com/org/askturret">Packages on npm</a>
   </div>
+
+  <figure class="diagram">
+    <svg viewBox="0 0 640 390" role="img" aria-labelledby="d-title d-desc">
+      <title id="d-title">How AskTurret fits together</title>
+      <desc id="d-desc">Your OpenAPI spec goes into AskTurret, which serves it to an MCP client. AskTurret runs in one of three shapes: inside an Express app, inside a Fastify app, or as a standalone gateway.</desc>
+
+      <!-- row 1: spec -> askturret -> client -->
+      <rect class="d-box" x="8" y="26" width="178" height="74" rx="11" stroke-width="1.5"/>
+      <text class="d-label" x="97" y="57" text-anchor="middle" font-size="19">Your OpenAPI spec</text>
+      <text class="d-sub" x="97" y="80" text-anchor="middle" font-size="16">the one you already have</text>
+
+      <path class="d-flow" d="M194 63 H 232" stroke-width="2.5"/>
+      <path class="d-arrow" d="M232 56 l 14 7 -14 7 z"/>
+
+      <rect class="d-box-accent" x="254" y="18" width="132" height="90" rx="12" stroke-width="2"/>
+      <text class="d-label" x="320" y="53" text-anchor="middle" font-size="20">AskTurret</text>
+      <text class="d-sub" x="320" y="78" text-anchor="middle" font-size="16">discover · shape · serve</text>
+
+      <path class="d-flow" d="M394 63 H 432" stroke-width="2.5"/>
+      <path class="d-arrow" d="M432 56 l 14 7 -14 7 z"/>
+
+      <rect class="d-box" x="454" y="26" width="178" height="74" rx="11" stroke-width="1.5"/>
+      <text class="d-label" x="543" y="57" text-anchor="middle" font-size="19">MCP client</text>
+      <text class="d-sub" x="543" y="80" text-anchor="middle" font-size="16">tools, discovered</text>
+
+      <!-- the three run shapes hang off the middle box -->
+      <path class="d-tick" d="M320 108 V 150 M 110 150 H 530 M 110 150 V 188 M 320 150 V 188 M 530 150 V 188" stroke-width="1.5"/>
+
+      <text class="d-sub" x="320" y="139" text-anchor="middle" font-size="15">runs as</text>
+
+      <rect class="d-box" x="14" y="188" width="192" height="70" rx="10" stroke-width="1.5"/>
+      <text class="d-label" x="110" y="219" text-anchor="middle" font-size="18">Express middleware</text>
+      <text class="d-sub" x="110" y="241" text-anchor="middle" font-size="15">one app.use line</text>
+
+      <rect class="d-box" x="224" y="188" width="192" height="70" rx="10" stroke-width="1.5"/>
+      <text class="d-label" x="320" y="219" text-anchor="middle" font-size="18">Fastify plugin</text>
+      <text class="d-sub" x="320" y="241" text-anchor="middle" font-size="15">one register call</text>
+
+      <rect class="d-box" x="434" y="188" width="192" height="70" rx="10" stroke-width="1.5"/>
+      <text class="d-label" x="530" y="219" text-anchor="middle" font-size="18">Standalone gateway</text>
+      <text class="d-sub" x="530" y="241" text-anchor="middle" font-size="15">touch nothing upstream</text>
+
+      <!-- what does not happen, which is the actual differentiator -->
+      <path class="d-tick" d="M40 300 H 600" stroke-width="1.5" stroke-dasharray="5 5"/>
+      <text class="d-sub" x="320" y="290" text-anchor="middle" font-size="16">no generated code · no second copy of your API</text>
+      <text class="d-sub" x="320" y="336" text-anchor="middle" font-size="16">your spec stays the single source of truth</text>
+    </svg>
+    <figcaption>Your spec in, MCP out — in whichever shape your service already has.</figcaption>
+  </figure>
+
+  <div class="rule"></div>
 </header>
 
-<h2 id="quick-start">Quick start</h2>
+<section id="quick-start">
+  <p class="kicker">Quick start</p>
+  <h2>Four steps, and everything you need is on this page.</h2>
+  <p>
+    Mount it into an Express app. The MCP layer is the single <code>app.use</code>
+    line.
+  </p>
 
-<p>
-  Mount it into an Express app you already run. The MCP layer is the single
-  <code>app.use</code> line.
-</p>
+  <figure class="code">
+    <figcaption>terminal</figcaption>
+    <pre><code>npm install express @askturret/mcp-adapters-express</code></pre>
+  </figure>
 
-<pre><code>npm install express @askturret/mcp-adapters-express</code></pre>
+  <details class="spec">
+    <summary>petstore.yaml <span>— a complete sample spec, if you do not have one to hand</span></summary>
+    <pre><code>cat &gt; petstore.yaml &lt;&lt;'YAML'
+openapi: 3.0.0
+info:
+  title: Petstore API
+  version: 1.0.0
+servers:
+  - url: https://petstore.example.com/api/v1
+paths:
+  /pets:
+    get:
+      operationId: listPets
+      description: Returns a list of all pets in the store
+      parameters:
+        - name: limit
+          in: query
+          description: Maximum number of pets to return
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: A list of pets
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pets:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        name: { type: string }
+  /pets/{petId}:
+    get:
+      operationId: getPetById
+      description: Returns a single pet
+      parameters:
+        - name: petId
+          in: path
+          required: true
+          description: ID of the pet to return
+          schema: { type: string }
+      responses:
+        '200':
+          description: A pet
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  name: { type: string }
+YAML</code></pre>
+  </details>
 
-<pre><code>import express from 'express';
+  <p>Score the spec before you run it, to see what will be exposed:</p>
+
+  <figure class="code">
+    <figcaption>terminal</figcaption>
+    <pre><code>npx @askturret/mcp-cli doctor petstore.yaml</code></pre>
+  </figure>
+
+  <figure class="code">
+    <figcaption>server.mjs</figcaption>
+    <pre><code>import express from 'express';
 import { mcpFromOpenApi } from '@askturret/mcp-adapters-express';
 
 const port = Number(process.env.PORT ?? 7078);
 const app = express();
-app.use('/mcp', mcpFromOpenApi('./petstore.yaml'));</code></pre>
+app.use('/mcp', mcpFromOpenApi('./petstore.yaml'));
 
-<pre><code>node server.mjs</code></pre>
+const server = app.listen(port);
+server.on('listening', () =&gt; console.log(`MCP server on http://localhost:${port}/mcp`));
+server.on('error', (err) =&gt; {
+  if (err.code !== 'EADDRINUSE') throw err;
+  console.error(`Port ${port} is already in use. Start it on another port: PORT=8078 node server.mjs`);
+  process.exit(1);
+});</code></pre>
+  </figure>
 
-<p>Your API now exposes tools over MCP. Ask it what it has:</p>
+  <figure class="code">
+    <figcaption>terminal</figcaption>
+    <pre><code>node server.mjs</code></pre>
+  </figure>
 
-<pre><code>curl -X POST http://localhost:7078/mcp \
+  <p>Your API now exposes tools over MCP. Ask it what it has:</p>
+
+  <figure class="code">
+    <figcaption>terminal</figcaption>
+    <pre><code>curl -X POST http://localhost:7078/mcp \
   -H 'Content-Type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</code></pre>
+  </figure>
 
-<p class="note">
-  Abridged from the runnable walkthrough, which includes the sample spec, the
-  full <code>server.mjs</code> with its port-collision handling, and the expected
-  output at every step. Every command above is asserted to appear verbatim in
-  that walkthrough, so the two cannot drift apart —
-  <a href="https://github.com/askturret/mcp#quick-demo">read the full quick start</a>.
-</p>
+  <p>
+    Point <code>mcpFromOpenApi</code> at your own spec to swap the sample out.
+    There is also an explorer UI at <code>/mcp/explorer</code> for browsing and
+    testing the tools by hand.
+  </p>
+</section>
 
-<h2>Three ways to run it</h2>
+<section>
+  <p class="kicker">Deployment</p>
+  <h2>Three shapes, one model.</h2>
+  <p>
+    The same discovery and tool-shaping runs in all three. Which one you pick is
+    a question about your service, not about what you give up.
+  </p>
 
-<div class="grid">
-  <div class="card">
-    <h3>Into an Express app</h3>
-    <p>
-      Mount as middleware on a route you choose. Express 4 and Express 5 are both
-      supported, and CI runs a matrix leg against each.
-    </p>
+  <div class="grid">
+    <div class="card">
+      <div class="glyph">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="6" rx="1.5"/>
+          <rect x="3" y="14" width="18" height="6" rx="1.5"/>
+          <path d="M7 7h.01M7 17h.01"/>
+        </svg>
+      </div>
+      <h3>Inside an Express app</h3>
+      <p>
+        One <code>app.use</code> on a route you choose, sharing the process,
+        middleware and auth you already run. Express 4 and 5 are both supported,
+        and CI runs a matrix leg against each rather than declaring support and
+        testing one.
+      </p>
+    </div>
+    <div class="card">
+      <div class="glyph">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M13 2 4 14h7l-1 8 9-12h-7z"/>
+        </svg>
+      </div>
+      <h3>Inside a Fastify app</h3>
+      <p>
+        Registered as a plugin, so it inherits the encapsulation and lifecycle
+        hooks Fastify already gives you. The model and the tool output are
+        identical to the Express path.
+      </p>
+    </div>
+    <div class="card">
+      <div class="glyph">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 20V8l7-4 7 4v12"/>
+          <path d="M2 20h20"/>
+          <path d="M10 20v-5h4v5"/>
+        </svg>
+      </div>
+      <h3>As a standalone gateway</h3>
+      <p>
+        A separate process in front of an API you would rather not modify — one
+        you do not own, cannot redeploy, or simply do not want to touch. Nothing
+        changes on the other side.
+      </p>
+    </div>
   </div>
-  <div class="card">
-    <h3>Into a Fastify app</h3>
-    <p>
-      The same model, registered as a Fastify plugin, for services already built
-      on that stack.
-    </p>
+</section>
+
+<section>
+  <p class="kicker">Provenance</p>
+  <h2>Check the supply chain yourself.</h2>
+  <p>
+    Every published package carries SLSA build provenance, and every tarball
+    ships <code>LICENSE</code> and <code>NOTICE</code> inside it. Ask the
+    registry rather than taking it on trust:
+  </p>
+
+  <figure class="code" data-page-only="The verification command is the point of this section and has no equivalent in the README, which does not discuss provenance. The pinned version is asserted against packages/core/package.json by check-landing-page.mjs, so it cannot rot into a 404.">
+    <figcaption>terminal</figcaption>
+    <pre data-page-only="The verification command is the point of this section and has no equivalent in the README, which does not discuss provenance. The pinned version is asserted against packages/core/package.json by check-landing-page.mjs, so it cannot rot into a 404."><code>npm view @askturret/mcp-core@0.2.0 dist.attestations</code></pre>
+  </figure>
+
+  <p>
+    Provenance ties a published tarball to the workflow run and the commit that
+    built it.
+  </p>
+</section>
+
+<section>
+  <p class="kicker">Status</p>
+  <h2>Project status</h2>
+
+  <ul class="facts">
+    <li><strong>0.2.0</strong>, published 2026-09-11 — nine public packages under the <code>@askturret</code> scope.</li>
+    <li><strong>Pre-1.0.</strong> The compatibility policy is published but dormant below <code>1.0.0</code> — under semver, <code>0.x</code> carries no compatibility guarantee.</li>
+    <li><strong>2,055 tests across 12 suites</strong>, run on every pull request.</li>
+    <li><strong>Apache-2.0</strong>, with the licence and NOTICE inside every published tarball.</li>
+    <li><strong>Node 20 or newer.</strong></li>
+  </ul>
+
+  <p class="status-note">No production users yet.</p>
+</section>
+
+<section>
+  <p class="kicker">Read more</p>
+  <h2>Where to go next.</h2>
+
+  <div class="links">
+    <a href="https://github.com/askturret/mcp">
+      <strong>Repository</strong>
+      <span>Source, issues, and the full README.</span>
+    </a>
+    <a href="https://www.npmjs.com/org/askturret">
+      <strong>npm packages</strong>
+      <span>All nine public packages, each with its own README.</span>
+    </a>
+    <a href="https://github.com/askturret/mcp/blob/main/docs/compatibility.md">
+      <strong>Compatibility matrix</strong>
+      <span>Which Node, TypeScript, Express, Fastify and OpenAPI versions are supported — and which are not.</span>
+    </a>
+    <a href="https://github.com/askturret/mcp/blob/main/CONTRIBUTING.md">
+      <strong>Contributing</strong>
+      <span>How to propose a change, and the sign-off the project requires.</span>
+    </a>
   </div>
-  <div class="card">
-    <h3>As a standalone gateway</h3>
-    <p>
-      Run it in front of an API you would rather not modify at all. Nothing needs
-      to change on the other side.
-    </p>
-  </div>
-</div>
-
-<h2>Check the supply chain yourself</h2>
-
-<p>
-  Every published package carries SLSA build provenance, and every tarball ships
-  <code>LICENSE</code> and <code>NOTICE</code> inside it. Neither is a claim you
-  have to take on trust — ask the registry:
-</p>
-
-<pre data-page-only="The verification command is the point of this section and has no equivalent in the README, which does not discuss provenance. The pinned version is asserted against packages/core/package.json by check-landing-page.mjs, so it cannot rot into a 404."><code>npm view @askturret/mcp-core@0.2.0 dist.attestations</code></pre>
-
-<p>
-  Provenance ties a published tarball to the workflow run and the commit that
-  built it, so “this came from that source” is something the registry answers
-  rather than something this page asserts.
-</p>
-
-<h2>Where the project actually is</h2>
-
-<p>
-  Honest version, because overselling a young project costs exactly the readers
-  worth having:
-</p>
-
-<ul class="facts">
-  <li><strong>0.2.0</strong>, published 2026-09-11 — nine public packages under the <code>@askturret</code> scope.</li>
-  <li><strong>Pre-1.0.</strong> The compatibility policy is written and published, but it is dormant below <code>1.0.0</code> — under semver, <code>0.x</code> carries no compatibility guarantee.</li>
-  <li><strong>2,055 tests across 12 suites</strong>, run on every pull request.</li>
-  <li><strong>Apache-2.0</strong>, with the licence and NOTICE inside every published tarball.</li>
-  <li><strong>Node 20 or newer.</strong></li>
-</ul>
-
-<p class="note">
-  There is no adoption story here yet, and this page will not invent one. What
-  the repository can evidence is the list above; anything beyond it would be
-  decoration.
-</p>
-
-<h2>Read more</h2>
-
-<div class="grid">
-  <div class="card">
-    <h3><a href="https://github.com/askturret/mcp">Repository</a></h3>
-    <p>Source, issues, and the full README.</p>
-  </div>
-  <div class="card">
-    <h3><a href="https://www.npmjs.com/org/askturret">npm packages</a></h3>
-    <p>All nine public packages, each with its own README.</p>
-  </div>
-  <div class="card">
-    <h3><a href="https://github.com/askturret/mcp/blob/main/docs/compatibility.md">Compatibility matrix</a></h3>
-    <p>Which Node, TypeScript, Express, Fastify and OpenAPI versions are supported — and which are not.</p>
-  </div>
-  <div class="card">
-    <h3><a href="https://github.com/askturret/mcp/blob/main/CONTRIBUTING.md">Contributing</a></h3>
-    <p>How to propose a change, and the sign-off the project requires.</p>
-  </div>
-</div>
+</section>
 
 <footer>
   <p>

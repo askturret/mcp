@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  THE EDITABLE SOURCE for site/og-image.png (#864).
+
+  This file is the original; the PNG beside it is a render of this and nothing
+  else. Committed together on purpose — a PNG with no source is an asset nobody
+  can ever amend, so if you change one, re-render the other. The command that
+  produced it is recorded in the pull request.
+
+  IT IS A THUMBNAIL, NOT A POSTER. LinkedIn renders it small in-feed, so every
+  type size here is deliberately large: at a 300px-wide preview this canvas is
+  scaled to a quarter, and anything much under 40px in these coordinates stops
+  being readable. Mark, name, one sentence. If a third line ever feels
+  necessary, delete the second instead.
+
+  DELIBERATELY ABSENT: any version number — it would be stale the day 0.2.1
+  ships and the platform caches the image for a long time. Also no screenshot,
+  no code sample, no fake UI, no logo wall.
+
+  Colours are the brand tokens from askturret/askturret packages/landing
+  styles.css: background #0d1117, accent #10b981, text #f1f5f9 / #94a3b8.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="AskTurret MCP — serve your existing OpenAPI spec as an MCP server">
+  <title>AskTurret MCP — serve your existing OpenAPI spec as an MCP server</title>
+
+  <rect width="1200" height="630" fill="#0d1117"/>
+
+  <!-- A single accent edge. One accent, used once. -->
+  <rect x="0" y="0" width="1200" height="8" fill="#10b981"/>
+
+  <!-- Brand lockup: the favicon's own geometry, scaled up. -->
+  <g transform="translate(96, 132)">
+    <rect width="104" height="104" rx="23" fill="#10b981"/>
+    <g transform="translate(52, 52) scale(3.25) translate(-16, -16)">
+      <path d="M13 7L22 25H17L13 16L9 25H4L13 7Z" fill="#0d1117"/>
+      <rect x="23" y="17" width="5" height="8" rx="1" fill="#0d1117" opacity="0.7"/>
+    </g>
+  </g>
+
+  <text x="228" y="203" font-family="Inter, 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="62" font-weight="700" letter-spacing="-1.4" fill="#f1f5f9">AskTurret <tspan fill="#10b981">MCP</tspan></text>
+
+  <!-- The one sentence. Two visual lines, one idea. -->
+  <text x="96" y="386" font-family="Inter, 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="58" font-weight="600" letter-spacing="-1.1" fill="#f1f5f9">Serve your existing OpenAPI spec</text>
+  <text x="96" y="460" font-family="Inter, 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="58" font-weight="600" letter-spacing="-1.1" fill="#94a3b8">as an MCP server.</text>
+
+  <!-- Footer strip: what it is, in the smallest type that still survives. -->
+  <rect x="96" y="524" width="72" height="5" rx="2.5" fill="#10b981"/>
+  <text x="96" y="580" font-family="Inter, 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+        font-size="42" font-weight="500" letter-spacing="-0.5" fill="#64748b">Apache-2.0 · SLSA provenance on every package</text>
+</svg>

@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<!--
+  SPDX-License-Identifier: Apache-2.0
+
+  THE LANDING PAGE. One file, no build step, no dependency, no external request.
+
+  WHY THIS LIVES IN `site/` AND NOT `docs/` (#860). `docs/**` is inside the `cli`
+  path filter in test.yml, deliberately and with a stated reason (#774): the
+  migrate suite walks every `.md` under `docs/`, so a prose edit there genuinely
+  can change a test result. The consequence is that a docs-only change is
+  `ci:full` and schedules twelve package suites on the single serialized runner.
+
+  Landing-page copy is edited often and can affect no suite, so paying that toll
+  on every word change would be wrong. `site/**` appears in no filter, so a copy
+  edit here is `ci:cheap`. That is the whole reason for the directory.
+
+  WHAT GUARDS THIS FILE. `.github/scripts/check-landing-page.mjs`, which runs in
+  `test-integrity` — a job that needs nothing and therefore runs on EVERY
+  non-dependabot pull request, including a `ci:cheap` copy edit that schedules no
+  package suite at all. It asserts three things:
+
+    1. Every command shown below appears VERBATIM in README.md, unless the block
+       declares `data-page-only` with a reason. Two copies of one fact is the
+       drift class this repository has spent weeks deleting; this page is the
+       most visible surface we own and is the last place to reintroduce it.
+    2. No unsourceable claim vocabulary — users, adopters, production
+       deployments, benchmarks, performance numbers. The repository cannot
+       source any of them.
+    3. Any pinned `@askturret/mcp-core@X.Y.Z` equals packages/core/package.json,
+       so the verification command cannot rot into a 404 the way three separate
+       version strings did during the 0.2.0 cut.
+
+  NO EXTERNAL RESOURCES, deliberately. No CDN, no web font, no analytics, no
+  badge image. A page whose subject is supply-chain provenance should not open
+  the reader's browser to third parties to say so.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AskTurret MCP — serve your existing OpenAPI spec as an MCP server</title>
+<meta name="description" content="Reads your existing OpenAPI spec and serves it as an MCP server. No code generation. Apache-2.0, with SLSA provenance on every published package.">
+<link rel="canonical" href="https://askturret.github.io/mcp/">
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1a1d21;
+    --muted: #5c6570;
+    --line: #e3e7ec;
+    --accent: #0b5fff;
+    --code-bg: #f6f8fa;
+    --code-fg: #1a1d21;
+    --card: #fbfcfd;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216;
+      --fg: #e6e9ee;
+      --muted: #9aa4b1;
+      --line: #232a33;
+      --accent: #6fa0ff;
+      --code-bg: #161b22;
+      --code-fg: #e6e9ee;
+      --card: #131820;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  .wrap { max-width: 52rem; margin: 0 auto; padding: 0 1.25rem; }
+  a { color: var(--accent); }
+  h1, h2, h3 { line-height: 1.25; letter-spacing: -0.015em; }
+  h1 { font-size: clamp(2rem, 5vw, 2.85rem); margin: 0 0 .6rem; }
+  h2 { font-size: 1.4rem; margin: 3rem 0 1rem; padding-top: 1.75rem; border-top: 1px solid var(--line); }
+  h3 { font-size: 1.05rem; margin: 0 0 .4rem; }
+  p { margin: 0 0 1rem; }
+  .lede { font-size: 1.2rem; color: var(--muted); margin: 0 0 1.5rem; }
+  header { padding: 3.5rem 0 0; }
+  .eyebrow {
+    font-size: .78rem; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); margin: 0 0 .9rem; font-weight: 600;
+  }
+  pre {
+    background: var(--code-bg); color: var(--code-fg);
+    border: 1px solid var(--line); border-radius: 8px;
+    padding: 1rem; overflow-x: auto; margin: 0 0 1rem;
+    font-size: .875rem; line-height: 1.6;
+  }
+  code {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  p code, li code, td code {
+    background: var(--code-bg); border: 1px solid var(--line);
+    border-radius: 4px; padding: .1em .35em; font-size: .875em;
+  }
+  .actions { display: flex; flex-wrap: wrap; gap: .7rem; margin: 1.75rem 0 0; }
+  .btn {
+    display: inline-block; padding: .6rem 1.1rem; border-radius: 7px;
+    border: 1px solid var(--line); text-decoration: none; font-weight: 600;
+    font-size: .93rem; color: var(--fg);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .grid { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); }
+  .card { border: 1px solid var(--line); border-radius: 9px; padding: 1.1rem; background: var(--card); }
+  .card p { margin: 0; color: var(--muted); font-size: .93rem; }
+  .facts { list-style: none; padding: 0; margin: 0; }
+  .facts li { padding: .5rem 0; border-bottom: 1px solid var(--line); font-size: .95rem; }
+  .facts li:last-child { border-bottom: 0; }
+  .note {
+    border-left: 3px solid var(--line); padding: .1rem 0 .1rem 1rem;
+    color: var(--muted); margin: 0 0 1rem;
+  }
+  footer {
+    margin-top: 3.5rem; padding: 2rem 0 3rem;
+    border-top: 1px solid var(--line); color: var(--muted); font-size: .9rem;
+  }
+  footer a { color: var(--muted); }
+  .skip {
+    position: absolute; left: -9999px; top: 0;
+    background: var(--bg); color: var(--fg); padding: .6rem 1rem; z-index: 10;
+  }
+  .skip:focus { left: .5rem; top: .5rem; }
+</style>
+</head>
+<body>
+<a class="skip" href="#quick-start">Skip to the quick start</a>
+
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">Apache-2.0 · Node 20+ · SLSA provenance on every package</p>
+  <h1>Serve your existing OpenAPI spec as an MCP server.</h1>
+  <p class="lede">
+    AskTurret MCP reads the spec you already have and serves it over the Model
+    Context Protocol. <strong>No code generation</strong>, and no second copy of
+    your API to keep in step with the first.
+  </p>
+  <div class="actions">
+    <a class="btn primary" href="#quick-start">Quick start</a>
+    <a class="btn" href="https://github.com/askturret/mcp">Source on GitHub</a>
+    <a class="btn" href="https://www.npmjs.com/org/askturret">Packages on npm</a>
+  </div>
+</header>
+
+<h2 id="quick-start">Quick start</h2>
+
+<p>
+  Mount it into an Express app you already run. The MCP layer is the single
+  <code>app.use</code> line.
+</p>
+
+<pre><code>npm install express @askturret/mcp-adapters-express</code></pre>
+
+<pre><code>import express from 'express';
+import { mcpFromOpenApi } from '@askturret/mcp-adapters-express';
+
+const port = Number(process.env.PORT ?? 7078);
+const app = express();
+app.use('/mcp', mcpFromOpenApi('./petstore.yaml'));</code></pre>
+
+<pre><code>node server.mjs</code></pre>
+
+<p>Your API now exposes tools over MCP. Ask it what it has:</p>
+
+<pre><code>curl -X POST http://localhost:7078/mcp \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'</code></pre>
+
+<p class="note">
+  Abridged from the runnable walkthrough, which includes the sample spec, the
+  full <code>server.mjs</code> with its port-collision handling, and the expected
+  output at every step. Every command above is asserted to appear verbatim in
+  that walkthrough, so the two cannot drift apart —
+  <a href="https://github.com/askturret/mcp#quick-demo">read the full quick start</a>.
+</p>
+
+<h2>Three ways to run it</h2>
+
+<div class="grid">
+  <div class="card">
+    <h3>Into an Express app</h3>
+    <p>
+      Mount as middleware on a route you choose. Express 4 and Express 5 are both
+      supported, and CI runs a matrix leg against each.
+    </p>
+  </div>
+  <div class="card">
+    <h3>Into a Fastify app</h3>
+    <p>
+      The same model, registered as a Fastify plugin, for services already built
+      on that stack.
+    </p>
+  </div>
+  <div class="card">
+    <h3>As a standalone gateway</h3>
+    <p>
+      Run it in front of an API you would rather not modify at all. Nothing needs
+      to change on the other side.
+    </p>
+  </div>
+</div>
+
+<h2>Check the supply chain yourself</h2>
+
+<p>
+  Every published package carries SLSA build provenance, and every tarball ships
+  <code>LICENSE</code> and <code>NOTICE</code> inside it. Neither is a claim you
+  have to take on trust — ask the registry:
+</p>
+
+<pre data-page-only="The verification command is the point of this section and has no equivalent in the README, which does not discuss provenance. The pinned version is asserted against packages/core/package.json by check-landing-page.mjs, so it cannot rot into a 404."><code>npm view @askturret/mcp-core@0.2.0 dist.attestations</code></pre>
+
+<p>
+  Provenance ties a published tarball to the workflow run and the commit that
+  built it, so “this came from that source” is something the registry answers
+  rather than something this page asserts.
+</p>
+
+<h2>Where the project actually is</h2>
+
+<p>
+  Honest version, because overselling a young project costs exactly the readers
+  worth having:
+</p>
+
+<ul class="facts">
+  <li><strong>0.2.0</strong>, published 2026-09-11 — nine public packages under the <code>@askturret</code> scope.</li>
+  <li><strong>Pre-1.0.</strong> The compatibility policy is written and published, but it is dormant below <code>1.0.0</code> — under semver, <code>0.x</code> carries no compatibility guarantee.</li>
+  <li><strong>2,055 tests across 12 suites</strong>, run on every pull request.</li>
+  <li><strong>Apache-2.0</strong>, with the licence and NOTICE inside every published tarball.</li>
+  <li><strong>Node 20 or newer.</strong></li>
+</ul>
+
+<p class="note">
+  There is no adoption story here yet, and this page will not invent one. What
+  the repository can evidence is the list above; anything beyond it would be
+  decoration.
+</p>
+
+<h2>Read more</h2>
+
+<div class="grid">
+  <div class="card">
+    <h3><a href="https://github.com/askturret/mcp">Repository</a></h3>
+    <p>Source, issues, and the full README.</p>
+  </div>
+  <div class="card">
+    <h3><a href="https://www.npmjs.com/org/askturret">npm packages</a></h3>
+    <p>All nine public packages, each with its own README.</p>
+  </div>
+  <div class="card">
+    <h3><a href="https://github.com/askturret/mcp/blob/main/docs/compatibility.md">Compatibility matrix</a></h3>
+    <p>Which Node, TypeScript, Express, Fastify and OpenAPI versions are supported — and which are not.</p>
+  </div>
+  <div class="card">
+    <h3><a href="https://github.com/askturret/mcp/blob/main/CONTRIBUTING.md">Contributing</a></h3>
+    <p>How to propose a change, and the sign-off the project requires.</p>
+  </div>
+</div>
+
+<footer>
+  <p>
+    AskTurret MCP — <a href="https://github.com/askturret/mcp/blob/main/LICENSE">Apache-2.0</a>.
+    Built in the open at <a href="https://github.com/askturret/mcp">github.com/askturret/mcp</a>.
+  </p>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,81 @@
+name: Pages
+
+# PUBLISHES `site/` TO GITHUB PAGES (#860).
+#
+# WHY THIS WORKFLOW EXISTS AT ALL, since "no build step" was the instruction and
+# remains true: there is no build step here. The page is one hand-written HTML
+# file with no generator, no dependency and no npm install. What this workflow
+# does is COPY that directory to Pages.
+#
+# It is needed because of a GitHub constraint rather than a preference. The
+# "Deploy from a branch" Pages source offers exactly two folders — the
+# repository root and `/docs`. It cannot serve `site/`. So the choice was:
+#
+#   docs/            branch source works, but `docs/**` is inside the `cli` path
+#                    filter (#774, deliberately and with a stated reason), so
+#                    every copy edit becomes a ci:full PR scheduling twelve
+#                    package suites on the single serialized runner.
+#   repository root  branch source works, and serves the ENTIRE repository as
+#                    static files. Rejected on that alone.
+#   site/ + Actions  needs this file, and nothing else. Copy edits stay ci:cheap.
+#
+# The third is the only one that does not charge the serialized runner for a
+# typo fix, which is why it is the one taken. The cost is this file.
+#
+# THE FOUNDER MUST SELECT "GitHub Actions" AS THE PAGES SOURCE for this to run —
+# Settings > Pages > Build and deployment > Source. That is a repository setting
+# and therefore not something any agent can do. Until it is selected, this
+# workflow is inert rather than broken.
+
+on:
+  push:
+    branches: [main]
+    # Only when the page or this file changes. A Pages deploy has no opinion
+    # about package source, and re-publishing an unchanged directory on every
+    # merge would occupy the serial runner for nothing.
+    paths:
+      - 'site/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Least privilege, and NOT inherited from the repository default. `pages` and
+# `id-token` are the two the deploy action requires; `contents: read` is all the
+# checkout needs. Nothing here writes to the repository.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time, and never cancel one mid-flight: a cancelled Pages
+# deployment can leave the site serving a half-published state, which is worse
+# than publishing a moment later.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy site to Pages
+    # The approved self-hosted pool (#280). A GitHub-hosted carve-out was
+    # considered and NOT taken: HOSTED_JOB_CARVE_OUTS exists for jobs that must
+    # run hosted (#595), and this one has no such requirement. Widening a
+    # security guard for a job that does not need it is the wrong trade, and this
+    # job runs post-merge where queueing behind the serial runner is harmless.
+    runs-on: [self-hosted, Linux, X64, askturret]
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      # The directory is uploaded verbatim. No Jekyll runs on an artifact
+      # uploaded this way, so no `.nojekyll` file is needed and no filename
+      # convention is reserved.
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@v4

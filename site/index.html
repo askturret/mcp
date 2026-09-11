@@ -227,16 +227,57 @@
 
   /* THE DIAGRAM. Scales with the container; type inside is sized generously so
      it stays legible when the SVG is rendered narrow. */
+  /* THE DIAGRAM IS LAID OUT BY CSS, NOT BY COORDINATES (#866).
+     Its labels used to be SVG text positioned inside hand-sized rectangles. SVG
+     text does not wrap and a sibling rectangle does not constrain it: the two
+     are independent, so a box never grows to fit and a label simply runs past
+     the edge. The widths had been estimated against one font's metrics — and
+     this page deliberately ships no font, so the face varies per visitor and any
+     such estimate is wrong for most of them.
+
+     Every label below now sits in an ordinary block box. A CSS box is SIZED BY
+     ITS CONTENT: the text wraps, the box grows, and the border is painted around
+     whatever resulted. Overflow is not narrowly avoided here, it is unreachable —
+     there is no width for the text to exceed. That property holds for any font,
+     any size and any language, which is what the old geometry could not do.
+
+     `min-width: 0` matters and is not decoration: a flex item defaults to a
+     min-content floor, which would let a long single word push the row wider
+     than its container. With it, the item may shrink and the word wraps instead.
+
+     The arrows stay SVG because they are pure geometry and carry no text, so
+     they have nothing to overflow. They rotate a quarter turn once the row
+     wraps to a column. */
   .diagram { margin: 2.5rem 0 0; }
-  .diagram svg { display: block; width: 100%; height: auto; }
-  .diagram figcaption { font-size: .86rem; color: var(--faint); margin: .7rem 0 0; }
-  .d-box { fill: var(--card); stroke: var(--line); }
-  .d-box-accent { fill: var(--accent-soft); stroke: var(--accent); }
-  .d-label { fill: var(--fg); font-weight: 640; }
-  .d-sub { fill: var(--muted); }
-  .d-flow { stroke: var(--accent); fill: none; }
-  .d-tick { stroke: var(--line); fill: none; }
-  .d-arrow { fill: var(--accent); }
+  .diagram figcaption { font-size: .86rem; color: var(--faint); margin: .9rem 0 0; }
+
+  .flow, .flow-shapes { display: flex; flex-wrap: wrap; gap: .6rem; align-items: stretch; }
+  .flow-shapes { margin: .6rem 0 0; }
+
+  .fnode {
+    flex: 1 1 10.5rem;
+    min-width: 0;
+    border: 1px solid var(--line); border-radius: 8px;
+    background: var(--card); padding: .8rem .9rem; text-align: center;
+    display: flex; flex-direction: column; justify-content: center;
+  }
+  .fnode b { display: block; font-weight: 650; font-size: .97rem; line-height: 1.3; overflow-wrap: anywhere; }
+  .fnode i { display: block; font-style: normal; color: var(--muted); font-size: .84rem; line-height: 1.35; margin: .18rem 0 0; overflow-wrap: anywhere; }
+  .fnode.is-accent { border-color: var(--accent); background: var(--accent-soft); border-width: 2px; padding: calc(.8rem - 1px) calc(.9rem - 1px); }
+  .fnode.is-accent b { color: var(--fg); }
+
+  .farrow { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; color: var(--accent); }
+  .farrow svg { width: 1.75rem; height: .9rem; display: block; }
+
+  .flow-runs { text-align: center; color: var(--faint); font-size: .82rem; margin: .7rem 0 0; max-width: none; }
+  .flow-foot { text-align: center; color: var(--muted); font-size: .88rem; margin: 1rem auto 0; max-width: 46ch; }
+
+  /* Once the row no longer fits side by side, the arrows point the way the
+     boxes now stack. */
+  @media (max-width: 44rem) {
+    .farrow svg { transform: rotate(90deg); }
+    .fnode { flex-basis: 100%; }
+  }
 
   /* CODE. A labelled surface, and horizontal scroll rather than mid-command
      wrapping. No span elements inside a code block — see the note above. */
@@ -332,52 +373,46 @@
     <a class="btn" href="https://www.npmjs.com/org/askturret">Packages on npm</a>
   </div>
 
-  <figure class="diagram">
-    <svg viewBox="0 0 640 390" role="img" aria-labelledby="d-title d-desc">
-      <title id="d-title">How AskTurret fits together</title>
-      <desc id="d-desc">Your OpenAPI spec goes into AskTurret, which serves it to an MCP client. AskTurret runs in one of three shapes: inside an Express app, inside a Fastify app, or as a standalone gateway.</desc>
+  <figure class="diagram" role="group" aria-label="Your OpenAPI spec goes into AskTurret, which serves it to an MCP client. AskTurret runs in one of three shapes: inside an Express app, inside a Fastify app, or as a standalone gateway.">
+    <div class="flow">
+      <div class="fnode">
+        <b>Your OpenAPI spec</b>
+        <i>the one you already have</i>
+      </div>
+      <div class="farrow" aria-hidden="true">
+        <svg viewBox="0 0 28 12"><path d="M1 6h21M18 1.5 25 6l-7 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="fnode is-accent">
+        <b>AskTurret</b>
+        <i>discover · shape · serve</i>
+      </div>
+      <div class="farrow" aria-hidden="true">
+        <svg viewBox="0 0 28 12"><path d="M1 6h21M18 1.5 25 6l-7 4.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+      <div class="fnode">
+        <b>MCP client</b>
+        <i>tools, discovered</i>
+      </div>
+    </div>
 
-      <!-- row 1: spec -> askturret -> client -->
-      <rect class="d-box" x="8" y="26" width="178" height="74" rx="11" stroke-width="1.5"/>
-      <text class="d-label" x="97" y="57" text-anchor="middle" font-size="19">Your OpenAPI spec</text>
-      <text class="d-sub" x="97" y="80" text-anchor="middle" font-size="16">the one you already have</text>
+    <p class="flow-runs">runs as</p>
 
-      <path class="d-flow" d="M194 63 H 232" stroke-width="2.5"/>
-      <path class="d-arrow" d="M232 56 l 14 7 -14 7 z"/>
+    <div class="flow-shapes">
+      <div class="fnode">
+        <b>Express middleware</b>
+        <i>one app.use line</i>
+      </div>
+      <div class="fnode">
+        <b>Fastify plugin</b>
+        <i>one register call</i>
+      </div>
+      <div class="fnode">
+        <b>Standalone gateway</b>
+        <i>touch nothing upstream</i>
+      </div>
+    </div>
 
-      <rect class="d-box-accent" x="254" y="18" width="132" height="90" rx="12" stroke-width="2"/>
-      <text class="d-label" x="320" y="53" text-anchor="middle" font-size="20">AskTurret</text>
-      <text class="d-sub" x="320" y="78" text-anchor="middle" font-size="16">discover · shape · serve</text>
-
-      <path class="d-flow" d="M394 63 H 432" stroke-width="2.5"/>
-      <path class="d-arrow" d="M432 56 l 14 7 -14 7 z"/>
-
-      <rect class="d-box" x="454" y="26" width="178" height="74" rx="11" stroke-width="1.5"/>
-      <text class="d-label" x="543" y="57" text-anchor="middle" font-size="19">MCP client</text>
-      <text class="d-sub" x="543" y="80" text-anchor="middle" font-size="16">tools, discovered</text>
-
-      <!-- the three run shapes hang off the middle box -->
-      <path class="d-tick" d="M320 108 V 150 M 110 150 H 530 M 110 150 V 188 M 320 150 V 188 M 530 150 V 188" stroke-width="1.5"/>
-
-      <text class="d-sub" x="320" y="139" text-anchor="middle" font-size="15">runs as</text>
-
-      <rect class="d-box" x="14" y="188" width="192" height="70" rx="10" stroke-width="1.5"/>
-      <text class="d-label" x="110" y="219" text-anchor="middle" font-size="18">Express middleware</text>
-      <text class="d-sub" x="110" y="241" text-anchor="middle" font-size="15">one app.use line</text>
-
-      <rect class="d-box" x="224" y="188" width="192" height="70" rx="10" stroke-width="1.5"/>
-      <text class="d-label" x="320" y="219" text-anchor="middle" font-size="18">Fastify plugin</text>
-      <text class="d-sub" x="320" y="241" text-anchor="middle" font-size="15">one register call</text>
-
-      <rect class="d-box" x="434" y="188" width="192" height="70" rx="10" stroke-width="1.5"/>
-      <text class="d-label" x="530" y="219" text-anchor="middle" font-size="18">Standalone gateway</text>
-      <text class="d-sub" x="530" y="241" text-anchor="middle" font-size="15">touch nothing upstream</text>
-
-      <!-- what does not happen, which is the actual differentiator -->
-      <path class="d-tick" d="M40 300 H 600" stroke-width="1.5" stroke-dasharray="5 5"/>
-      <text class="d-sub" x="320" y="290" text-anchor="middle" font-size="16">no generated code · no second copy of your API</text>
-      <text class="d-sub" x="320" y="336" text-anchor="middle" font-size="16">your spec stays the single source of truth</text>
-    </svg>
+    <p class="flow-foot">No generated code, and no second copy of your API — your spec stays the single source of truth.</p>
     <figcaption>Your spec in, MCP out — in whichever shape your service already has.</figcaption>
   </figure>
 

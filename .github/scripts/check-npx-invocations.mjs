@@ -269,27 +269,36 @@ const INVOCATION =
  * or an "ignore anything private" rule would silence the next occurrence too,
  * and the next occurrence is the case this guard exists to catch.
  *
- * `@askturret/mcp-adapter-test` is `private: true` in the workspace and 404s on
- * the registry, so the 9 invocations of it in `docs/adapters.md`,
- * `docs/ownership.md`, `docs/releasing.md` and `packages/adapter-test/src/cli.ts`
- * ARE the same user-facing defect as #738 — a doc telling a reader to fetch
- * something that is not there.
+ * `@askturret/mcp-adapter-test` still 404s on the registry, so the invocations of
+ * it in `docs/adapters.md`, `docs/ownership.md`, `docs/releasing.md` and
+ * `packages/adapter-test/src/cli.ts` ARE the same user-facing defect as #738 — a
+ * doc telling a reader to fetch something that is not there.
  *
  * It is exempt rather than fixed because THE REMEDY IS DIFFERENT AND IS NOT
  * MINE. `@askturret/mcp` was a name that never existed and never will, so the
- * repair is to name the package that does. This one is intended to ship and is
- * parked on #173 (release policy plus credentials — a founder decision). There
- * is no correct alternative name to write, and inventing one would be a
- * confidently wrong command, which is worse than the 404 it replaces.
+ * repair is to name the package that does. This one is intended to ship, and now
+ * is about to: there is no correct alternative name to write, and inventing one
+ * would be a confidently wrong command, which is worse than the 404 it replaces.
+ *
+ * ITS REASON CHANGED IN #173 AND THE EXEMPTION DID NOT, WHICH IS CORRECT. The
+ * manifest is no longer `private: true` — it is public and publishes with the
+ * next release. But `private: false` makes a package publishABLE, and the 404
+ * this exemption is about persists until CI actually publishes it. So the
+ * suppression is still earning its place; only its justification moved.
+ *
+ * EXPECT THE STALE NOTE IN THE MEANTIME, and do not act on it yet.
+ * `publishedPackages()` is derived from the `private` flag rather than from the
+ * registry, so it already contains this name and the guard now prints
+ * "the exemption is STALE — it is published". It is not published. The note is
+ * right about the flag and wrong about the registry, and that gap closes on its
+ * own at the next release — which is the moment to delete this entry.
  *
  * EVERY ENTRY IS PRINTED ON EVERY RUN, pass or fail, so the suppression is
- * visible rather than silent. When #173 publishes the package it leaves this set
- * by itself: `publishedPackages()` will contain it, and the guard's own output
- * will show a stale exemption for anyone to remove.
+ * visible rather than silent.
  */
 export const DECLARED_UNPUBLISHED = Object.freeze({
   '@askturret/mcp-adapter-test': {
-    reason: 'private:true in the workspace; intended to ship, parked on release policy + credentials',
+    reason: 'public as of #173 but NOT YET on the registry; publishes with the next release, so the documented npx line still 404s until then',
     issue: '#173',
     declared: '2026-09-07',
   },

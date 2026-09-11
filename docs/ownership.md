@@ -85,9 +85,12 @@ Run it yourself before opening the PR — `npx @askturret/mcp-adapter-test
 ./my-adapter` — and see [`docs/adapters.md`](adapters.md) for the public
 conformance table and how to add yourself to it.
 
-> **Note.** The conformance kit is not published to npm yet, so that command
-> does not resolve today; run it from a local checkout in the meantime. Tracked
-> in [#173](https://github.com/askturret/mcp/issues/173).
+> **Note.** The conformance kit is public as of
+> [#173](https://github.com/askturret/mcp/issues/173) and **publishes with the
+> next release** — flipping `private` makes a package publishABLE; the publish
+> itself happens in CI when a release goes out. Until that release lands the
+> command above still does not resolve, so run it from a local checkout in the
+> meantime. This note retires when the release ships.
 
 ## Becoming a maintainer
 

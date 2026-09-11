@@ -702,6 +702,23 @@ jobs:
       - name: CI path filters cover every declared dependency
         run: node .github/scripts/check-path-filters.mjs
 
+      # #860: the landing page is the most visible surface this project owns and
+      # the one most likely to be edited by someone reaching for a stronger
+      # sentence. The guard asserts its commands match README.md verbatim, that
+      # it makes no claim the repository cannot source, and that a pinned
+      # @askturret/mcp-core version still agrees with the manifest.
+      #
+      # IT LIVES IN THIS JOB ON PURPOSE. `test-integrity` needs nothing, so it
+      # does not inherit `changes`'s skip (#635) — which means it runs on a
+      # site-only pull request, the exact `ci:cheap` copy edit that schedules no
+      # package suite at all. Gating it behind a path filter would leave the
+      # common case unguarded, and `site/**` deliberately appears in no filter.
+      - name: Self-test the landing-page guard
+        run: node .github/scripts/check-landing-page.test.mjs
+
+      - name: The landing page says only what the repo can evidence
+        run: node .github/scripts/check-landing-page.mjs
+
       # #565: a check whose behaviour branches on a PR label is exercised only
       # on PRs pushed to at least twice — a PR is CREATED by one API call and
       # LABELLED by a separate one, so the `opened` run is dispatched before the

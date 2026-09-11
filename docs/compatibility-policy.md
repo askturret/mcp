@@ -8,7 +8,7 @@ This page is a **versioned contract**, and the most consequential one the
 project publishes: it is the thing the 1.0 label actually promises. Changing it
 is governed by [its own rules](#changing-this-policy).
 
-> **Not yet in force.** The project is at `0.1.0`. Under semver, `0.x` carries no
+> **Not yet in force.** The project is at `0.2.0`. Under semver, `0.x` carries no
 > compatibility guarantee at all, and pretending otherwise would be the first
 > thing this document got wrong. It is published now so the rules are agreed
 > **before** they start binding, and so pre-1.0 changes can be made with the

@@ -1,6 +1,6 @@
 {
   "name": "@askturret/mcp-explorer",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Local Explorer UI - dev-only tool browser and safe invoke panel",
   "type": "module",
   "license": "Apache-2.0",
@@ -28,7 +28,7 @@
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {
-    "@askturret/mcp-core": "^0.1.0"
+    "@askturret/mcp-core": "^0.2.0"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",

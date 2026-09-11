@@ -2,7 +2,7 @@
 
 What AskTurret MCP supports, and — just as importantly — what it does not.
 
-**Applies to release `0.1.2`. Matrix version `2.3.1`.**
+**Applies to release `0.2.0`. Matrix version `2.3.1`.**
 
 > **`2.3.0` makes the enforcement claim itself checkable** — check **I** compares
 > this document's check table, and the same list in the JSON, against the checks

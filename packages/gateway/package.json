@@ -1,6 +1,6 @@
 {
   "name": "@askturret/mcp-gateway",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Standalone compatibility gateway - serves MCP from an OpenAPI spec and proxies to an existing API",
   "type": "module",
   "license": "Apache-2.0",
@@ -30,10 +30,10 @@
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {
-    "@askturret/mcp-core": "^0.1.0",
-    "@askturret/mcp-observability": "^0.1.0",
-    "@askturret/mcp-sources-openapi": "^0.1.0",
-    "@askturret/mcp-transports": "^0.1.0"
+    "@askturret/mcp-core": "^0.2.0",
+    "@askturret/mcp-observability": "^0.2.0",
+    "@askturret/mcp-sources-openapi": "^0.2.0",
+    "@askturret/mcp-transports": "^0.2.0"
   },
   "devDependencies": {
     "typescript": "*",

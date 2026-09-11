@@ -84,6 +84,135 @@ This heading names no current version deliberately. It previously read
 the project had both tagged and published — a sentence that was true when
 written and had no way to notice it had stopped being true.
 
+_Nothing yet._
+
+---
+
+## [0.2.0] - 2026-09-11
+
+**MINOR, and it is a breaking change that makes it one.** `doctor --json`
+renamed four fields (first entry under *Changed*). The policy classifies
+renaming a field in CLI machine-readable output as **breaking** —
+[§3](docs/compatibility-policy.md) — which would be MAJOR from `1.0.0` onward.
+That policy is explicitly not in force below `1.0.0`, so this is not a MAJOR.
+
+It is not a PATCH either, and that is the operative point: `^0.1.2` resolves to
+`>=0.1.2 <0.2.0`, so releasing this as `0.1.3` would hand a renamed
+machine-readable contract to every consumer on the default caret range without
+them choosing it. `0.2.0` puts the rename behind an explicit opt-in, which is
+the only protection available while the policy is dormant.
+
+Nothing else here touches a covered surface. `OperationErrorCode` is unchanged —
+`packages/core/src/types.ts` has no diff since `v0.1.2` — so no error code was
+added or removed, and §1, §4, §5 and §7 are untouched.
+
+### Changed
+- `doctor --json` renames four fields, with no deprecated aliases:
+  `lightExposed` → `lightPolicyAdmitted`, `lightDropped` → `lightPolicyExcluded`,
+  `wouldBeExposedInLight` → `admittedByLightPolicy`, and `wouldBeDroppedReason` →
+  `lightPolicyExclusionReason` (#762).
+  **Breaking — CLI machine-readable output** (compatibility-policy §3), emitted
+  field names. A consumer reading any of the four must update; there is no
+  transition period, because two names for one field is the drift this rename
+  exists to end.
+  The old names measured **preset policy** while promising **exposure**. Whether
+  a tool appears is a conjunction — the preset must admit the operation *and* it
+  must be constructible from the spec — and doctor computes only the first
+  conjunct. `Excluded` is therefore a floor on what goes missing, never the whole
+  of it; the renderer now says so in the output rather than leaving it to be
+  inferred from a field name.
+- Every published package now carries its own README instead of a shared one
+  (#826). Not a covered surface — no type, flag or error-code change. Worth
+  stating plainly because it is the reason this release exists: an npm package
+  page only changes when a version publishes, so this work has been invisible
+  on the registry since it merged.
+- `express` moved `4.22.2` → `5.2.1` across our four manifests (#707).
+  Not a covered surface, and **not a narrowing of what we support**:
+  `adapters-express` declares `peerDependencies: {"express": "^4.18.0 || ^5.0.0"}`
+  and CI runs a matrix leg per declared major (#705, #721). Express 4 consumers
+  remain supported and tested; only our own development dependency moved.
+
+### Fixed
+- `sources-openapi` now serves query parameters that carry their schema under
+  `content` rather than `schema` (#718). The extractor read `param.schema` only,
+  so a content-form parameter produced no input property and the operation was
+  dropped during validation — while `doctor` scored the same spec with zero
+  findings. Restricted to `application/json`, because that is the only
+  serialisation core's query builder can emit; other media types still drop, but
+  now for that stated reason rather than by falling into the unreadable branch.
+- Argumentless operations are given an empty input schema instead of none (#717).
+- An unsupported OpenAPI version is refused with its own event rather than being
+  reported as some other failure (#628, #625).
+- `core` names the unencodable media type instead of reporting a missing schema —
+  the message described the wrong defect, sending readers to look for an absent
+  schema that was present.
+  Not a covered surface — error message wording is explicitly excluded
+  (compatibility-policy, *What semver does NOT apply to*); no `code` changed.
+- `core`'s executed policy example is tied to the README that claims it (#710),
+  so the documented example and the tested one cannot drift apart.
+- The quick start is followable from a cold start (#719), and the MCP proof
+  command is documented as JSON-RPC over POST rather than a shape that never
+  worked (#716).
+- `cli` names a package that exists in its help output (#738).
+- `gateway --version` is asserted against the manifest rather than against the
+  constant that produced it (#621), so the two cannot disagree silently.
+- `gateway`'s missing-`dist` skip is visible rather than silent (#777).
+- `adapters-express` drops the body-parser private-field clause from the #147
+  hang guard (#706).
+
+---
+
+## [0.1.2] - 2026-09-05
+
+A maintenance release. **No source behaviour changes** — the twelve commits in
+`v0.1.1..v0.1.2` are CI, documentation and packaging metadata, so no covered
+surface moved.
+
+This section was written retrospectively on 2026-09-11, from
+`git log v0.1.1..v0.1.2`, because 0.1.2 published to npm without a changelog
+section ever being cut for it.
+
+### Changed
+- Every published package declares a `repository` route back to its source
+  (#596), so an npm page links to the code it was built from.
+
+### Fixed
+- Documented imports name packages that exist (#598), and the compatibility
+  contract's SDK row was corrected against the code (#603).
+
+### Added
+- `docs/adr/ADR-023` — the remedy test and the two axes (#566).
+- The compatibility contract is re-derived from the code rather than maintained
+  by hand (#612), and the label-blind lane check is self-declaring (#565). CI
+  only; neither ships in a package.
+
+---
+
+## Released in or before 0.1.1 — not partitioned between those two releases
+
+**Everything below this heading has shipped.** It sat under `[Unreleased]` until
+2026-09-11, which is what made both 0.1.0 and 0.1.2 publish without notes.
+
+It is deliberately **not** split into `[0.1.0]` and `[0.1.1]`, because that
+boundary is not recoverable from this repository. Three authorities were checked
+and none of them records it:
+
+| authority | result |
+|---|---|
+| `git tag -l 'v*'` | `v0.1.1`, `v0.1.2` — **no `v0.1.0`** |
+| the releases API | `v0.1.1`, `v0.1.2` — **no 0.1.0 release** |
+| the version-bump commits touching `packages/core/package.json` | bumps to `0.1.1` and `0.1.2` only — **no bump to `0.1.0`** |
+
+0.1.0 published to npm on 2026-08-31 from a tree this repository does not mark,
+so assigning each entry below to one side or the other would be a guess. The
+entries are accurate about *what changed*; only *which of the two releases
+carried it* is unrecoverable, and a guess recorded here would be indistinguishable
+from a fact for every future reader.
+
+A `[0.1.0]` section can still be cut retrospectively if the boundary is
+established from outside git — npm publish metadata for the nine tarballs would
+settle it.
+
 ### Added
 - `NOT_FOUND` on `OperationErrorCode` (#201). An upstream 404 or 410 now returns
   it instead of collapsing into `INTERNAL_ERROR: "Upstream service error"`, so an
@@ -815,12 +944,18 @@ different from the published `0.1.0` artifacts had already merged to `main`.
 ### Note on the entries above this section
 
 `0.1.0` was published on 2026-08-31 without a changelog section ever being cut
-for it, so the `[Unreleased]` entries above span **both** sides of that release
-and `0.1.1` carries the ones that had not shipped. They are deliberately **not**
-partitioned here: which of them were already in `0.1.0` cannot be established
-from this file, and guessing would put unverified claims into the changelog of a
-compliance release. Partitioning them is a maintainer decision, and a `[0.1.0]`
-section can be cut retrospectively once that is settled.
+for it, so the entries above span **both** sides of that release and `0.1.1`
+carries the ones that had not shipped. They remain deliberately **not**
+partitioned — see the heading they now sit under, *"Released in or before 0.1.1"*,
+which records the three authorities checked for that boundary and what each
+returned.
 
-[Unreleased]: https://github.com/askturret/mcp/compare/v0.1.1...HEAD
+Until 2026-09-11 those entries sat under `[Unreleased]`, which is the defect this
+note was describing from inside: a heading that said *not yet released* above
+content that had shipped twice over. The entries did not move; the heading was
+corrected to say what they are.
+
+[Unreleased]: https://github.com/askturret/mcp/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/askturret/mcp/compare/v0.1.2...v0.2.0
+[0.1.2]: https://github.com/askturret/mcp/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/askturret/mcp/compare/v0.1.0...v0.1.1

@@ -42,28 +42,28 @@
     {
       "id": "core:VERSION",
       "path": "packages/core/src/index.ts",
-      "source": "export const VERSION = '0.1.2';",
+      "source": "export const VERSION = '0.2.0';",
       "mirrors": "packages/core/package.json#version",
       "reason": "The core package's own version, exported for consumers. Mirrors the manifest and must move with it."
     },
     {
       "id": "gateway:GATEWAY_VERSION",
       "path": "packages/gateway/src/version.ts",
-      "source": "export const GATEWAY_VERSION = '0.1.2';",
+      "source": "export const GATEWAY_VERSION = '0.2.0';",
       "mirrors": "packages/gateway/package.json#version",
       "reason": "A LITERAL BY DELIBERATE DECISION, and that decision survives: the built `dist/` is what `npx` runs, and resolving the manifest from there needs a path that differs between the source tree and the published tarball, so a constant the release bump touches alongside package.json cannot resolve to the wrong file. This guard is what makes 'the release bump touches both' checkable instead of remembered."
     },
     {
       "id": "cli:inspect-server-version",
       "path": "packages/cli/src/commands/inspect.ts",
-      "source": "version: '0.1.2',",
+      "source": "version: '0.2.0',",
       "mirrors": "packages/cli/package.json#version",
       "reason": "The server version the inspect command reports. Mirrors the cli package version."
     },
     {
       "id": "transports:http-server-version",
       "path": "packages/transports/src/http/index.ts",
-      "source": "version: '0.1.2',",
+      "source": "version: '0.2.0',",
       "mirrors": "packages/transports/package.json#version",
       "reason": "The server version the HTTP transport advertises. THIS ONE WAS ON NOBODY'S LIST — it is absent from the enumeration #601 was scoped from, and it reads 0.1.2 today by luck rather than by anything checking. It is now a published surface: v0.1.2 shipped to npm with SLSA provenance attached."
     },

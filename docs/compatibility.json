@@ -1,6 +1,6 @@
 {
   "matrixVersion": "2.3.1",
-  "appliesToRelease": "0.1.2",
+  "appliesToRelease": "0.2.0",
   "documentation": "https://github.com/askturret/mcp/blob/main/docs/compatibility.md",
   "statusLegend": {
     "supported": "Declared as supported and exercised by CI on every pull request.",

@@ -193,17 +193,29 @@ Only after that does a `1.0.0` release rest on tested machinery.
 
 ## Which packages publish
 
-Nine packages are public; four are not. The split is closed under runtime
+Eleven packages are public; two are not. The split is closed under runtime
 dependencies — every `@askturret/*` dependency of a public package is itself
 public — which is what makes a published package installable rather than
 broken.
 
 **Public:** `mcp-core`, `mcp-transports`, `mcp-sources-openapi`, `mcp-explorer`,
 `mcp-observability`, `mcp-adapters-express`, `mcp-adapters-fastify`,
-`mcp-gateway`, `mcp-cli`.
+`mcp-gateway`, `mcp-cli`, `mcp-adapter-conformance`, `mcp-adapter-test`.
 
-**Private:** `mcp-adapter-conformance`, `mcp-adapter-test`, `mcp-reliability`,
-`mcp-examples`, and everything under `examples/`.
+**Private:** `mcp-reliability`, `mcp-examples`, and everything under
+`examples/`.
+
+`mcp-adapter-conformance` and `mcp-adapter-test` joined the public set in #173
+and **have not been published yet** — they ship on the next release. Closure
+under runtime dependencies is why they moved together: the kit depends on the
+bank, so publishing the kit alone would 404 on its own dependency.
+
+They enter at `0.1.0` while the other nine carry `0.2.0`. That is deliberate —
+they have no published history, so `0.1.0` is their genuine first version rather
+than a stale one, and semver does not ask sibling packages to agree. The nine
+share a number only because they share a release history these two do not.
+**Whether the next bump brings all eleven into lockstep is a decision for that
+release**, recorded here so it is made rather than inherited.
 
 Two packaging details are load-bearing rather than incidental:
 
@@ -217,22 +229,37 @@ Two packaging details are load-bearing rather than incidental:
   latest, which defeats semver entirely on packages whose whole compatibility
   story is the policy linked at the top of this page.
 
-### One unresolved question
+### The conformance kit — resolved
 
-`@askturret/mcp-adapter-test` is **private here, and that may be wrong.** It
-carries every marker of a package meant for publication — a `bin`, an
-`exports` map, a curated `files` list, a description, and a version of `1.0.0`
-while everything else sits at `0.1.0` — and its own `--help` output tells users
-to run `npx @askturret/mcp-adapter-test <path-to-adapter>`. That command does
-not work today and will not work while it is private.
+This section used to ask whether `@askturret/mcp-adapter-test` should be
+private. **It is now public**, and the question is closed.
 
-It is left private rather than flipped because publishing it also means
-publishing `@askturret/mcp-adapter-conformance`, which it depends on, which in
-turn depends on both official adapters. That is a real decision about what the
-project supports for third-party adapter authors, not a packaging detail to
-settle inside a release-process change. It is
-[#277](https://github.com/askturret/mcp/issues/277), which also carries the
-question of whether that `1.0.0` version number stands if the package ships.
+It was never really open. The decision was made in architecture §12.2 and #54,
+whose acceptance is *"published on npm"* — the `private: true`, the `1.0.0` and
+the `npx` help text were that issue's documented intended end state rather than
+drift. What kept it waiting was sequencing: an adapter-conformance kit asserts a
+stable contract to conform to, and until `@askturret/mcp-core` was published
+there was nothing to conform to. That release happened, so the kit follows.
+
+`@askturret/mcp-adapter-conformance` went public in the same change, and had to:
+it is the kit's runtime dependency, so the kit alone would have 404'd on its own
+dependency. That is the closure rule above, applied.
+
+**The `1.0.0` did not stand.** The package version is now `0.1.0`; `KIT_VERSION`
+keeps `1.0.0`, because the two answer different questions. `KIT_VERSION` is the
+conformance-result contract and moves when the categories change, so a stored
+result stays meaningful alongside the kit that produced it. The package version
+tracks the project. They were equal only while the package was private and its
+`version` field was inert — publishing made it load-bearing, and a 0.x project
+shipping a `1.0.0` on day one would promise a stability it does not have. The
+precedent is the independently-versioned plugin `apiVersion` in
+[`compatibility-policy.md`](compatibility-policy.md) §2.
+
+One consequence worth stating because nothing enforces it: **`npx
+@askturret/mcp-adapter-test` is accurate from the next release, not from the
+merge of #173.** Flipping `private` makes a package publishABLE; the publish
+happens in CI on release. Between those two moments the documented command still
+404s.
 
 ---
 

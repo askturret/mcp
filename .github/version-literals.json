@@ -93,7 +93,7 @@
       "path": "packages/adapter-test/src/kit.ts",
       "source": "export const KIT_VERSION = '1.0.0';",
       "mirrors": "none",
-      "reason": "The conformance kit's API version. NOTE THE COINCIDENCE, because it is a trap: packages/adapter-test/package.json is ALSO 1.0.0 today, so this reads like a manifest mirror and is not one. If the package version moves, this must NOT follow it — the kit version is a contract with consumers of the kit, not a restatement of the release number."
+      "reason": "The conformance kit's API version, and a contract with consumers of the kit rather than a restatement of the release number. THE COINCIDENCE THIS NOTE USED TO WARN ABOUT IS GONE: packages/adapter-test/package.json was ALSO 1.0.0, so this read like a manifest mirror and was not one. #173 set that manifest to 0.1.0 when the package went public — a 0.x project shipping a 1.0.0 package on day one would promise a stability it does not have — and the two are now visibly independent, which is what they always were. The rule is unchanged and is the reason `mirrors` is none: if the package version moves again, this must NOT follow it."
     },
     {
       "id": "adapter-conformance:client-info-version",

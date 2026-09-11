@@ -3,8 +3,23 @@
   "version": "0.1.0",
   "description": "Adapter conformance contract - the test bank every framework adapter must pass",
   "type": "module",
-  "private": true,
+  "private": false,
   "license": "Apache-2.0",
+  "keywords": [
+    "askturret",
+    "mcp",
+    "adapter",
+    "conformance"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/askturret/mcp.git",
+    "directory": "packages/adapter-conformance"
+  },
+  "homepage": "https://github.com/askturret/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/askturret/mcp/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -13,16 +28,23 @@
       "import": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "!dist/**/__tests__/**",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
+  ],
   "scripts": {
     "build": "tsc",
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {
-    "@askturret/mcp-adapters-express": "*",
-    "@askturret/mcp-adapters-fastify": "*",
-    "@askturret/mcp-core": "*",
-    "@askturret/mcp-sources-openapi": "*"
+    "@askturret/mcp-adapters-express": "^0.2.0",
+    "@askturret/mcp-adapters-fastify": "^0.2.0",
+    "@askturret/mcp-core": "^0.2.0",
+    "@askturret/mcp-sources-openapi": "^0.2.0"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",

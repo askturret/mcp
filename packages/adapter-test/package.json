@@ -1,10 +1,26 @@
 {
   "name": "@askturret/mcp-adapter-test",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "MCP adapter conformance kit - run the shared test bank against any framework adapter",
   "type": "module",
-  "private": true,
+  "private": false,
   "license": "Apache-2.0",
+  "keywords": [
+    "askturret",
+    "mcp",
+    "adapter",
+    "conformance",
+    "testing"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/askturret/mcp.git",
+    "directory": "packages/adapter-test"
+  },
+  "homepage": "https://github.com/askturret/mcp#readme",
+  "bugs": {
+    "url": "https://github.com/askturret/mcp/issues"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
@@ -18,7 +34,11 @@
   },
   "files": [
     "bin",
-    "dist"
+    "dist",
+    "!dist/**/__tests__/**",
+    "README.md",
+    "LICENSE",
+    "NOTICE"
   ],
   "scripts": {
     "build": "tsc",
@@ -27,8 +47,8 @@
     "lint": "echo \"Linting not yet configured\""
   },
   "dependencies": {
-    "@askturret/mcp-adapter-conformance": "*",
-    "@askturret/mcp-core": "*"
+    "@askturret/mcp-adapter-conformance": "^0.1.0",
+    "@askturret/mcp-core": "^0.2.0"
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",
@@ -41,7 +61,7 @@
     "typescript": "*"
   },
   "askturret": {
-    "versioning": "This package carries its OWN semver (see KIT_VERSION), scoped to conformance results: it moves when the categories change or an existing one gets stricter, not when @askturret/mcp releases. A result is only meaningful alongside the kit version that produced it.",
-    "publishing": "PRIVATE, and still private after the first releases: `private: true` in this manifest is the authority, and `npm view @askturret/mcp-adapter-test` is how to check from outside. Some workspaces in this repo now publish and some do not — read each manifest's `private` field rather than assuming the repo is uniform, which an earlier version of this note did. Publishing this one needs a release-policy decision: it depends on @askturret/mcp-adapter-conformance, which would have to go public too, and that pulls in its own dependency chain. Flagged in #54 rather than decided here."
+    "versioning": "TWO VERSIONS, DELIBERATELY INDEPENDENT, and the distinction is the point. `version` is this npm package's semver and tracks the project like any other workspace. KIT_VERSION is the CONFORMANCE-RESULT CONTRACT: it moves when the categories change or an existing one gets stricter, never because a release happened, so a stored result stays meaningful alongside the kit version that produced it. They were the same string (1.0.0) while this package was private and `version` was inert; publishing made `version` load-bearing, so it was set to 0.1.0 — a 0.x project shipping a 1.0.0 package on day one would promise a stability it does not have. Precedent: the plugin apiVersion in compatibility-policy.md §2.",
+    "publishing": "PUBLIC as of #173. `private: false` in this manifest is the authority, and `npm view @askturret/mcp-adapter-test` is how to check from outside. Some workspaces in this repo publish and some do not — read each manifest's `private` field rather than assuming the repo is uniform. This package's runtime dependency @askturret/mcp-adapter-conformance is published alongside it in the same change; publishing this one without that one would 404 on its own dependency. The decision was made in architecture §12.2 and #54, whose acceptance is `published on npm`, and was sequenced behind the first @askturret/mcp-core release, which shipped as 0.2.0."
   }
 }
